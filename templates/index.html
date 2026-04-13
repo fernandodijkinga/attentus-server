@@ -80,7 +80,7 @@
       <tbody>
         {% for r in recent_weather %}
         <tr>
-          <td class="mono text-muted">{{ r.received_at[:19].replace('T',' ') }}</td>
+          <td class="mono text-muted">{{ r.received_at|br_dt }}</td>
           <td class="td-accent">{{ r.device_name }}</td>
           <td>{{ '%.1f °C' % r.temp_c if r.temp_c else '—' }}</td>
           <td>{{ '%.0f lx' % r.lux if r.lux else '—' }}</td>
@@ -113,7 +113,7 @@
       <tbody>
         {% for r in recent_images %}
         <tr>
-          <td class="mono text-muted">{{ r.received_at[:19].replace('T',' ') }}</td>
+          <td class="mono text-muted">{{ r.received_at|br_dt }}</td>
           <td class="td-blue">{{ r.device_name }}</td>
           <td class="mono">{{ r.capture_id }}</td>
           <td class="mono">{{ '%.1f KB' % (r.filesize/1024) if r.filesize else '—' }}</td>
@@ -142,7 +142,7 @@
     <div class="api-row">
       <span class="method">POST</span>
       <span class="url">/api/sensors</span>
-      <span style="color:var(--text2)">— Estação meteorológica (JSON: device, bh1750_lux, bmp280_temp_c, bmp280_press_hpa, bmp280_alt_m, rssi)</span>
+      <span style="color:var(--text2)">— Estação meteorológica (JSON: device, bh1750_lux, temp/umidade DHT22 ou dht22_*, pressão bmp280_press_hpa, bmp280_alt_m, rssi)</span>
     </div>
     <div class="api-row">
       <span class="method">POST</span>
@@ -175,7 +175,7 @@
 <div class="card">
   <div class="card-title">Atividade — últimas 24h (leituras por hora)</div>
   <div class="activity-bar" id="actbar"></div>
-  <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:6px">← 24h atrás · agora →</div>
+  <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:6px">← 24h atrás · agora → · horário de Brasília</div>
 </div>
 {% endif %}
 

@@ -40,6 +40,27 @@
            margin-right: 10px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .full-chart { grid-column: 1 / -1; }
+.thi-card { margin-bottom: 4px; }
+.thi-card canvas { height: 240px !important; }
+.thi-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.thi-sub { font-size: 12px; color: var(--muted); margin-top: 4px; max-width: 52ch; line-height: 1.45; }
+.thi-head-controls { display: flex; gap: 12px; align-items: flex-end; }
+.thi-legend {
+  display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid var(--border); font-family: var(--mono); font-size: 10px; color: var(--muted);
+}
+.thi-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.thi-legend i {
+  display: inline-block; width: 12px; height: 12px; border-radius: 2px;
+  border: 1px solid rgba(255,255,255,.12);
+}
+.badge-thi { font-weight: 700; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-family: var(--mono); }
+.badge-thi.normal { background: rgba(226,239,218,.25); color: #a8d4a0; }
+.badge-thi.alert { background: rgba(255,242,204,.2); color: #e8c96a; }
+.badge-thi.stress { background: rgba(255,0,0,.12); color: #ff8a8a; }
 </style>
 {% endblock %}
 
@@ -74,7 +95,7 @@
     </select>
   </div>
   <button class="btn btn-accent btn-sm" onclick="loadData()">Atualizar</button>
-  <div id="last-update" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:auto;align-self:center"></div>
+  <div id="last-update" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:auto;align-self:center;text-align:right"></div>
 </div>
 
 <!-- CHARTS -->
@@ -86,12 +107,88 @@
 
 {% block scripts %}
 <script>
+const THI_ZONES = {{ thi_zones | tojson }};
+const THI_THRESHOLDS = {{ thi_thresholds | tojson }};
+
+const THI_CATEGORY_LABELS = {
+  calf: 'Bezerras',
+  heifer: 'Novilhas',
+  low_lactation: 'Baixa lactação',
+  high_lactation: 'Alta lactação',
+  primiparous_low: 'Primíparas — menor produção',
+  primiparous_high: 'Primíparas — alta produção',
+  multiparous_low: 'Multíparas — menor produção',
+  multiparous_high: 'Multíparas — alta produção',
+};
+
+function classifyThiStatus(thi, category) {
+  const t = THI_THRESHOLDS[category];
+  if (thi == null || !t) return null;
+  if (thi < t.normal_max) return 'normal';
+  if (thi <= t.alert_max) return 'alert';
+  return 'stress';
+}
+
+function statusLabelPt(s) {
+  if (s === 'normal') return 'Normal';
+  if (s === 'alert') return 'Alerta';
+  if (s === 'stress') return 'Estresse térmico';
+  return '—';
+}
+
+const TZ_BR = 'America/Sao_Paulo';
+
+/** Eixos de tempo e tooltips dos gráficos em horário de Brasília (independente do fuso do navegador). */
+function applyBrasilTimeAxis(cfg) {
+  const brTitle = (ms) => new Date(ms).toLocaleString('pt-BR', {
+    timeZone: TZ_BR,
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const brTick = (ms) => new Date(ms).toLocaleString('pt-BR', {
+    timeZone: TZ_BR, hour: '2-digit', minute: '2-digit',
+  });
+  cfg.scales = cfg.scales || {};
+  cfg.scales.x = cfg.scales.x || {};
+  cfg.scales.x.ticks = cfg.scales.x.ticks || {};
+  cfg.scales.x.ticks.callback = (val) => brTick(val);
+  cfg.plugins = cfg.plugins || {};
+  cfg.plugins.tooltip = cfg.plugins.tooltip || {};
+  cfg.plugins.tooltip.callbacks = cfg.plugins.tooltip.callbacks || {};
+  cfg.plugins.tooltip.callbacks.title = (items) => {
+    if (!items || !items.length) return '';
+    return brTitle(items[0].parsed.x);
+  };
+}
+
+function createThiZonePlugin(zones) {
+  return {
+    id: 'thiHolsteinZones',
+    beforeDatasetsDraw(chart) {
+      const y = chart.scales.y;
+      const { ctx, chartArea } = chart;
+      if (!y || !chartArea) return;
+      zones.forEach(z => {
+        const p1 = y.getPixelForValue(z.y_min);
+        const p2 = y.getPixelForValue(z.y_max);
+        const top = Math.min(p1, p2);
+        const h = Math.abs(p2 - p1);
+        ctx.save();
+        ctx.fillStyle = z.rgba;
+        ctx.fillRect(chartArea.left, top, chartArea.width, h);
+        ctx.restore();
+      });
+    },
+  };
+}
+
 const COLORS = {
   temp:  { line:'#00e5a0', bg:'rgba(0,229,160,.08)' },
   lux:   { line:'#ffb84d', bg:'rgba(255,184,77,.08)' },
   press: { line:'#0099ff', bg:'rgba(0,153,255,.06)' },
   hum:   { line:'#cc66ff', bg:'rgba(204,102,255,.07)' },
   rssi:  { line:'#ff4d6a', bg:'rgba(255,77,106,.06)' },
+  thi:   { line:'#dce9f5', bg:'rgba(0,0,0,0)' },
 };
 
 const CHART_DEFAULTS = {
@@ -145,7 +242,9 @@ function buildChart(id, data, key, title, unit, colorKey, opts={}) {
   if (charts[id]) charts[id].destroy();
 
   const cfg = JSON.parse(JSON.stringify(CHART_DEFAULTS));
+  applyBrasilTimeAxis(cfg);
   if (opts.yMin !== undefined) cfg.scales.y.min = opts.yMin;
+  if (opts.yMax !== undefined) cfg.scales.y.max = opts.yMax;
 
   charts[id] = new Chart(ctx, {
     type: 'line',
@@ -158,6 +257,87 @@ function buildChart(id, data, key, title, unit, colorKey, opts={}) {
   const statEl = document.getElementById(id + '-stats');
   if (statEl) statEl.innerHTML =
     `min <b>${s.min} ${unit}</b> &nbsp; max <b>${s.max} ${unit}</b> &nbsp; avg <b>${s.avg} ${unit}</b>`;
+}
+
+function updateThiLatestMeta(data) {
+  const cat = document.getElementById('thi-category')?.value || 'calf';
+  let last = null;
+  for (let i = data.length - 1; i >= 0; i--) {
+    if (data[i].thi != null) { last = data[i]; break; }
+  }
+  const el = document.getElementById('thi-status-line');
+  if (!el) return;
+  if (!last) {
+    el.innerHTML = '';
+    return;
+  }
+  const st = classifyThiStatus(last.thi, cat);
+  const badge = st ? `<span class="badge-thi ${st}">${statusLabelPt(st)}</span>` : '';
+  const label = THI_CATEGORY_LABELS[cat] || cat;
+  el.innerHTML = `Último ponto · THI <b>${last.thi}</b> &nbsp; ${label}: ${badge}`;
+}
+
+function buildThiChart(data) {
+  const canvas = document.getElementById('ch-thi');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (charts['ch-thi']) charts['ch-thi'].destroy();
+
+  const thiVals = data.map(r => r.thi).filter(v => v != null);
+  if (!thiVals.length) return;
+
+  let yMin = Math.floor((Math.min(...thiVals) - 8) / 5) * 5;
+  let yMax = Math.ceil((Math.max(...thiVals) + 8) / 5) * 5;
+  yMin = Math.max(45, yMin);
+  yMax = Math.min(130, Math.max(yMax, 95));
+
+  const cfg = JSON.parse(JSON.stringify(CHART_DEFAULTS));
+  applyBrasilTimeAxis(cfg);
+  cfg.scales.y.min = yMin;
+  cfg.scales.y.max = yMax;
+  cfg.plugins.legend = { display: false };
+  cfg.plugins.tooltip.callbacks.label = function (ctx) {
+    const raw = ctx.raw;
+    const row = raw && raw._row;
+    const v = ctx.parsed && ctx.parsed.y != null ? ctx.parsed.y : (raw && raw.y);
+    if (!row) return ` THI: ${v}`;
+    let t = ` THI: ${v}`;
+    if (row.temp_c != null) t += ` · ${row.temp_c}°C`;
+    if (row.humidity != null) t += ` · ${row.humidity}% UR`;
+    return t;
+  };
+
+  const ds = data.map(r => ({
+    x: r.received_at,
+    y: r.thi != null ? r.thi : null,
+    _row: r,
+  }));
+
+  charts['ch-thi'] = new Chart(ctx, {
+    plugins: [createThiZonePlugin(THI_ZONES)],
+    type: 'line',
+    data: {
+      datasets: [{
+        label: 'THI',
+        data: ds,
+        borderColor: COLORS.thi.line,
+        backgroundColor: 'transparent',
+        borderWidth: 2.5,
+        pointRadius: data.length < 120 ? 2 : 0,
+        pointBackgroundColor: COLORS.thi.line,
+        tension: 0.35,
+        fill: false,
+        spanGaps: false,
+      }],
+    },
+    options: cfg,
+  });
+
+  const s = computeStats(thiVals);
+  const statEl = document.getElementById('ch-thi-stats');
+  if (statEl) statEl.innerHTML =
+    `min <b>${s.min}</b> &nbsp; max <b>${s.max}</b> &nbsp; média <b>${s.avg}</b> &nbsp; <span style="color:var(--muted)">(índice THI)</span>`;
+  updateThiLatestMeta(data);
 }
 
 async function loadData() {
@@ -179,8 +359,39 @@ async function loadData() {
   }
 
   const hasHum  = data.some(r => r.humidity != null);
+  const hasThi  = data.some(r => r.thi != null);
 
   grid.innerHTML = `
+    ${hasThi ? `
+    <div class="chart-card full-chart thi-card" id="thi-block">
+      <div class="thi-head">
+        <div>
+          <div class="chart-heading"><span>🐄</span> THI — conforto térmico (Holstein)</div>
+          <div class="thi-sub">Índice temperatura–umidade no ambiente. Fundo colorido: estresse térmico por faixa THI. A classificação por lote (normal / alerta / estresse) usa os limiares escolhidos para cada categoria.</div>
+        </div>
+        <div class="thi-head-controls">
+          <div class="ctrl-field">
+            <label>Categoria / lote</label>
+            <select id="thi-category">
+              <option value="calf" selected>Bezerras</option>
+              <option value="heifer">Novilhas</option>
+              <option value="low_lactation">Baixa lactação</option>
+              <option value="high_lactation">Alta lactação</option>
+              <option value="primiparous_low">Primíparas — menor produção</option>
+              <option value="primiparous_high">Primíparas — alta produção</option>
+              <option value="multiparous_low">Multíparas — menor produção</option>
+              <option value="multiparous_high">Multíparas — alta produção</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <canvas id="ch-thi" height="240"></canvas>
+      <div class="thi-legend" id="thi-legend"></div>
+      <div class="stat-row" style="align-items:center">
+        <div class="stat-item" id="ch-thi-stats"></div>
+        <div class="stat-item" id="thi-status-line" style="margin-left:auto;text-align:right"></div>
+      </div>
+    </div>` : ''}
     <div class="chart-card">
       <div class="chart-heading"><span>🌡</span> Temperatura</div>
       <canvas id="ch-temp" height="200"></canvas>
@@ -201,12 +412,12 @@ async function loadData() {
       <div class="chart-heading"><span>💧</span> Umidade relativa</div>
       <canvas id="ch-hum" height="200"></canvas>
       <div class="stat-row"><div class="stat-item" id="ch-hum-stats"></div></div>
-    </div>` : `
+    </div>` : ''}
     <div class="chart-card">
       <div class="chart-heading"><span>📶</span> RSSI (sinal WiFi)</div>
       <canvas id="ch-rssi" height="200"></canvas>
       <div class="stat-row"><div class="stat-item" id="ch-rssi-stats"></div></div>
-    </div>`}
+    </div>
     <div class="chart-card full-chart">
       <div class="chart-heading"><span>⛰</span> Altitude estimada</div>
       <canvas id="ch-alt" height="160"></canvas>
@@ -215,18 +426,29 @@ async function loadData() {
   `;
 
   requestAnimationFrame(() => {
+    const leg = document.getElementById('thi-legend');
+    if (leg) {
+      leg.innerHTML = THI_ZONES.map(z =>
+        `<span><i style="background:${z.hex}"></i> ${z.label}</span>`
+      ).join('');
+    }
+    const tc = document.getElementById('thi-category');
+    if (tc) tc.onchange = () => updateThiLatestMeta(data);
+
+    if (hasThi) buildThiChart(data);
+
     buildChart('ch-temp',  data, 'temp_c',    'Temperatura', '°C',  'temp');
     buildChart('ch-lux',   data, 'lux',        'Luminosidade','lx',  'lux');
     buildChart('ch-press', data, 'press_hpa',  'Pressão',     'hPa', 'press');
     if (hasHum)
-      buildChart('ch-hum', data, 'humidity',   'Umidade',     '%',   'hum');
-    else
-      buildChart('ch-rssi',data, 'rssi',       'RSSI',        'dBm', 'rssi');
+      buildChart('ch-hum', data, 'humidity',   'Umidade',     '%',   'hum', { yMin: 0, yMax: 100 });
+    buildChart('ch-rssi', data, 'rssi',       'RSSI',        'dBm', 'rssi');
     buildChart('ch-alt',   data, 'alt_m',      'Altitude',    'm',   'press');
   });
 
-  const now = new Date().toLocaleTimeString('pt-BR');
-  document.getElementById('last-update').textContent = `${data.length} pontos · atualizado ${now}`;
+  const now = new Date().toLocaleTimeString('pt-BR', { timeZone: TZ_BR });
+  document.getElementById('last-update').textContent =
+    `${data.length} pontos · atualizado ${now} · horário de Brasília`;
 }
 
 // Carga inicial

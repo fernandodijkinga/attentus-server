@@ -113,7 +113,7 @@
          onerror="this.style.display='none'">
     {% endif %}
     <div class="cam-badge live">
-      ● {{ cam.received_at[:16].replace('T',' ') }}
+      ● {{ cam.received_at|br_dt('%d/%m %H:%M') }}
     </div>
     {% if not cam.filename %}
     <div class="no-img"><span>📷</span>Sem imagem</div>
@@ -170,11 +170,20 @@
 
 {% block scripts %}
 <script>
+function formatTsBr(iso) {
+  try {
+    return new Date(iso).toLocaleString('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+  } catch (e) { return iso; }
+}
 function openLightbox(device, filename, ts, captureId) {
   const url = `/api/image/${device}/${filename}`;
   document.getElementById('lightbox-img').src = url;
   document.getElementById('lightbox-meta').innerHTML =
-    `<b style="color:#fff">${device}</b> &nbsp;·&nbsp; captura #${captureId} &nbsp;·&nbsp; ${ts.replace('T',' ').slice(0,19)} UTC`;
+    `<b style="color:#fff">${device}</b> &nbsp;·&nbsp; captura #${captureId} &nbsp;·&nbsp; ${formatTsBr(ts)} <span style="opacity:.65">(Brasília)</span>`;
   document.getElementById('lightbox').classList.add('open');
 }
 function closeLightbox() {
@@ -199,7 +208,7 @@ async function refreshCameras() {
       }
     });
     document.getElementById('refresh-status').textContent =
-      'atualizado ' + new Date().toLocaleTimeString('pt-BR');
+      'atualizado ' + new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   } catch(e) {
     document.getElementById('refresh-status').textContent = 'erro ao atualizar';
   }

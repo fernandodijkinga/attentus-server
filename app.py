@@ -3,7 +3,7 @@
   ATTENTUS — Servidor Central de Coleta de Dados
   GenMate Field Intelligence Platform
 ============================================================
-  Recebe dados de estações meteorológicas (ESP32+BME280+BH1750)
+  Recebe dados de estações meteorológicas (ESP32+DHT22+BMP280+BH1750)
   e câmeras de baia (ESP32-CAM) via HTTP.
 
   Endpoints de ingestão:
@@ -30,14 +30,44 @@ import zipfile
 import io
 import csv
 import logging
-from datetime import datetime, timedelta
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from functools import wraps
+from zoneinfo import ZoneInfo
 from flask import (
     Flask, render_template, request, redirect, url_for,
     session, jsonify, send_file, flash, g, abort
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+
+from thi.calculator import calculate_thi, thi_holstein_zones_for_chart, thi_thresholds_json
+
+TZ_BR = ZoneInfo('America/Sao_Paulo')
+
+
+def _parse_utc_received(iso_str):
+    """Interpreta timestamps ISO gravados em UTC (sufixo Z ou offset)."""
+    if not iso_str:
+        return None
+    s = str(iso_str).strip()
+    try:
+        if s.endswith('Z'):
+            return datetime.fromisoformat(s.replace('Z', '+00:00'))
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+    except (ValueError, TypeError):
+        return None
+
+
+def format_br_datetime(iso_str, fmt='%d/%m/%Y %H:%M'):
+    dt = _parse_utc_received(iso_str)
+    if dt is None:
+        return '—'
+    return dt.astimezone(TZ_BR).strftime(fmt)
+
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 
@@ -46,6 +76,11 @@ log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-CHANGE-IN-PRODUCTION')
+
+
+@app.template_filter('br_dt')
+def template_br_dt(value, fmt='%d/%m/%Y %H:%M'):
+    return format_br_datetime(value, fmt) if value else '—'
 
 # Diretório de dados: /data no Render (disco persistente), ./data local
 DATA_DIR = os.environ.get(
@@ -63,6 +98,15 @@ ADMIN_PASS_HASH = generate_password_hash(os.environ.get('ADMIN_PASS', 'attentus2
 
 # Chave de API para dispositivos (vazio = sem restrição)
 API_KEY = os.environ.get('API_KEY', '')
+
+
+# Temperatura/umidade: DHT22 (dht22_*) ou chaves legadas bmp280/bme280 no JSON do firmware
+def _ingest_temp_c(data):
+    return data.get('dht22_temp_c') or data.get('bmp280_temp_c') or data.get('bme280_temp_c')
+
+
+def _ingest_humidity(data):
+    return data.get('dht22_humidity') or data.get('bme280_humidity') or data.get('humidity')
 
 ALLOWED_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png'}
 MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10 MB
@@ -180,10 +224,10 @@ def index():
     stats['stations_active']= db.execute("SELECT COUNT(DISTINCT device_name) FROM weather").fetchone()[0]
 
     r = db.execute("SELECT received_at FROM weather ORDER BY received_at DESC LIMIT 1").fetchone()
-    stats['weather_last'] = r[0][:19].replace('T', ' ') if r else '—'
+    stats['weather_last'] = format_br_datetime(r[0]) if r else '—'
 
     r = db.execute("SELECT received_at FROM images ORDER BY received_at DESC LIMIT 1").fetchone()
-    stats['images_last'] = r[0][:19].replace('T', ' ') if r else '—'
+    stats['images_last'] = format_br_datetime(r[0]) if r else '—'
 
     recent_weather = db.execute(
         "SELECT * FROM weather ORDER BY received_at DESC LIMIT 8"
@@ -193,13 +237,19 @@ def index():
         "SELECT * FROM images ORDER BY received_at DESC LIMIT 4"
     ).fetchall()
 
-    # Activity últimas 24h por hora
-    activity = db.execute("""
-        SELECT strftime('%H', received_at) as hr, COUNT(*) as cnt
-        FROM weather
-        WHERE received_at > datetime('now', '-24 hours')
-        GROUP BY hr ORDER BY hr
-    """).fetchall()
+    # Atividade últimas 24h — agrupa por hora do relógio em Brasília
+    since_utc = datetime.now(timezone.utc) - timedelta(hours=24)
+    since_iso = since_utc.isoformat().replace('+00:00', 'Z')
+    ar = db.execute(
+        "SELECT received_at FROM weather WHERE received_at > ?",
+        (since_iso,),
+    ).fetchall()
+    counts = defaultdict(int)
+    for (received_at,) in ar:
+        dt = _parse_utc_received(received_at)
+        if dt:
+            counts[dt.astimezone(TZ_BR).hour] += 1
+    activity = [(f'{h:02d}', counts[h]) for h in range(24)]
 
     return render_template('index.html',
         stats=stats,
@@ -215,7 +265,12 @@ def weather():
     devices = [r[0] for r in db.execute(
         "SELECT DISTINCT device_name FROM weather ORDER BY device_name"
     ).fetchall()]
-    return render_template('weather.html', devices=devices)
+    return render_template(
+        'weather.html',
+        devices=devices,
+        thi_zones=thi_holstein_zones_for_chart(),
+        thi_thresholds=thi_thresholds_json(),
+    )
 
 @app.route('/cameras')
 @login_required
@@ -310,16 +365,16 @@ def receive_sensors():
     """, (
         now, device,
         data.get('bh1750_lux'),
-        data.get('bmp280_temp_c') or data.get('bme280_temp_c'),
+        _ingest_temp_c(data),
         data.get('bmp280_press_hpa') or data.get('bme280_press_hpa'),
         data.get('bmp280_alt_m') or data.get('bme280_alt_m'),
-        data.get('bme280_humidity') or data.get('humidity'),
+        _ingest_humidity(data),
         data.get('uptime_s'),
         data.get('rssi'),
         json.dumps(data),
     ))
     db.commit()
-    log.info(f"[SENSORS] {device} → lux={data.get('bh1750_lux')} temp={data.get('bmp280_temp_c') or data.get('bme280_temp_c')}")
+    log.info(f"[SENSORS] {device} → lux={data.get('bh1750_lux')} temp={_ingest_temp_c(data)}")
     return jsonify({'status': 'ok', 'received_at': now}), 201
 
 @app.route('/api/upload', methods=['POST'])
@@ -378,7 +433,19 @@ def weather_data():
         f"FROM weather WHERE {where} ORDER BY received_at ASC LIMIT 1000",
         params
     ).fetchall()
-    return jsonify([dict(r) for r in rows])
+    out = []
+    for r in rows:
+        d = dict(r)
+        t, h = d.get('temp_c'), d.get('humidity')
+        if t is not None and h is not None:
+            try:
+                d['thi'] = round(float(calculate_thi(float(t), float(h))), 2)
+            except (TypeError, ValueError):
+                d['thi'] = None
+        else:
+            d['thi'] = None
+        out.append(d)
+    return jsonify(out)
 
 @app.route('/api/cameras/latest')
 @login_required
@@ -515,7 +582,12 @@ def download_images():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'ts': datetime.utcnow().isoformat()}), 200
+    now_utc = datetime.now(timezone.utc)
+    return jsonify({
+        'status': 'ok',
+        'ts': now_utc.isoformat().replace('+00:00', 'Z'),
+        'ts_br': format_br_datetime(now_utc.isoformat().replace('+00:00', 'Z'), '%Y-%m-%d %H:%M:%S'),
+    }), 200
 
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 

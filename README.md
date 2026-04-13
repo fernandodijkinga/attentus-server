@@ -15,7 +15,7 @@ git init attentus-server
 cd attentus-server
 # copiar todos os arquivos deste pacote
 git add . && git commit -m "init"
-git remote add origin https://github.com/<seu-user>/attentus-server.git
+git remote add origin https://github.com/fernandodijkinga/attentus-server.git
 git push -u origin main
 ```
 
@@ -54,16 +54,29 @@ Se usar API_KEY, adicione no firmware antes do `http.POST(...)`:
 http.addHeader("X-API-Key", "sua-api-key-aqui");
 ```
 
-Payload JSON esperado (já gerado pelo firmware):
+Payload JSON esperado (já gerado pelo firmware). Temperatura e umidade vêm do **DHT22**; pressão e altitude do **BMP280**. Podes usar chaves explícitas `dht22_temp_c` / `dht22_humidity` ou os nomes legados abaixo (o servidor aceita ambos):
 ```json
 {
   "device": "SensorNode-01",
-  "bh1750_lux": 342.5,
-  "bmp280_temp_c": 23.45,
-  "bmp280_press_hpa": 998.1,
-  "bmp280_alt_m": 887.2,
+  "bh1750_lux": 312.5,
+  "dht22_temp_c": 25.3,
+  "dht22_humidity": 68.1,
+  "bmp280_press_hpa": 997.4,
+  "bmp280_alt_m": 891.2,
   "uptime_s": 3600,
   "rssi": -65
+}
+```
+
+Equivalente com chaves legadas (mesmo conteúdo que o exemplo acima):
+```json
+{
+  "device": "SensorNode-01",
+  "bh1750_lux": 312.5,
+  "bmp280_temp_c": 25.3,
+  "bme280_humidity": 68.1,
+  "bmp280_press_hpa": 997.4,
+  "bmp280_alt_m": 891.2
 }
 ```
 

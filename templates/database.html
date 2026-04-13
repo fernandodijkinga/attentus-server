@@ -100,7 +100,7 @@
   <table>
     <thead>
       <tr>
-        <th>ID</th><th>Recebido (UTC)</th><th>Dispositivo</th>
+        <th>ID</th><th>Recebido (Brasília)</th><th>Dispositivo</th>
         <th>Lux</th><th>Temp °C</th><th>Pressão hPa</th>
         <th>Alt m</th><th>Umid %</th><th>RSSI</th><th></th>
       </tr>
@@ -109,7 +109,7 @@
     {% for r in records %}
     <tr id="row-{{ r.id }}">
       <td class="mono text-muted">{{ r.id }}</td>
-      <td class="mono">{{ r.received_at[:19].replace('T',' ') }}</td>
+      <td class="mono">{{ r.received_at|br_dt }}</td>
       <td class="td-accent">{{ r.device_name }}</td>
       <td class="edit-cell mono" data-id="{{ r.id }}" data-field="lux"
           ondblclick="startEdit(this)">{{ '%.1f' % r.lux if r.lux else '—' }}</td>
@@ -137,7 +137,7 @@
   <table>
     <thead>
       <tr>
-        <th>ID</th><th>Recebido (UTC)</th><th>Câmera</th>
+        <th>ID</th><th>Recebido (Brasília)</th><th>Câmera</th>
         <th>Prévia</th><th>Cap #</th><th>Tamanho</th><th>RSSI</th>
         <th>Notas</th><th></th>
       </tr>
@@ -146,7 +146,7 @@
     {% for r in records %}
     <tr id="row-{{ r.id }}">
       <td class="mono text-muted">{{ r.id }}</td>
-      <td class="mono">{{ r.received_at[:19].replace('T',' ') }}</td>
+      <td class="mono">{{ r.received_at|br_dt }}</td>
       <td class="td-blue">{{ r.device_name }}</td>
       <td>
         {% if r.filename %}
