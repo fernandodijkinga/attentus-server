@@ -41,7 +41,7 @@ from flask import (
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
-from thi.calculator import calculate_thi, thi_holstein_zones_for_chart, thi_thresholds_json
+from thi_calculator import calculate_thi, thi_holstein_zones_for_chart, thi_thresholds_json
 
 TZ_BR = ZoneInfo('America/Sao_Paulo')
 
