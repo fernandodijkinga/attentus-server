@@ -102,11 +102,66 @@ API_KEY = os.environ.get('API_KEY', '')
 
 # Temperatura/umidade: DHT22 (dht22_*) ou chaves legadas bmp280/bme280 no JSON do firmware
 def _ingest_temp_c(data):
-    return data.get('dht22_temp_c') or data.get('bmp280_temp_c') or data.get('bme280_temp_c')
+    if not isinstance(data, dict):
+        return None
+    for key in ('dht22_temp_c', 'bmp280_temp_c', 'bme280_temp_c'):
+        if key not in data:
+            continue
+        v = _float_or_none(data[key])
+        if v is not None:
+            return v
+    return None
 
 
 def _ingest_humidity(data):
-    return data.get('dht22_humidity') or data.get('bme280_humidity') or data.get('humidity')
+    if not isinstance(data, dict):
+        return None
+    for key in ('dht22_humidity', 'bme280_humidity', 'humidity'):
+        if key not in data:
+            continue
+        v = _float_or_none(data[key])
+        if v is not None:
+            return v
+    return None
+
+
+def _float_or_none(v):
+    if v is None:
+        return None
+    if isinstance(v, bytes):
+        v = v.decode('utf-8', errors='ignore')
+    if isinstance(v, str) and not v.strip():
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _temp_humidity_for_thi(row_dict):
+    """
+    Temperatura e UR para cálculo do THI: colunas SQLite; se faltar algum valor,
+    reutiliza as mesmas chaves do POST em raw_json (dados legados ou colunas vazias).
+    """
+    t = _float_or_none(row_dict.get('temp_c'))
+    h = _float_or_none(row_dict.get('humidity'))
+    if t is not None and h is not None:
+        return t, h
+    raw = row_dict.get('raw_json')
+    if not raw:
+        return t, h
+    try:
+        j = json.loads(raw) if isinstance(raw, str) else raw
+    except (json.JSONDecodeError, TypeError):
+        return t, h
+    if not isinstance(j, dict):
+        return t, h
+    if t is None:
+        t = _float_or_none(_ingest_temp_c(j))
+    if h is None:
+        h = _float_or_none(_ingest_humidity(j))
+    return t, h
+
 
 ALLOWED_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png'}
 MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10 MB
@@ -429,14 +484,14 @@ def weather_data():
 
     where = " AND ".join(conditions)
     rows = db.execute(
-        f"SELECT received_at, device_name, lux, temp_c, press_hpa, alt_m, humidity, rssi "
+        f"SELECT received_at, device_name, lux, temp_c, press_hpa, alt_m, humidity, rssi, raw_json "
         f"FROM weather WHERE {where} ORDER BY received_at ASC LIMIT 1000",
         params
     ).fetchall()
     out = []
     for r in rows:
         d = dict(r)
-        t, h = d.get('temp_c'), d.get('humidity')
+        t, h = _temp_humidity_for_thi(d)
         if t is not None and h is not None:
             try:
                 d['thi'] = round(float(calculate_thi(float(t), float(h))), 2)
@@ -444,6 +499,7 @@ def weather_data():
                 d['thi'] = None
         else:
             d['thi'] = None
+        d.pop('raw_json', None)
         out.append(d)
     return jsonify(out)
 
