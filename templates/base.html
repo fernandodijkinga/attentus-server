@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}Attentus{% endblock %} — GenMate</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:      #070d14;
+  --surf:    #0c1820;
+  --surf2:   #111f2c;
+  --surf3:   #162534;
+  --border:  #1c3040;
+  --border2: #254055;
+  --accent:  #00e5a0;
+  --accent2: #0099ff;
+  --accent3: #ff9f40;
+  --err:     #ff4d6a;
+  --warn:    #ffe066;
+  --text:    #cce4f0;
+  --text2:   #7a9aae;
+  --muted:   #3d5f72;
+  --mono:    'JetBrains Mono', monospace;
+  --sans:    'Syne', sans-serif;
+  --sidebar: 220px;
+  --radius:  10px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  min-height: 100vh;
+  display: flex;
+  overflow-x: hidden;
+}
+body::before {
+  content: '';
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(ellipse 70% 50% at 15% 50%, rgba(0,229,160,.04) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 70% at 85% 20%, rgba(0,153,255,.04) 0%, transparent 60%);
+}
+
+/* ── SIDEBAR ───────────────────────────────────────── */
+.sidebar {
+  position: fixed; top: 0; left: 0; height: 100vh;
+  width: var(--sidebar);
+  background: var(--surf);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  z-index: 100;
+  padding: 0;
+}
+.sidebar-logo {
+  padding: 24px 20px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-logo .wordmark {
+  font-weight: 800; font-size: 18px; letter-spacing: -.5px; color: #fff;
+}
+.sidebar-logo .wordmark em { color: var(--accent); font-style: normal; }
+.sidebar-logo .sub {
+  font-size: 9px; letter-spacing: 2.5px; text-transform: uppercase;
+  color: var(--muted); margin-top: 3px; font-family: var(--mono);
+}
+.sidebar-nav {
+  flex: 1; padding: 16px 12px; display: flex; flex-direction: column; gap: 2px;
+  overflow-y: auto;
+}
+.nav-section {
+  font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--muted); padding: 12px 8px 6px; font-family: var(--mono);
+}
+.nav-link {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: 8px;
+  color: var(--text2); text-decoration: none;
+  font-size: 13px; font-weight: 600;
+  transition: all .15s ease;
+  position: relative;
+}
+.nav-link:hover { background: var(--surf2); color: var(--text); }
+.nav-link.active {
+  background: rgba(0,229,160,.1);
+  color: var(--accent);
+  border: 1px solid rgba(0,229,160,.2);
+}
+.nav-link .icon { font-size: 15px; width: 20px; text-align: center; }
+.nav-badge {
+  margin-left: auto; background: var(--accent); color: #000;
+  font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 10px;
+  font-family: var(--mono);
+}
+.sidebar-footer {
+  padding: 16px 12px;
+  border-top: 1px solid var(--border);
+}
+.user-pill {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 8px;
+  background: var(--surf2);
+}
+.user-avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: #000;
+  flex-shrink: 0;
+}
+.user-name { font-size: 12px; font-weight: 600; color: var(--text); }
+.user-role { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+.logout-btn {
+  margin-left: auto; font-size: 16px; color: var(--muted);
+  text-decoration: none; transition: color .15s;
+}
+.logout-btn:hover { color: var(--err); }
+
+/* ── MAIN CONTENT ──────────────────────────────────── */
+.main {
+  margin-left: var(--sidebar);
+  flex: 1; min-height: 100vh;
+  padding: 28px 32px;
+  position: relative; z-index: 1;
+  max-width: calc(100vw - var(--sidebar));
+}
+.page-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 28px; gap: 16px;
+}
+.page-title { font-size: 24px; font-weight: 800; color: #fff; letter-spacing: -.5px; }
+.page-title span { color: var(--accent); }
+.page-sub { font-size: 12px; color: var(--text2); margin-top: 4px;
+            font-family: var(--mono); letter-spacing: .5px; }
+
+/* ── CARDS ─────────────────────────────────────────── */
+.card {
+  background: var(--surf);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.card-title {
+  font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 14px; font-family: var(--mono);
+}
+
+/* ── STAT CARDS ────────────────────────────────────── */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap: 12px; }
+.stat-card {
+  background: var(--surf);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 18px;
+  transition: border-color .2s;
+}
+.stat-card:hover { border-color: var(--border2); }
+.stat-label { font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+              color: var(--muted); font-family: var(--mono); margin-bottom: 10px; }
+.stat-value { font-family: var(--mono); font-size: 32px; font-weight: 700;
+              color: #fff; line-height: 1; }
+.stat-value.accent { color: var(--accent); }
+.stat-value.blue   { color: var(--accent2); }
+.stat-value.orange { color: var(--accent3); }
+.stat-sub { font-size: 11px; color: var(--text2); margin-top: 6px;
+            font-family: var(--mono); }
+
+/* ── GRID HELPERS ──────────────────────────────────── */
+.grid-2 { display: grid; grid-template-columns: repeat(2,1fr); gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
+@media (max-width: 900px) { .grid-2,.grid-3 { grid-template-columns: 1fr; } }
+
+/* ── TABLE ─────────────────────────────────────────── */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+th {
+  text-align: left; padding: 10px 12px;
+  font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--muted); border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+td {
+  padding: 10px 12px; color: var(--text2);
+  border-bottom: 1px solid rgba(28,48,64,.5);
+  white-space: nowrap;
+}
+tr:hover td { background: var(--surf2); color: var(--text); }
+td.mono { font-family: var(--mono); }
+.td-accent { color: var(--accent); }
+.td-blue   { color: var(--accent2); }
+.td-orange { color: var(--accent3); }
+
+/* ── BUTTONS ────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-radius: 8px; border: 0;
+  font-family: var(--sans); font-size: 13px; font-weight: 700;
+  cursor: pointer; text-decoration: none; transition: all .15s;
+}
+.btn-accent {
+  background: linear-gradient(135deg, var(--accent), #00b380);
+  color: #060c12;
+}
+.btn-accent:hover { filter: brightness(1.1); }
+.btn-ghost {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text2);
+}
+.btn-ghost:hover { border-color: var(--border2); color: var(--text); }
+.btn-danger {
+  background: rgba(255,77,106,.15); border: 1px solid rgba(255,77,106,.3);
+  color: var(--err);
+}
+.btn-danger:hover { background: rgba(255,77,106,.25); }
+.btn-sm { padding: 5px 10px; font-size: 11px; border-radius: 6px; }
+
+/* ── PILL / BADGE ──────────────────────────────────── */
+.pill {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  font-size: 10px; font-family: var(--mono); font-weight: 700;
+}
+.pill-green { background: rgba(0,229,160,.15); color: var(--accent); }
+.pill-blue  { background: rgba(0,153,255,.15); color: var(--accent2); }
+.pill-orange{ background: rgba(255,159,64,.15); color: var(--accent3); }
+.pill-red   { background: rgba(255,77,106,.15); color: var(--err); }
+
+/* ── INPUTS ─────────────────────────────────────────── */
+.field { margin-bottom: 16px; }
+.field label {
+  display: block; font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
+  font-family: var(--mono);
+}
+select, input[type=text], input[type=search], input[type=number],
+input[type=password], textarea {
+  width: 100%; padding: 9px 12px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg);
+  color: var(--text); font-family: var(--mono); font-size: 13px; outline: 0;
+  transition: border-color .2s;
+}
+select:focus, input:focus, textarea:focus { border-color: var(--accent); }
+select { cursor: pointer; }
+
+/* ── PAGINATION ─────────────────────────────────────── */
+.pagination { display: flex; align-items: center; gap: 6px; margin-top: 16px; flex-wrap: wrap; }
+.page-link {
+  padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border);
+  color: var(--text2); text-decoration: none; font-family: var(--mono); font-size: 12px;
+  transition: all .15s;
+}
+.page-link:hover { border-color: var(--border2); color: var(--text); }
+.page-link.current { background: rgba(0,229,160,.15); border-color: rgba(0,229,160,.3); color: var(--accent); }
+.page-info { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: 8px; }
+
+/* ── MISC ───────────────────────────────────────────── */
+.separator { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
+.empty-state {
+  text-align: center; padding: 60px 20px;
+  color: var(--muted); font-family: var(--mono); font-size: 13px;
+}
+.empty-state .icon { font-size: 40px; margin-bottom: 12px; }
+.flex { display: flex; }
+.flex-between { display: flex; align-items: center; justify-content: space-between; }
+.gap-8  { gap: 8px; }
+.gap-12 { gap: 12px; }
+.gap-16 { gap: 16px; }
+.mb-16 { margin-bottom: 16px; }
+.mb-24 { margin-bottom: 24px; }
+.text-muted { color: var(--muted); }
+.text-accent { color: var(--accent); }
+.mono { font-family: var(--mono); }
+
+/* ── TOAST ──────────────────────────────────────────── */
+#toast-container {
+  position: fixed; bottom: 24px; right: 24px;
+  display: flex; flex-direction: column; gap: 8px; z-index: 9999;
+}
+.toast {
+  padding: 12px 18px; border-radius: 8px; font-size: 13px;
+  font-family: var(--mono); max-width: 320px;
+  animation: slideIn .25s ease;
+}
+.toast-ok  { background: rgba(0,229,160,.15); border: 1px solid rgba(0,229,160,.3); color: var(--accent); }
+.toast-err { background: rgba(255,77,106,.15); border: 1px solid rgba(255,77,106,.3); color: var(--err); }
+@keyframes slideIn { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+</style>
+{% block head %}{% endblock %}
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <div class="wordmark">AT<em>TENTUS</em></div>
+    <div class="sub">GenMate · Field Intelligence</div>
+  </div>
+
+  <div class="sidebar-nav">
+    <div class="nav-section">Principal</div>
+    <a href="{{ url_for('index') }}"    class="nav-link {% if request.endpoint == 'index' %}active{% endif %}">
+      <span class="icon">⬡</span> Dashboard
+    </a>
+    <a href="{{ url_for('weather') }}"  class="nav-link {% if request.endpoint == 'weather' %}active{% endif %}">
+      <span class="icon">🌡</span> Weather
+    </a>
+    <a href="{{ url_for('cameras') }}"  class="nav-link {% if request.endpoint == 'cameras' %}active{% endif %}">
+      <span class="icon">📷</span> Câmeras
+    </a>
+
+    <div class="nav-section">Dados</div>
+    <a href="{{ url_for('database') }}"         class="nav-link {% if request.endpoint == 'database' and request.args.get('tab','weather')=='weather' %}active{% endif %}">
+      <span class="icon">☁</span> Weather DB
+    </a>
+    <a href="{{ url_for('database', tab='images') }}" class="nav-link {% if request.endpoint == 'database' and request.args.get('tab')=='images' %}active{% endif %}">
+      <span class="icon">🗂</span> Imagens DB
+    </a>
+
+    <div class="nav-section">Export</div>
+    <a href="{{ url_for('download_weather') }}" class="nav-link">
+      <span class="icon">↓</span> CSV Weather
+    </a>
+    <a href="{{ url_for('download_images') }}" class="nav-link">
+      <span class="icon">↓</span> ZIP Imagens
+    </a>
+
+    <div class="nav-section">API</div>
+    <a href="/api/weather/data" target="_blank" class="nav-link">
+      <span class="icon">⟨⟩</span> /api/weather
+    </a>
+  </div>
+
+  <div class="sidebar-footer">
+    <div class="user-pill">
+      <div class="user-avatar">{{ session.username[0]|upper }}</div>
+      <div>
+        <div class="user-name">{{ session.username }}</div>
+        <div class="user-role">admin</div>
+      </div>
+      <a href="{{ url_for('logout') }}" class="logout-btn" title="Sair">⏻</a>
+    </div>
+  </div>
+</nav>
+
+<!-- MAIN -->
+<main class="main">
+  {% block content %}{% endblock %}
+</main>
+
+<!-- TOAST -->
+<div id="toast-container"></div>
+
+<script>
+function toast(msg, ok=true) {
+  const el = document.createElement('div');
+  el.className = 'toast ' + (ok ? 'toast-ok' : 'toast-err');
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+async function apiDelete(url, onSuccess) {
+  if (!confirm('Confirmar exclusão?')) return;
+  const r = await fetch(url, {method: 'DELETE'});
+  if (r.ok) { toast('Excluído com sucesso'); if (onSuccess) onSuccess(); }
+  else toast('Erro ao excluir', false);
+}
+</script>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

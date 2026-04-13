@@ -1,0 +1,295 @@
+{% extends "base.html" %}
+{% block title %}Database{% endblock %}
+
+{% block head %}
+<style>
+.tabs { display: flex; gap: 4px; margin-bottom: 20px; }
+.tab-btn {
+  padding: 8px 18px; border-radius: 8px; border: 1px solid var(--border);
+  background: transparent; color: var(--text2); font-family: var(--sans);
+  font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s;
+  text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+}
+.tab-btn:hover { border-color: var(--border2); color: var(--text); }
+.tab-btn.active { background: rgba(0,229,160,.1); border-color: rgba(0,229,160,.2); color: var(--accent); }
+
+.filters {
+  display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.filters select, .filters input { min-width: 0; flex: 1; max-width: 220px; }
+.filters .btn { flex-shrink: 0; }
+
+.record-count {
+  font-family: var(--mono); font-size: 11px; color: var(--muted); margin-bottom: 10px;
+}
+
+/* Editable cells */
+.edit-cell { cursor: pointer; }
+.edit-cell:hover { background: rgba(0,229,160,.08) !important; color: var(--accent) !important; }
+.edit-input {
+  width: 100%; background: var(--bg); border: 1px solid var(--accent);
+  border-radius: 4px; color: var(--text); font-family: var(--mono);
+  font-size: 12px; padding: 2px 6px; outline: 0;
+}
+
+/* Image thumb */
+.img-thumb {
+  width: 48px; height: 36px; object-fit: cover;
+  border-radius: 4px; border: 1px solid var(--border);
+  cursor: pointer; transition: transform .15s;
+}
+.img-thumb:hover { transform: scale(1.1); border-color: var(--accent2); }
+
+/* Notes inline */
+.notes-cell { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">🗂 <span>Database</span></div>
+    <div class="page-sub">Gerenciar, editar e exportar dados coletados</div>
+  </div>
+  <div class="flex gap-8">
+    {% if tab == 'weather' %}
+    <a href="{{ url_for('download_weather', device=device_filter) }}" class="btn btn-ghost btn-sm">↓ CSV</a>
+    {% else %}
+    <a href="{{ url_for('download_images', device=device_filter) }}" class="btn btn-ghost btn-sm">↓ ZIP</a>
+    {% endif %}
+  </div>
+</div>
+
+<!-- TABS -->
+<div class="tabs">
+  <a href="{{ url_for('database', tab='weather', device=device_filter, q=search) }}"
+     class="tab-btn {% if tab == 'weather' %}active{% endif %}">☁ Weather</a>
+  <a href="{{ url_for('database', tab='images', device=device_filter, q=search) }}"
+     class="tab-btn {% if tab == 'images' %}active{% endif %}">📷 Imagens</a>
+</div>
+
+<!-- FILTERS -->
+<div class="filters">
+  <div>
+    <label style="font-size:10px;color:var(--muted);font-family:var(--mono);display:block;margin-bottom:4px;letter-spacing:1.5px;text-transform:uppercase">Dispositivo</label>
+    <select id="filter-device" onchange="applyFilter()">
+      <option value="">Todos</option>
+      {% for d in devices %}
+      <option value="{{ d }}" {% if d == device_filter %}selected{% endif %}>{{ d }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label style="font-size:10px;color:var(--muted);font-family:var(--mono);display:block;margin-bottom:4px;letter-spacing:1.5px;text-transform:uppercase">Buscar</label>
+    <input type="search" id="filter-search" placeholder="dispositivo, notas…" value="{{ search }}">
+  </div>
+  <button class="btn btn-ghost btn-sm" onclick="applyFilter()">Filtrar</button>
+  {% if device_filter or search %}
+  <a href="{{ url_for('database', tab=tab) }}" class="btn btn-ghost btn-sm">✕ Limpar</a>
+  {% endif %}
+</div>
+
+<div class="record-count">{{ total }} registro{% if total != 1 %}s{% endif %} encontrados</div>
+
+<!-- TABLE -->
+<div class="card" style="padding:0; overflow:hidden;">
+  <div class="table-wrap">
+
+  {% if tab == 'weather' %}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Recebido (UTC)</th><th>Dispositivo</th>
+        <th>Lux</th><th>Temp °C</th><th>Pressão hPa</th>
+        <th>Alt m</th><th>Umid %</th><th>RSSI</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in records %}
+    <tr id="row-{{ r.id }}">
+      <td class="mono text-muted">{{ r.id }}</td>
+      <td class="mono">{{ r.received_at[:19].replace('T',' ') }}</td>
+      <td class="td-accent">{{ r.device_name }}</td>
+      <td class="edit-cell mono" data-id="{{ r.id }}" data-field="lux"
+          ondblclick="startEdit(this)">{{ '%.1f' % r.lux if r.lux else '—' }}</td>
+      <td class="edit-cell mono" data-id="{{ r.id }}" data-field="temp_c"
+          ondblclick="startEdit(this)">{{ '%.2f' % r.temp_c if r.temp_c else '—' }}</td>
+      <td class="edit-cell mono" data-id="{{ r.id }}" data-field="press_hpa"
+          ondblclick="startEdit(this)">{{ '%.1f' % r.press_hpa if r.press_hpa else '—' }}</td>
+      <td class="mono">{{ '%.1f' % r.alt_m if r.alt_m else '—' }}</td>
+      <td class="mono">{{ '%.1f' % r.humidity if r.humidity else '—' }}</td>
+      <td class="mono">{{ r.rssi if r.rssi else '—' }}</td>
+      <td>
+        <button class="btn btn-danger btn-sm"
+                onclick="apiDelete('/api/record/weather/{{ r.id }}', () => document.getElementById('row-{{ r.id }}').remove())">
+          ✕
+        </button>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="10"><div class="empty-state"><div class="icon">☁</div>Nenhum dado meteorológico</div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  {% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Recebido (UTC)</th><th>Câmera</th>
+        <th>Prévia</th><th>Cap #</th><th>Tamanho</th><th>RSSI</th>
+        <th>Notas</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in records %}
+    <tr id="row-{{ r.id }}">
+      <td class="mono text-muted">{{ r.id }}</td>
+      <td class="mono">{{ r.received_at[:19].replace('T',' ') }}</td>
+      <td class="td-blue">{{ r.device_name }}</td>
+      <td>
+        {% if r.filename %}
+        <img class="img-thumb"
+             src="{{ url_for('serve_image', device=r.device_name, filename=r.filename) }}"
+             alt=""
+             onclick="window.open(this.src)">
+        {% else %}—{% endif %}
+      </td>
+      <td class="mono">{{ r.capture_id }}</td>
+      <td class="mono">{{ '%.1f KB' % (r.filesize/1024) if r.filesize else '—' }}</td>
+      <td class="mono">{{ r.rssi if r.rssi else '—' }}</td>
+      <td class="notes-cell edit-cell"
+          data-id="{{ r.id }}" data-field="notes"
+          ondblclick="startNoteEdit(this, {{ r.id }})">
+        {{ r.notes or '—' }}
+      </td>
+      <td>
+        <button class="btn btn-danger btn-sm"
+                onclick="apiDelete('/api/record/image/{{ r.id }}', () => document.getElementById('row-{{ r.id }}').remove())">
+          ✕
+        </button>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9"><div class="empty-state"><div class="icon">📷</div>Nenhuma imagem registrada</div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  </div>
+</div>
+
+<!-- PAGINATION -->
+{% if total_pages > 1 %}
+<div class="pagination">
+  {% if page > 1 %}
+  <a href="{{ url_for('database', tab=tab, page=page-1, device=device_filter, q=search) }}" class="page-link">‹</a>
+  {% endif %}
+
+  {% for p in range([1, page-3]|max, [total_pages+1, page+4]|min) %}
+  <a href="{{ url_for('database', tab=tab, page=p, device=device_filter, q=search) }}"
+     class="page-link {% if p == page %}current{% endif %}">{{ p }}</a>
+  {% endfor %}
+
+  {% if page < total_pages %}
+  <a href="{{ url_for('database', tab=tab, page=page+1, device=device_filter, q=search) }}" class="page-link">›</a>
+  {% endif %}
+
+  <span class="page-info">página {{ page }} / {{ total_pages }}</span>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function applyFilter() {
+  const device = document.getElementById('filter-device').value;
+  const search = document.getElementById('filter-search').value;
+  const url = new URL(window.location);
+  url.searchParams.set('tab', '{{ tab }}');
+  url.searchParams.set('page', '1');
+  url.searchParams.set('device', device);
+  url.searchParams.set('q', search);
+  window.location = url.toString();
+}
+document.getElementById('filter-search').addEventListener('keydown', e => {
+  if (e.key === 'Enter') applyFilter();
+});
+
+// Inline edit for weather fields (double-click)
+function startEdit(cell) {
+  if (cell.querySelector('input')) return;
+  const original = cell.textContent.trim();
+  const val = original === '—' ? '' : original;
+  cell.dataset.original = original;
+  cell.innerHTML = `<input class="edit-input" type="number" step="any" value="${val}">`;
+  const inp = cell.querySelector('input');
+  inp.focus(); inp.select();
+  inp.addEventListener('blur',  () => commitEdit(cell));
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  commitEdit(cell);
+    if (e.key === 'Escape') cancelEdit(cell);
+  });
+}
+
+async function commitEdit(cell) {
+  const inp   = cell.querySelector('input');
+  if (!inp) return;
+  const newVal = inp.value.trim();
+  const id     = cell.dataset.id;
+  const field  = cell.dataset.field;
+
+  if (newVal === '' || newVal === cell.dataset.original) {
+    cancelEdit(cell); return;
+  }
+
+  const body = {}; body[field] = parseFloat(newVal);
+  const r = await fetch(`/api/record/weather/${id}`, {
+    method: 'PATCH',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  if (r.ok) {
+    cell.textContent = parseFloat(newVal).toFixed(2);
+    toast('Campo atualizado');
+  } else {
+    cancelEdit(cell); toast('Erro ao atualizar', false);
+  }
+}
+
+function cancelEdit(cell) {
+  cell.textContent = cell.dataset.original || '—';
+}
+
+// Inline note edit for images
+function startNoteEdit(cell, id) {
+  if (cell.querySelector('input')) return;
+  const original = cell.textContent.trim();
+  cell.dataset.original = original;
+  cell.innerHTML = `<input class="edit-input" type="text" value="${original === '—' ? '' : original}" placeholder="Adicionar nota…">`;
+  const inp = cell.querySelector('input');
+  inp.focus();
+  inp.addEventListener('blur',    () => commitNote(cell, id));
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  commitNote(cell, id);
+    if (e.key === 'Escape') { cell.textContent = cell.dataset.original || '—'; }
+  });
+}
+
+async function commitNote(cell, id) {
+  const inp = cell.querySelector('input');
+  if (!inp) return;
+  const notes = inp.value.trim();
+  const r = await fetch(`/api/record/image/${id}/notes`, {
+    method: 'PATCH',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ notes })
+  });
+  if (r.ok) { cell.textContent = notes || '—'; toast('Nota salva'); }
+  else { cell.textContent = cell.dataset.original || '—'; toast('Erro', false); }
+}
+</script>
+{% endblock %}

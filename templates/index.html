@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block head %}
+<style>
+.recent-row td:first-child { color: var(--muted); }
+.activity-bar { display: flex; align-items: flex-end; gap: 3px; height: 48px; }
+.act-col { flex: 1; background: rgba(0,229,160,.25); border-radius: 3px 3px 0 0;
+           min-height: 3px; transition: background .2s; }
+.act-col:hover { background: var(--accent); }
+.api-block {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 14px 16px; font-family: var(--mono);
+  font-size: 12px; overflow-x: auto;
+}
+.api-block code { color: var(--accent2); }
+.api-block .method { color: var(--accent3); font-weight: 700; }
+.api-block .url { color: var(--accent); }
+.api-row { display: flex; gap: 8px; align-items: baseline;
+           padding: 4px 0; border-bottom: 1px solid rgba(28,48,64,.5); }
+.api-row:last-child { border: 0; }
+.sensor-ok { color: var(--accent); }
+.sensor-err { color: var(--err); }
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 8px var(--accent);
+  display: inline-block; animation: pulse 2s infinite; margin-right: 6px;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">ATENTUS <span>Dashboard</span></div>
+    <div class="page-sub">Piloto — coleta de dados para treinamento de IA</div>
+  </div>
+  <div class="flex gap-8">
+    <a href="{{ url_for('download_weather') }}" class="btn btn-ghost btn-sm">↓ CSV</a>
+    <a href="{{ url_for('download_images') }}"  class="btn btn-ghost btn-sm">↓ ZIP</a>
+  </div>
+</div>
+
+<!-- STAT CARDS -->
+<div class="stat-grid mb-24">
+  <div class="stat-card">
+    <div class="stat-label">Leituras Meteo</div>
+    <div class="stat-value accent">{{ stats.weather_total }}</div>
+    <div class="stat-sub">última: {{ stats.weather_last }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Imagens Capturadas</div>
+    <div class="stat-value blue">{{ stats.images_total }}</div>
+    <div class="stat-sub">última: {{ stats.images_last }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Câmeras Ativas</div>
+    <div class="stat-value orange">{{ stats.cameras_active }}</div>
+    <div class="stat-sub">baias monitoradas</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Estações Meteo</div>
+    <div class="stat-value">{{ stats.stations_active }}</div>
+    <div class="stat-sub">nodes ativos</div>
+  </div>
+</div>
+
+<div class="grid-2 mb-24">
+
+  <!-- RECENT WEATHER -->
+  <div class="card">
+    <div class="card-title">☁ Últimas leituras meteorológicas</div>
+    {% if recent_weather %}
+    <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Timestamp</th><th>Device</th><th>Temp</th><th>Lux</th><th>Press</th></tr>
+      </thead>
+      <tbody>
+        {% for r in recent_weather %}
+        <tr>
+          <td class="mono text-muted">{{ r.received_at[:19].replace('T',' ') }}</td>
+          <td class="td-accent">{{ r.device_name }}</td>
+          <td>{{ '%.1f °C' % r.temp_c if r.temp_c else '—' }}</td>
+          <td>{{ '%.0f lx' % r.lux if r.lux else '—' }}</td>
+          <td>{{ '%.1f hPa' % r.press_hpa if r.press_hpa else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <div style="margin-top:12px">
+      <a href="{{ url_for('weather') }}" class="btn btn-ghost btn-sm">Ver gráficos →</a>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <div class="icon">🌡</div>
+      Aguardando dados da estação meteorológica
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- RECENT IMAGES -->
+  <div class="card">
+    <div class="card-title">📷 Últimas imagens recebidas</div>
+    {% if recent_images %}
+    <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Timestamp</th><th>Câmera</th><th>ID</th><th>Tamanho</th></tr>
+      </thead>
+      <tbody>
+        {% for r in recent_images %}
+        <tr>
+          <td class="mono text-muted">{{ r.received_at[:19].replace('T',' ') }}</td>
+          <td class="td-blue">{{ r.device_name }}</td>
+          <td class="mono">{{ r.capture_id }}</td>
+          <td class="mono">{{ '%.1f KB' % (r.filesize/1024) if r.filesize else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <div style="margin-top:12px">
+      <a href="{{ url_for('cameras') }}" class="btn btn-ghost btn-sm">Ver câmeras →</a>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <div class="icon">📷</div>
+      Aguardando imagens das câmeras de baia
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+
+<!-- API ENDPOINTS -->
+<div class="card mb-24">
+  <div class="card-title">⟨⟩ Endpoints de ingestão dos dispositivos ESP32</div>
+  <div class="api-block">
+    <div class="api-row">
+      <span class="method">POST</span>
+      <span class="url">/api/sensors</span>
+      <span style="color:var(--text2)">— Estação meteorológica (JSON: device, bh1750_lux, bmp280_temp_c, bmp280_press_hpa, bmp280_alt_m, rssi)</span>
+    </div>
+    <div class="api-row">
+      <span class="method">POST</span>
+      <span class="url">/api/upload</span>
+      <span style="color:var(--text2)">— Câmera de baia (multipart/form-data: image, device_name, capture_id, rssi)</span>
+    </div>
+    <div class="api-row">
+      <span class="method">GET</span>
+      <span class="url">/api/weather/data?hours=24&device=X</span>
+      <span style="color:var(--text2)">— JSON para gráficos</span>
+    </div>
+    <div class="api-row">
+      <span class="method">GET</span>
+      <span class="url">/health</span>
+      <span style="color:var(--text2)">— Healthcheck (sem auth)</span>
+    </div>
+  </div>
+  <p style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:12px">
+    Configure <code style="color:var(--accent2)">serverURL</code> no firmware para:
+    <code style="color:var(--accent)">https://&lt;seu-app&gt;.onrender.com/api/sensors</code>
+    (estação) ou <code style="color:var(--accent)">…/api/upload</code> (câmera).
+    {% if not config.get('API_KEY') %}
+    <br>⚠ API_KEY não configurada — endpoint aberto. Defina no Render → Environment.
+    {% endif %}
+  </p>
+</div>
+
+<!-- ATIVIDADE ÚLTIMAS 24H -->
+{% if activity %}
+<div class="card">
+  <div class="card-title">Atividade — últimas 24h (leituras por hora)</div>
+  <div class="activity-bar" id="actbar"></div>
+  <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:6px">← 24h atrás · agora →</div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+{% if activity %}
+const actData = {{ activity | map(attribute=0) | list | tojson }};
+const actCnt  = {{ activity | map(attribute=1) | list | tojson }};
+const bar = document.getElementById('actbar');
+const maxV = Math.max(...actCnt, 1);
+// Build all 24 hours
+const map = {};
+actData.forEach((h,i) => map[h] = actCnt[i]);
+for (let h = 0; h < 24; h++) {
+  const col = document.createElement('div');
+  col.className = 'act-col';
+  const v = map[String(h).padStart(2,'0')] || 0;
+  col.style.height = Math.max(3, Math.round((v/maxV)*48)) + 'px';
+  col.title = `${String(h).padStart(2,'0')}:00 — ${v} leituras`;
+  bar.appendChild(col);
+}
+{% endif %}
+</script>
+{% endblock %}

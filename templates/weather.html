@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% block title %}Weather{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+.controls {
+  display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap;
+  background: var(--surf); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px 20px; margin-bottom: 20px;
+}
+.ctrl-field { display: flex; flex-direction: column; gap: 5px; }
+.ctrl-field label {
+  font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--muted); font-family: var(--mono);
+}
+.ctrl-field select, .ctrl-field input {
+  min-width: 140px; width: auto;
+}
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media(max-width:900px) { .chart-grid { grid-template-columns: 1fr; } }
+.chart-card { background: var(--surf); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+.chart-card canvas { display: block; width: 100% !important; height: 200px !important; }
+.chart-heading {
+  font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 14px; font-family: var(--mono);
+}
+.chart-heading span { color: var(--text); font-size: 18px; font-weight: 700; margin-right: 6px; font-family: var(--sans); }
+.stat-row { display: flex; gap: 20px; margin-top: 10px; flex-wrap: wrap; }
+.stat-item { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.stat-item b { color: var(--text2); }
+.loading-overlay {
+  display: flex; align-items: center; justify-content: center;
+  padding: 60px; color: var(--muted); font-family: var(--mono); font-size: 13px;
+  grid-column: 1/-1;
+}
+.spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--border);
+           border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite;
+           margin-right: 10px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.full-chart { grid-column: 1 / -1; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">🌡 <span>Weather</span></div>
+    <div class="page-sub">Dados meteorológicos das estações Attentus</div>
+  </div>
+  <a href="{{ url_for('download_weather') }}" class="btn btn-ghost btn-sm">↓ Exportar CSV</a>
+</div>
+
+<!-- FILTROS -->
+<div class="controls">
+  <div class="ctrl-field">
+    <label>Dispositivo</label>
+    <select id="sel-device">
+      <option value="">Todos</option>
+      {% for d in devices %}
+      <option value="{{ d }}">{{ d }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="ctrl-field">
+    <label>Período</label>
+    <select id="sel-hours">
+      <option value="6">Últimas 6h</option>
+      <option value="24" selected>Últimas 24h</option>
+      <option value="72">Últimos 3 dias</option>
+      <option value="168">Última semana</option>
+      <option value="720">Último mês</option>
+    </select>
+  </div>
+  <button class="btn btn-accent btn-sm" onclick="loadData()">Atualizar</button>
+  <div id="last-update" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:auto;align-self:center"></div>
+</div>
+
+<!-- CHARTS -->
+<div class="chart-grid" id="chart-grid">
+  <div class="loading-overlay"><span class="spinner"></span> Carregando dados...</div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const COLORS = {
+  temp:  { line:'#00e5a0', bg:'rgba(0,229,160,.08)' },
+  lux:   { line:'#ffb84d', bg:'rgba(255,184,77,.08)' },
+  press: { line:'#0099ff', bg:'rgba(0,153,255,.06)' },
+  hum:   { line:'#cc66ff', bg:'rgba(204,102,255,.07)' },
+  rssi:  { line:'#ff4d6a', bg:'rgba(255,77,106,.06)' },
+};
+
+const CHART_DEFAULTS = {
+  responsive: true,
+  maintainAspectRatio: false,
+  interaction: { mode: 'index', intersect: false },
+  plugins: {
+    legend: { display: false },
+    tooltip: { backgroundColor:'#0c1820', borderColor:'#1c3040', borderWidth:1,
+               titleColor:'#7a9aae', bodyColor:'#cce4f0',
+               titleFont:{family:'JetBrains Mono',size:10}, bodyFont:{family:'JetBrains Mono',size:11} }
+  },
+  scales: {
+    x: {
+      type: 'time',
+      time: { tooltipFormat: 'dd/MM HH:mm', displayFormats:{hour:'HH:mm',day:'dd/MM'} },
+      ticks: { color:'#3d5f72', font:{family:'JetBrains Mono',size:9}, maxTicksLimit:8 },
+      grid: { color:'#1c3040' }
+    },
+    y: {
+      ticks: { color:'#7a9aae', font:{family:'JetBrains Mono',size:10} },
+      grid: { color:'#1c3040' }
+    }
+  }
+};
+
+let charts = {};
+
+function makeDataset(data, key, label, color) {
+  return {
+    label, data: data.map(r => ({ x: r.received_at, y: r[key] })),
+    borderColor: color.line, backgroundColor: color.bg,
+    borderWidth: 2, pointRadius: data.length < 100 ? 3 : 0,
+    pointBackgroundColor: color.line, tension: .4, fill: true,
+  };
+}
+
+function computeStats(vals) {
+  const valid = vals.filter(v => v != null);
+  if (!valid.length) return { min:'—', max:'—', avg:'—' };
+  const mn = Math.min(...valid), mx = Math.max(...valid);
+  const av = valid.reduce((a,b)=>a+b,0)/valid.length;
+  return { min:mn.toFixed(1), max:mx.toFixed(1), avg:av.toFixed(1) };
+}
+
+function buildChart(id, data, key, title, unit, colorKey, opts={}) {
+  const canvas = document.getElementById(id);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  if (charts[id]) charts[id].destroy();
+
+  const cfg = JSON.parse(JSON.stringify(CHART_DEFAULTS));
+  if (opts.yMin !== undefined) cfg.scales.y.min = opts.yMin;
+
+  charts[id] = new Chart(ctx, {
+    type: 'line',
+    data: { datasets: [makeDataset(data, key, title, COLORS[colorKey])] },
+    options: cfg,
+  });
+
+  const vals = data.map(r => r[key]);
+  const s = computeStats(vals);
+  const statEl = document.getElementById(id + '-stats');
+  if (statEl) statEl.innerHTML =
+    `min <b>${s.min} ${unit}</b> &nbsp; max <b>${s.max} ${unit}</b> &nbsp; avg <b>${s.avg} ${unit}</b>`;
+}
+
+async function loadData() {
+  const device = document.getElementById('sel-device').value;
+  const hours  = document.getElementById('sel-hours').value;
+  const grid   = document.getElementById('chart-grid');
+
+  grid.innerHTML = '<div class="loading-overlay"><span class="spinner"></span> Carregando dados...</div>';
+
+  const params = new URLSearchParams({ hours });
+  if (device) params.append('device', device);
+
+  const res  = await fetch('/api/weather/data?' + params);
+  const data = await res.json();
+
+  if (!data.length) {
+    grid.innerHTML = '<div class="loading-overlay">Nenhum dado encontrado para este filtro.</div>';
+    return;
+  }
+
+  const hasHum  = data.some(r => r.humidity != null);
+
+  grid.innerHTML = `
+    <div class="chart-card">
+      <div class="chart-heading"><span>🌡</span> Temperatura</div>
+      <canvas id="ch-temp" height="200"></canvas>
+      <div class="stat-row"><div class="stat-item" id="ch-temp-stats"></div></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-heading"><span>☀</span> Luminosidade</div>
+      <canvas id="ch-lux" height="200"></canvas>
+      <div class="stat-row"><div class="stat-item" id="ch-lux-stats"></div></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-heading"><span>🌬</span> Pressão atmosférica</div>
+      <canvas id="ch-press" height="200"></canvas>
+      <div class="stat-row"><div class="stat-item" id="ch-press-stats"></div></div>
+    </div>
+    ${hasHum ? `
+    <div class="chart-card">
+      <div class="chart-heading"><span>💧</span> Umidade relativa</div>
+      <canvas id="ch-hum" height="200"></canvas>
+      <div class="stat-row"><div class="stat-item" id="ch-hum-stats"></div></div>
+    </div>` : `
+    <div class="chart-card">
+      <div class="chart-heading"><span>📶</span> RSSI (sinal WiFi)</div>
+      <canvas id="ch-rssi" height="200"></canvas>
+      <div class="stat-row"><div class="stat-item" id="ch-rssi-stats"></div></div>
+    </div>`}
+    <div class="chart-card full-chart">
+      <div class="chart-heading"><span>⛰</span> Altitude estimada</div>
+      <canvas id="ch-alt" height="160"></canvas>
+      <div class="stat-row"><div class="stat-item" id="ch-alt-stats"></div></div>
+    </div>
+  `;
+
+  requestAnimationFrame(() => {
+    buildChart('ch-temp',  data, 'temp_c',    'Temperatura', '°C',  'temp');
+    buildChart('ch-lux',   data, 'lux',        'Luminosidade','lx',  'lux');
+    buildChart('ch-press', data, 'press_hpa',  'Pressão',     'hPa', 'press');
+    if (hasHum)
+      buildChart('ch-hum', data, 'humidity',   'Umidade',     '%',   'hum');
+    else
+      buildChart('ch-rssi',data, 'rssi',       'RSSI',        'dBm', 'rssi');
+    buildChart('ch-alt',   data, 'alt_m',      'Altitude',    'm',   'press');
+  });
+
+  const now = new Date().toLocaleTimeString('pt-BR');
+  document.getElementById('last-update').textContent = `${data.length} pontos · atualizado ${now}`;
+}
+
+// Carga inicial
+loadData();
+// Auto-refresh a cada 60s
+setInterval(loadData, 60000);
+</script>
+{% endblock %}

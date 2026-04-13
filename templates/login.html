@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Login — Attentus</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #070d14; --surf: #0c1820; --border: #1c3040;
+  --accent: #00e5a0; --accent2: #0099ff;
+  --text: #cce4f0; --muted: #3d5f72;
+  --err: #ff4d6a;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: 'Syne', sans-serif;
+  min-height: 100vh; display: flex;
+  align-items: center; justify-content: center;
+  padding: 20px;
+}
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 0%, rgba(0,229,160,.06) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 90% 100%, rgba(0,153,255,.05) 0%, transparent 60%);
+}
+.container {
+  position: relative; z-index: 1;
+  background: var(--surf);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 40px 36px;
+  width: 100%; max-width: 380px;
+}
+.logo { text-align: center; margin-bottom: 32px; }
+.logo-word {
+  font-weight: 800; font-size: 28px; letter-spacing: -1px; color: #fff;
+}
+.logo-word em { color: var(--accent); font-style: normal; }
+.logo-sub {
+  font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--muted); margin-top: 4px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.divider {
+  width: 40px; height: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  border-radius: 2px; margin: 0 auto 28px;
+}
+.field { margin-bottom: 16px; }
+.field label {
+  display: block; font-size: 10px; font-weight: 700;
+  letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 7px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.field input {
+  width: 100%; padding: 12px 14px;
+  border-radius: 9px; border: 1px solid var(--border);
+  background: #060c12; color: var(--text);
+  font-family: 'JetBrains Mono', monospace; font-size: 14px;
+  outline: 0; transition: border-color .2s;
+}
+.field input:focus { border-color: var(--accent); }
+.error-msg {
+  background: rgba(255,77,106,.12);
+  border: 1px solid rgba(255,77,106,.3);
+  border-radius: 8px; padding: 10px 14px;
+  font-size: 12px; color: var(--err); margin-bottom: 16px;
+  font-family: 'JetBrains Mono', monospace;
+}
+button[type=submit] {
+  width: 100%; padding: 14px;
+  border-radius: 10px; border: 0;
+  background: linear-gradient(135deg, var(--accent), #00b380);
+  color: #060c12; font-family: 'Syne', sans-serif;
+  font-size: 15px; font-weight: 800; cursor: pointer;
+  margin-top: 8px; letter-spacing: .5px;
+  transition: filter .2s;
+}
+button[type=submit]:hover { filter: brightness(1.1); }
+.footer-text {
+  text-align: center; margin-top: 20px;
+  font-size: 11px; color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="logo">
+    <div class="logo-word">AT<em>TENTUS</em></div>
+    <div class="logo-sub">GenMate · Field Intelligence</div>
+  </div>
+  <div class="divider"></div>
+
+  {% if error %}
+  <div class="error-msg">⚠ {{ error }}</div>
+  {% endif %}
+
+  <form method="POST">
+    <div class="field">
+      <label>Usuário</label>
+      <input type="text" name="username" placeholder="admin" autocomplete="username" required autofocus>
+    </div>
+    <div class="field">
+      <label>Senha</label>
+      <input type="password" name="password" placeholder="••••••••" autocomplete="current-password" required>
+    </div>
+    <button type="submit">Entrar →</button>
+  </form>
+  <div class="footer-text">Attentus v1.0 · Piloto</div>
+</div>
+</body>
+</html>

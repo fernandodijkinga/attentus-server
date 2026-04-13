@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: attentus-server
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 60
+    envVars:
+      - key: RENDER
+        value: "true"
+      - key: DATA_DIR
+        value: /data
+      - key: SECRET_KEY
+        generateValue: true        # Render gera automaticamente
+      - key: ADMIN_USER
+        value: admin               # Troque aqui ou via dashboard
+      - key: ADMIN_PASS
+        sync: false                # Definir manualmente no dashboard Render
+      - key: API_KEY
+        sync: false                # Chave para os ESP32 (opcional)
+    disk:
+      name: attentus-data
+      mountPath: /data
+      sizeGB: 10                   # ~10 GB para imagens do piloto
+    healthCheckPath: /health
