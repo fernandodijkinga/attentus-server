@@ -108,6 +108,45 @@ PERSPICUUS_MULTIPART_FIELD = re.compile(
 PERSPICUUS_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
 
 
+def _perspicuus_media_url_from_path(path):
+    """URL utilizável em <img src> para ficheiros deste servidor ou URLs absolutas."""
+    if not path:
+        return None
+    p = str(path).strip()
+    if p.startswith('/api/perspicuus/media/'):
+        return p
+    if p.startswith(('http://', 'https://')):
+        return p
+    return None
+
+
+@app.template_filter('perspicuus_media_url')
+def template_perspicuus_media_url(path):
+    u = _perspicuus_media_url_from_path(path)
+    return u if u else ''
+
+
+@app.template_filter('perspicuus_first_preview')
+def template_perspicuus_first_preview(row):
+    """Primeira imagem servível a partir de uma linha `perspicuus_events`."""
+    d = row if isinstance(row, dict) else dict(row)
+    for view in PERSPICUUS_IMAGE_KEYS:
+        raw = d.get(f'{view}_json') or '[]'
+        try:
+            frames = json.loads(raw) if isinstance(raw, str) else raw
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(frames, list):
+            continue
+        for frame in frames:
+            if not isinstance(frame, dict):
+                continue
+            u = _perspicuus_media_url_from_path(frame.get('path'))
+            if u:
+                return u
+    return ''
+
+
 # Temperatura/umidade: DHT22 (dht22_*) ou chaves legadas bmp280/bme280 no JSON do firmware
 def _ingest_temp_c(data):
     if not isinstance(data, dict):

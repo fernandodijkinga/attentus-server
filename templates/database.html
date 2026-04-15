@@ -131,6 +131,7 @@
         <th>Status</th>
         <th>Rep.</th>
         <th>Inf.</th>
+        <th>Prévia</th>
         <th>Img</th>
         <th></th>
       </tr>
@@ -153,6 +154,15 @@
           ondblclick="startPerspEdit(this)">{{ r.animal_repetition }}</td>
       <td class="edit-cell mono" data-pid="{{ r.id }}" data-field="inference_ready"
           ondblclick="startPerspBool(this)">{{ 'Sim' if r.inference_ready else 'Não' }}</td>
+      <td>
+        {% set pv = r|perspicuus_first_preview %}
+        {% if pv %}
+        <img class="img-thumb" src="{{ pv }}" alt="" loading="lazy"
+             onclick="window.open(this.src, '_blank', 'noopener,noreferrer')">
+        {% else %}
+        <span class="mono text-muted">—</span>
+        {% endif %}
+      </td>
       <td class="mono">{{ r.total_images }}</td>
       <td class="persp-actions">
         <button type="button" class="btn btn-ghost btn-sm" onclick="openPerspicuusModal({{ r.id }})">Abrir</button>
@@ -164,7 +174,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="11"><div class="empty-state"><div class="icon">◆</div>Nenhum evento Perspicuus</div></td></tr>
+    <tr><td colspan="12"><div class="empty-state"><div class="icon">◆</div>Nenhum evento Perspicuus</div></td></tr>
     {% endfor %}
     </tbody>
   </table>

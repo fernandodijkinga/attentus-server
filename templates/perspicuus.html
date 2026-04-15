@@ -40,8 +40,30 @@
   background: var(--bg);
 }
 .view-title { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; font-family: var(--mono); }
-.view-count { font-family: var(--mono); font-size: 11px; color: var(--text); margin-bottom: 6px; }
-.view-list { list-style: none; font-family: var(--mono); font-size: 10px; color: var(--text2); display: grid; gap: 4px; }
+.view-count { font-family: var(--mono); font-size: 11px; color: var(--text); margin-bottom: 8px; }
+.view-frames {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  max-height: 320px; overflow-y: auto; align-content: flex-start;
+}
+.persp-frame {
+  width: 112px; flex-shrink: 0;
+  border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surf);
+}
+.persp-thumb {
+  display: block; width: 100%; height: 84px; object-fit: cover;
+  cursor: zoom-in; transition: transform .12s, border-color .12s;
+}
+.persp-thumb:hover { transform: scale(1.03); border-color: var(--accent2); }
+.persp-cap {
+  display: block; padding: 4px 6px; font-family: var(--mono); font-size: 9px;
+  color: var(--text2); line-height: 1.2; word-break: break-all;
+}
+.persp-meta-only {
+  padding: 8px; font-family: var(--mono); font-size: 9px; color: var(--muted);
+  line-height: 1.35; border: 1px dashed var(--border); border-radius: 8px;
+}
 </style>
 {% endblock %}
 
@@ -121,13 +143,30 @@
       <div class="view-box">
         <div class="view-title">{{ view }}</div>
         <div class="view-count">{{ ev[view + '_count'] }} frame(s)</div>
-        <ul class="view-list">
-          {% for frame in ev[view][:3] %}
-          <li>#{{ frame.frame_index }} — {{ frame.path.split('/')[-1] }}</li>
+        <div class="view-frames">
+          {% for frame in ev[view] %}
+            {% set src = frame.path|perspicuus_media_url %}
+            {% if src %}
+            <div class="persp-frame">
+              <img class="persp-thumb" src="{{ src }}" alt="" loading="lazy"
+                   onclick="window.open(this.src, '_blank', 'noopener,noreferrer')">
+              <span class="persp-cap">#{{ frame.frame_index }} · {{ frame.path.split('/')[-1] }}</span>
+            </div>
+            {% else %}
+            <div class="persp-meta-only">
+              <strong>#{{ frame.frame_index }}</strong>
+              {% if frame.path %}
+              <div title="{{ frame.path }}">{{ frame.path.split('/')[-1] }}</div>
+              <div style="margin-top:4px;opacity:.85">Só metadado (sem ficheiro no servidor)</div>
+              {% else %}
+              <div>—</div>
+              {% endif %}
+            </div>
+            {% endif %}
           {% else %}
-          <li>sem frames</li>
+          <div class="persp-meta-only">sem frames</div>
           {% endfor %}
-        </ul>
+        </div>
       </div>
       {% endfor %}
     </div>
