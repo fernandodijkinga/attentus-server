@@ -43,6 +43,22 @@
 
 /* Notes inline */
 .notes-cell { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+
+.persp-modal-overlay {
+  display: none; position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0,0,0,.55); align-items: center; justify-content: center; padding: 24px;
+}
+.persp-modal-overlay.open { display: flex; }
+.persp-modal {
+  width: min(900px, 96vw); max-height: 85vh; overflow: auto;
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px 18px; box-shadow: 0 16px 48px rgba(0,0,0,.35);
+}
+.persp-modal pre {
+  margin: 0; font-size: 11px; line-height: 1.45; white-space: pre-wrap; word-break: break-word;
+  font-family: var(--mono); color: var(--text2);
+}
+.persp-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 </style>
 {% endblock %}
 
@@ -55,6 +71,8 @@
   <div class="flex gap-8">
     {% if tab == 'weather' %}
     <a href="{{ url_for('download_weather', device=device_filter) }}" class="btn btn-ghost btn-sm">↓ CSV</a>
+    {% elif tab == 'perspicuus' %}
+    <a href="{{ url_for('download_perspicuus', device=device_filter, q=search) }}" class="btn btn-ghost btn-sm">↓ CSV</a>
     {% else %}
     <a href="{{ url_for('download_images', device=device_filter) }}" class="btn btn-ghost btn-sm">↓ ZIP</a>
     {% endif %}
@@ -67,12 +85,14 @@
      class="tab-btn {% if tab == 'weather' %}active{% endif %}">☁ Weather</a>
   <a href="{{ url_for('database', tab='images', device=device_filter, q=search) }}"
      class="tab-btn {% if tab == 'images' %}active{% endif %}">📷 Imagens</a>
+  <a href="{{ url_for('database', tab='perspicuus', device=device_filter, q=search) }}"
+     class="tab-btn {% if tab == 'perspicuus' %}active{% endif %}">◆ Perspicuus</a>
 </div>
 
 <!-- FILTERS -->
 <div class="filters">
   <div>
-    <label style="font-size:10px;color:var(--muted);font-family:var(--mono);display:block;margin-bottom:4px;letter-spacing:1.5px;text-transform:uppercase">Dispositivo</label>
+    <label style="font-size:10px;color:var(--muted);font-family:var(--mono);display:block;margin-bottom:4px;letter-spacing:1.5px;text-transform:uppercase">{% if tab == 'perspicuus' %}Estação{% else %}Dispositivo{% endif %}</label>
     <select id="filter-device" onchange="applyFilter()">
       <option value="">Todos</option>
       {% for d in devices %}
@@ -82,7 +102,9 @@
   </div>
   <div>
     <label style="font-size:10px;color:var(--muted);font-family:var(--mono);display:block;margin-bottom:4px;letter-spacing:1.5px;text-transform:uppercase">Buscar</label>
-    <input type="search" id="filter-search" placeholder="dispositivo, notas…" value="{{ search }}">
+    <input type="search" id="filter-search"
+           placeholder="{% if tab == 'perspicuus' %}evento, estação, RFID, JSON…{% else %}dispositivo, notas…{% endif %}"
+           value="{{ search }}">
   </div>
   <button class="btn btn-ghost btn-sm" onclick="applyFilter()">Filtrar</button>
   {% if device_filter or search %}
@@ -96,7 +118,58 @@
 <div class="card" style="padding:0; overflow:hidden;">
   <div class="table-wrap">
 
-  {% if tab == 'weather' %}
+  {% if tab == 'perspicuus' %}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Recebido</th>
+        <th>Event ID</th>
+        <th>Estação</th>
+        <th>Device</th>
+        <th>RFID</th>
+        <th>Status</th>
+        <th>Rep.</th>
+        <th>Inf.</th>
+        <th>Img</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in records %}
+    <tr id="row-p-{{ r.id }}">
+      <td class="mono text-muted">{{ r.id }}</td>
+      <td class="mono">{{ r.received_at|br_dt }}</td>
+      <td class="mono" style="max-width:120px;overflow:hidden;text-overflow:ellipsis" title="{{ r.event_id }}">{{ r.event_id }}</td>
+      <td class="edit-cell td-accent" data-pid="{{ r.id }}" data-field="station_id"
+          ondblclick="startPerspEdit(this)">{{ r.station_id }}</td>
+      <td class="edit-cell mono" data-pid="{{ r.id }}" data-field="device_id"
+          ondblclick="startPerspEdit(this)">{{ r.device_id }}</td>
+      <td class="edit-cell mono" data-pid="{{ r.id }}" data-field="animal_rfid"
+          ondblclick="startPerspEdit(this)">{{ r.animal_rfid }}</td>
+      <td class="edit-cell" data-pid="{{ r.id }}" data-field="animal_status"
+          ondblclick="startPerspEdit(this)">{{ r.animal_status or '—' }}</td>
+      <td class="edit-cell mono" data-pid="{{ r.id }}" data-field="animal_repetition"
+          ondblclick="startPerspEdit(this)">{{ r.animal_repetition }}</td>
+      <td class="edit-cell mono" data-pid="{{ r.id }}" data-field="inference_ready"
+          ondblclick="startPerspBool(this)">{{ 'Sim' if r.inference_ready else 'Não' }}</td>
+      <td class="mono">{{ r.total_images }}</td>
+      <td class="persp-actions">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="openPerspicuusModal({{ r.id }})">Abrir</button>
+        <a href="{{ url_for('download_perspicuus_event', rid=r.id) }}" class="btn btn-ghost btn-sm">JSON</a>
+        <button class="btn btn-danger btn-sm"
+                onclick="apiDelete('/api/record/perspicuus/{{ r.id }}', () => document.getElementById('row-p-{{ r.id }}').remove())">
+          ✕
+        </button>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="11"><div class="empty-state"><div class="icon">◆</div>Nenhum evento Perspicuus</div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  {% elif tab == 'weather' %}
   <table>
     <thead>
       <tr>
@@ -201,6 +274,16 @@
 </div>
 {% endif %}
 
+<div id="persp-modal-overlay" class="persp-modal-overlay" onclick="if(event.target===this) closePerspicuusModal()">
+  <div class="persp-modal" onclick="event.stopPropagation()">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;">
+      <span style="font-weight:600;font-family:var(--sans);color:var(--text);">Evento Perspicuus (JSON)</span>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="closePerspicuusModal()">Fechar</button>
+    </div>
+    <pre id="persp-modal-pre"></pre>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -290,6 +373,83 @@ async function commitNote(cell, id) {
   });
   if (r.ok) { cell.textContent = notes || '—'; toast('Nota salva'); }
   else { cell.textContent = cell.dataset.original || '—'; toast('Erro', false); }
+}
+
+// Perspicuus: ver JSON completo
+async function openPerspicuusModal(id) {
+  const r = await fetch(`/api/record/perspicuus/${id}`);
+  if (!r.ok) { toast('Erro ao carregar', false); return; }
+  const data = await r.json();
+  document.getElementById('persp-modal-pre').textContent = JSON.stringify(data, null, 2);
+  document.getElementById('persp-modal-overlay').classList.add('open');
+}
+function closePerspicuusModal() {
+  document.getElementById('persp-modal-overlay').classList.remove('open');
+}
+
+function startPerspEdit(cell) {
+  if (cell.querySelector('input')) return;
+  const field = cell.dataset.field;
+  const id = cell.dataset.pid;
+  const displayed = cell.textContent.trim();
+  cell.dataset.original = displayed;
+  const isNum = field === 'animal_repetition';
+  let val = displayed === '—' ? '' : displayed;
+  cell.innerHTML = `<input class="edit-input" type="${isNum ? 'number' : 'text'}" step="1">`;
+  const inp = cell.querySelector('input');
+  inp.value = val;
+  inp.focus(); inp.select();
+  inp.addEventListener('blur', () => commitPerspEdit(cell, id, field));
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') commitPerspEdit(cell, id, field);
+    if (e.key === 'Escape') { cell.textContent = cell.dataset.original; }
+  });
+}
+
+async function commitPerspEdit(cell, id, field) {
+  const inp = cell.querySelector('input');
+  if (!inp) return;
+  let v = inp.value.trim();
+  const orig = cell.dataset.original;
+  const body = {};
+  if (field === 'animal_repetition') {
+    if (v === orig) { cell.textContent = orig; return; }
+    body[field] = parseInt(v, 10);
+    if (Number.isNaN(body[field])) { cell.textContent = orig; toast('Número inválido', false); return; }
+  } else {
+    const origPlain = orig === '—' ? '' : orig;
+    if (v === origPlain) { cell.textContent = orig; return; }
+    body[field] = v;
+  }
+  const r = await fetch(`/api/record/perspicuus/${id}`, {
+    method: 'PATCH',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  if (r.ok) {
+    if (field === 'animal_status') cell.textContent = v || '—';
+    else if (field === 'animal_repetition') cell.textContent = String(body[field]);
+    else cell.textContent = v;
+    toast('Atualizado');
+  } else {
+    cell.textContent = orig;
+    toast('Erro ao atualizar', false);
+  }
+}
+
+async function startPerspBool(cell) {
+  const id = cell.dataset.pid;
+  const cur = cell.textContent.trim() === 'Sim';
+  const next = !cur;
+  const r = await fetch(`/api/record/perspicuus/${id}`, {
+    method: 'PATCH',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ inference_ready: next ? 1 : 0 })
+  });
+  if (r.ok) {
+    cell.textContent = next ? 'Sim' : 'Não';
+    toast('Atualizado');
+  } else toast('Erro', false);
 }
 </script>
 {% endblock %}

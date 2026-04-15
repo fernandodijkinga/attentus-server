@@ -116,6 +116,9 @@ Upload multipart esperado (já gerado pelo firmware): campos `image`, `device_na
 
 `POST /api/perspicuus/events`
 
+- **application/json:** corpo único com o objeto abaixo (metadados; `path` em cada frame pode ser só texto).
+- **multipart/form-data:** campo de formulário **`json`** (string JSON do evento; use `"images": {}` se for enviar ficheiros) + um ficheiro por campo nomeado **`frontal_1`**, **`lateral_2`**, **`posterior_1`**, **`superior_1`**, etc. O servidor grava em disco e substitui `images` pelos URLs `/api/perspicuus/media/...` (visualização na UI autenticada).
+
 ```json
 {
   "event_id": "brete_01_2026-04-15T14-33-55-182",
@@ -221,9 +224,7 @@ pip install -r requirements.txt
 ADMIN_PASS=admin python app.py
 # Acesse: http://localhost:5000
 ```
-
 Os dados serão salvos em `./data/` (criado automaticamente).
-
 
 # ATUALIZAR GITHUB
 # cd /Users/fernandojeandijkinga/codigos/Render-Attentus/attentus-server

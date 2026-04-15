@@ -9,7 +9,7 @@
   Endpoints de ingestão:
     POST /api/sensors   → JSON da estação meteorológica
     POST /api/upload    → multipart/form-data do calf monitor
-    POST /api/perspicuus/events → JSON do brete inteligente (RFID + frames)
+    POST /api/perspicuus/events → JSON (application/json) ou multipart com campo "json" + ficheiros frontal_1, lateral_1, …
 
   Implantação: Render.com
     - Web Service (Python / Gunicorn)
@@ -25,6 +25,7 @@
 """
 
 import os
+import re
 import sqlite3
 import json
 import zipfile
@@ -100,6 +101,11 @@ ADMIN_PASS_HASH = generate_password_hash(os.environ.get('ADMIN_PASS', 'attentus2
 # Chave de API para dispositivos (vazio = sem restrição)
 API_KEY = os.environ.get('API_KEY', '')
 PERSPICUUS_IMAGE_KEYS = ('frontal', 'lateral', 'posterior', 'superior')
+PERSPICUUS_MULTIPART_FIELD = re.compile(
+    r'^(frontal|lateral|posterior|superior)_(\d+)$',
+    re.IGNORECASE,
+)
+PERSPICUUS_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
 
 
 # Temperatura/umidade: DHT22 (dht22_*) ou chaves legadas bmp280/bme280 no JSON do firmware
@@ -182,6 +188,77 @@ def _sanitize_perspicuus_frames(items):
             frame_index = len(out) + 1
         out.append({'frame_index': frame_index, 'path': path})
     return out
+
+
+def _serialize_perspicuus_row(row):
+    """Converte sqlite Row em dict para API/UI (images como listas, payload parseado)."""
+    d = dict(row)
+    images = {}
+    for k in PERSPICUUS_IMAGE_KEYS:
+        raw = d.pop(f'{k}_json', '[]')
+        try:
+            images[k] = json.loads(raw) if raw else []
+        except (json.JSONDecodeError, TypeError):
+            images[k] = []
+    d['images'] = images
+    d['inference_ready'] = bool(d.get('inference_ready', 0))
+    raw_s = d.get('raw_json') or ''
+    try:
+        d['payload'] = json.loads(raw_s) if raw_s else {}
+    except (json.JSONDecodeError, TypeError):
+        d['payload'] = {}
+    return d
+
+
+def _perspicuus_image_ext(original_name):
+    ext = os.path.splitext(original_name or '')[1].lower()
+    return ext if ext in PERSPICUUS_EXTS else '.jpg'
+
+
+def _merge_perspicuus_uploads(payload, files_storage, event_id):
+    """
+    Grava ficheiros multipart nomeados frontal_1, lateral_2, … em
+    uploads/perspicuus/<event_id>/ e substitui payload['images'] pelos paths servidos.
+    Retorna o número de ficheiros gravados (0 se nenhum campo reconhecido).
+    """
+    grouped = defaultdict(list)
+    for key, fs in files_storage.items():
+        if not fs or not getattr(fs, 'filename', None):
+            continue
+        m = PERSPICUUS_MULTIPART_FIELD.match(key.strip())
+        if not m:
+            continue
+        view = m.group(1).lower()
+        try:
+            frame_idx = int(m.group(2))
+        except ValueError:
+            continue
+        if view not in PERSPICUUS_IMAGE_KEYS:
+            continue
+        grouped[view].append((frame_idx, fs))
+
+    if not grouped:
+        return 0
+
+    safe_dir = secure_filename(event_id) or 'event'
+    dest_root = os.path.join(UPLOADS_DIR, 'perspicuus', safe_dir)
+    os.makedirs(dest_root, exist_ok=True)
+
+    images_out = {k: [] for k in PERSPICUUS_IMAGE_KEYS}
+    n_saved = 0
+    for view in PERSPICUUS_IMAGE_KEYS:
+        for frame_idx, fs in sorted(grouped.get(view, []), key=lambda x: x[0]):
+            ext = _perspicuus_image_ext(fs.filename)
+            fname = f'{view}_{frame_idx}{ext}'
+            dest = os.path.join(dest_root, fname)
+            fs.save(dest)
+            n_saved += 1
+            url_path = f'/api/perspicuus/media/{safe_dir}/{fname}'
+            images_out[view].append({'frame_index': frame_idx, 'path': url_path})
+
+    payload['images'] = images_out
+    payload['inference_ready'] = True
+    return n_saved
 
 
 def _normalize_perspicuus_payload(payload):
@@ -519,6 +596,8 @@ def cameras():
 def database():
     db      = get_db()
     tab     = request.args.get('tab', 'weather')
+    if tab not in ('weather', 'images', 'perspicuus'):
+        tab = 'weather'
     page    = max(1, int(request.args.get('page', 1)))
     per_page = 30
     offset  = (page - 1) * per_page
@@ -540,6 +619,27 @@ def database():
             params + [per_page, offset]
         ).fetchall()
         devices = [r[0] for r in db.execute("SELECT DISTINCT device_name FROM weather ORDER BY device_name").fetchall()]
+    elif tab == 'perspicuus':
+        conditions, params = ["1=1"], []
+        if device_filter:
+            conditions.append("station_id = ?"); params.append(device_filter)
+        if search:
+            like = f'%{search}%'
+            conditions.append(
+                "(event_id LIKE ? OR station_id LIKE ? OR device_id LIKE ? OR "
+                "animal_rfid LIKE ? OR animal_status LIKE ? OR raw_json LIKE ?)"
+            )
+            params.extend([like, like, like, like, like, like])
+        where = " AND ".join(conditions)
+
+        total = db.execute(f"SELECT COUNT(*) FROM perspicuus_events WHERE {where}", params).fetchone()[0]
+        records = db.execute(
+            f"SELECT * FROM perspicuus_events WHERE {where} ORDER BY timestamp_utc DESC LIMIT ? OFFSET ?",
+            params + [per_page, offset]
+        ).fetchall()
+        devices = [r[0] for r in db.execute(
+            "SELECT DISTINCT station_id FROM perspicuus_events ORDER BY station_id"
+        ).fetchall()]
     else:
         conditions, params = ["1=1"], []
         if device_filter:
@@ -635,8 +735,33 @@ def receive_image():
 @app.route('/api/perspicuus/events', methods=['POST'])
 @api_auth
 def receive_perspicuus_event():
-    """POST JSON do brete inteligente (RFID + 4 vistas com 3 frames cada)."""
-    payload = request.get_json(force=True, silent=True)
+    """POST JSON ou multipart (campo form \"json\" + ficheiros frontal_1, lateral_2, …)."""
+    payload = None
+    files_saved = 0
+    ct = (request.content_type or '').lower()
+    if 'multipart/form-data' in ct:
+        raw = request.form.get('json') or request.form.get('payload') or request.form.get('data')
+        if not raw:
+            return jsonify({
+                'error': 'Multipart: inclua o campo de formulário "json" (string JSON do evento, ex.: images vazio se enviar ficheiros)',
+            }), 400
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return jsonify({'error': 'Campo json inválido (não é JSON)'}), 400
+        if not isinstance(payload, dict):
+            return jsonify({'error': 'Campo json deve ser um objeto'}), 400
+        ev = str(payload.get('event_id', '')).strip()
+        if not ev:
+            return jsonify({'error': 'event_id é obrigatório no JSON ao usar multipart'}), 400
+        files_saved = _merge_perspicuus_uploads(payload, request.files, ev)
+        if files_saved:
+            log.info('[PERSPICUUS] multipart: %s ficheiros gravados em perspicuus/%s', files_saved, secure_filename(ev))
+    else:
+        payload = request.get_json(force=True, silent=True)
+        if payload is None:
+            return jsonify({'error': 'JSON inválido'}), 400
+
     data, err = _normalize_perspicuus_payload(payload)
     if err:
         return jsonify({'error': err}), 400
@@ -680,7 +805,7 @@ def receive_perspicuus_event():
         "[PERSPICUUS] station=%s rfid=%s frames=%s ready=%s",
         data['station_id'], data['animal_rfid'], data['total_images'], bool(data['inference_ready'])
     )
-    return jsonify({
+    out = {
         'status': 'ok',
         'event_id': data['event_id'],
         'station_id': data['station_id'],
@@ -688,7 +813,9 @@ def receive_perspicuus_event():
         'total_images': data['total_images'],
         'inference_ready': bool(data['inference_ready']),
         'received_at': now,
-    }), 201
+        'files_saved': files_saved,
+    }
+    return jsonify(out), 201
 
 # ─── API: DADOS PARA FRONTEND ─────────────────────────────────────────────────
 
@@ -749,6 +876,17 @@ def serve_image(device, filename):
         abort(404)
     return send_file(filepath, mimetype='image/jpeg')
 
+
+@app.route('/api/perspicuus/media/<event_folder>/<filename>')
+@login_required
+def serve_perspicuus_media(event_folder, filename):
+    """Serve imagens guardadas por POST /api/perspicuus/events (multipart)."""
+    base = os.path.abspath(os.path.join(UPLOADS_DIR, 'perspicuus', secure_filename(event_folder)))
+    filepath = os.path.abspath(os.path.join(base, secure_filename(filename)))
+    if not filepath.startswith(base + os.sep) or not os.path.isfile(filepath):
+        abort(404)
+    return send_file(filepath)
+
 # ─── API: CRUD ────────────────────────────────────────────────────────────────
 
 @app.route('/api/record/weather/<int:rid>', methods=['DELETE'])
@@ -796,6 +934,138 @@ def edit_image_notes(rid):
     db.execute("UPDATE images SET notes=? WHERE id=?", (notes, rid))
     db.commit()
     return jsonify({'status': 'updated'})
+
+
+@app.route('/api/record/perspicuus/<int:rid>', methods=['GET'])
+@login_required
+def get_perspicuus_record(rid):
+    db = get_db()
+    row = db.execute("SELECT * FROM perspicuus_events WHERE id = ?", (rid,)).fetchone()
+    if not row:
+        return jsonify({'error': 'Não encontrado'}), 404
+    return jsonify(_serialize_perspicuus_row(row))
+
+
+def _update_perspicuus_from_normalized(db, rid, data, raw_stored):
+    """Atualiza linha por id com payload já normalizado; raw_stored é o JSON gravado em raw_json."""
+    ev = data['event_id']
+    conflict = db.execute(
+        "SELECT id FROM perspicuus_events WHERE event_id = ? AND id != ?",
+        (ev, rid),
+    ).fetchone()
+    if conflict:
+        return 'event_id já existe em outro registro'
+    db.execute(
+        """
+        UPDATE perspicuus_events SET
+            event_id = ?, timestamp_utc = ?, station_id = ?, device_id = ?,
+            animal_rfid = ?, animal_status = ?, animal_repetition = ?, inference_ready = ?,
+            frontal_json = ?, lateral_json = ?, posterior_json = ?, superior_json = ?,
+            total_images = ?, raw_json = ?
+        WHERE id = ?
+        """,
+        (
+            data['event_id'],
+            data['timestamp_utc'],
+            data['station_id'],
+            data['device_id'],
+            data['animal_rfid'],
+            data['animal_status'],
+            data['animal_repetition'],
+            int(bool(data['inference_ready'])),
+            json.dumps(data['images']['frontal']),
+            json.dumps(data['images']['lateral']),
+            json.dumps(data['images']['posterior']),
+            json.dumps(data['images']['superior']),
+            data['total_images'],
+            raw_stored,
+            rid,
+        ),
+    )
+    return None
+
+
+@app.route('/api/record/perspicuus/<int:rid>', methods=['PATCH'])
+@login_required
+def patch_perspicuus_record(rid):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'JSON inválido'}), 400
+    db = get_db()
+    row = db.execute("SELECT * FROM perspicuus_events WHERE id = ?", (rid,)).fetchone()
+    if not row:
+        return jsonify({'error': 'Não encontrado'}), 404
+
+    if 'raw_json' in data or 'payload' in data:
+        payload = data.get('raw_json', data.get('payload'))
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                return jsonify({'error': 'raw_json não é JSON válido'}), 400
+        if not isinstance(payload, dict):
+            return jsonify({'error': 'raw_json deve ser um objeto'}), 400
+        norm, err = _normalize_perspicuus_payload(payload)
+        if err:
+            return jsonify({'error': err}), 400
+        raw_stored = json.dumps(payload)
+        err2 = _update_perspicuus_from_normalized(db, rid, norm, raw_stored)
+        if err2:
+            return jsonify({'error': err2}), 409
+        db.commit()
+        updated = db.execute("SELECT * FROM perspicuus_events WHERE id = ?", (rid,)).fetchone()
+        return jsonify({'status': 'updated', 'record': _serialize_perspicuus_row(updated)})
+
+    allowed = {
+        'station_id': str,
+        'device_id': str,
+        'animal_rfid': str,
+        'animal_status': str,
+    }
+    int_fields = {'animal_repetition', 'inference_ready'}
+    updates = {}
+    for key, caster in allowed.items():
+        if key not in data:
+            continue
+        updates[key] = caster(str(data[key]).strip()) if data[key] is not None else ''
+    for key in int_fields:
+        if key not in data:
+            continue
+        v = data[key]
+        if key == 'inference_ready':
+            if isinstance(v, bool):
+                updates[key] = 1 if v else 0
+            else:
+                try:
+                    updates[key] = 1 if int(v) else 0
+                except (TypeError, ValueError):
+                    return jsonify({'error': f'Campo inválido: {key}'}), 400
+        else:
+            try:
+                updates[key] = int(v)
+            except (TypeError, ValueError):
+                return jsonify({'error': f'Campo inválido: {key}'}), 400
+
+    if not updates:
+        return jsonify({'error': 'Nenhum campo válido'}), 400
+
+    sets = ', '.join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [rid]
+    db.execute(f"UPDATE perspicuus_events SET {sets} WHERE id = ?", values)
+    db.commit()
+    updated = db.execute("SELECT * FROM perspicuus_events WHERE id = ?", (rid,)).fetchone()
+    return jsonify({'status': 'updated', 'record': _serialize_perspicuus_row(updated)})
+
+
+@app.route('/api/record/perspicuus/<int:rid>', methods=['DELETE'])
+@login_required
+def delete_perspicuus_record(rid):
+    db = get_db()
+    cur = db.execute("DELETE FROM perspicuus_events WHERE id = ?", (rid,))
+    db.commit()
+    if cur.rowcount == 0:
+        return jsonify({'error': 'Não encontrado'}), 404
+    return jsonify({'status': 'deleted', 'id': rid})
 
 # ─── DOWNLOADS ────────────────────────────────────────────────────────────────
 
@@ -857,6 +1127,80 @@ def download_images():
     ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
     return send_file(buf, mimetype='application/zip', as_attachment=True,
                      download_name=f'attentus_images_{ts}.zip')
+
+
+def _perspicuus_download_where():
+    """Mesmos filtros que /database?tab=perspicuus (estação + busca)."""
+    device = request.args.get('device', '').strip()
+    search = request.args.get('q', '').strip()
+    conditions, params = ['1=1'], []
+    if device:
+        conditions.append('station_id = ?')
+        params.append(device)
+    if search:
+        like = f'%{search}%'
+        conditions.append(
+            '(event_id LIKE ? OR station_id LIKE ? OR device_id LIKE ? OR '
+            'animal_rfid LIKE ? OR animal_status LIKE ? OR raw_json LIKE ?)'
+        )
+        params.extend([like, like, like, like, like, like])
+    return ' AND '.join(conditions), params
+
+
+@app.route('/download/perspicuus')
+@login_required
+def download_perspicuus():
+    where, params = _perspicuus_download_where()
+    db = get_db()
+    rows = db.execute(
+        f"""
+        SELECT id, event_id, received_at, timestamp_utc, station_id, device_id,
+               animal_rfid, animal_status, animal_repetition, inference_ready,
+               total_images
+        FROM perspicuus_events
+        WHERE {where}
+        ORDER BY timestamp_utc ASC
+        """,
+        params,
+    ).fetchall()
+
+    output = io.StringIO()
+    w = csv.writer(output)
+    w.writerow([
+        'id', 'event_id', 'received_at_utc', 'timestamp_utc', 'station_id', 'device_id',
+        'animal_rfid', 'animal_status', 'animal_repetition', 'inference_ready', 'total_images',
+    ])
+    for r in rows:
+        w.writerow(list(r))
+
+    ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    return send_file(
+        io.BytesIO(output.getvalue().encode('utf-8')),
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name=f'attentus_perspicuus_{ts}.csv',
+    )
+
+
+@app.route('/download/perspicuus/event/<int:rid>')
+@login_required
+def download_perspicuus_event(rid):
+    db = get_db()
+    row = db.execute('SELECT * FROM perspicuus_events WHERE id = ?', (rid,)).fetchone()
+    if not row:
+        abort(404)
+    payload = _serialize_perspicuus_row(row)
+    raw = json.dumps(payload, ensure_ascii=False, indent=2)
+    buf = io.BytesIO(raw.encode('utf-8'))
+    buf.seek(0)
+    ev = dict(row).get('event_id') or str(rid)
+    safe = secure_filename(str(ev).replace(' ', '_'))[:80] or f'event_{rid}'
+    return send_file(
+        buf,
+        mimetype='application/json',
+        as_attachment=True,
+        download_name=f'perspicuus_{safe}.json',
+    )
 
 # ─── HEALTHCHECK ──────────────────────────────────────────────────────────────
 
