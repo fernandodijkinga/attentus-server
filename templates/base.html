@@ -306,8 +306,11 @@ select { cursor: pointer; }
     <a href="{{ url_for('weather') }}"  class="nav-link {% if request.endpoint == 'weather' %}active{% endif %}">
       <span class="icon">🌡</span> Weather
     </a>
-    <a href="{{ url_for('cameras') }}"  class="nav-link {% if request.endpoint == 'cameras' %}active{% endif %}">
-      <span class="icon">📷</span> Câmeras
+    <a href="{{ url_for('calf_monitor') }}"  class="nav-link {% if request.endpoint in ['calf_monitor', 'cameras'] %}active{% endif %}">
+      <span class="icon">🐄</span> Calf Monitor
+    </a>
+    <a href="{{ url_for('perspicuus') }}"  class="nav-link {% if request.endpoint == 'perspicuus' %}active{% endif %}">
+      <span class="icon">🧠</span> Perspicuus
     </a>
 
     <div class="nav-section">Dados</div>
@@ -329,6 +332,9 @@ select { cursor: pointer; }
     <div class="nav-section">API</div>
     <a href="/api/weather/data" target="_blank" class="nav-link">
       <span class="icon">⟨⟩</span> /api/weather
+    </a>
+    <a href="/api/perspicuus/events" target="_blank" class="nav-link">
+      <span class="icon">⟨⟩</span> /api/perspicuus
     </a>
   </div>
 

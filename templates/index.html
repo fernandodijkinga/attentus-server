@@ -55,7 +55,7 @@
     <div class="stat-sub">última: {{ stats.images_last }}</div>
   </div>
   <div class="stat-card">
-    <div class="stat-label">Câmeras Ativas</div>
+    <div class="stat-label">Calf Monitors Ativos</div>
     <div class="stat-value orange">{{ stats.cameras_active }}</div>
     <div class="stat-sub">baias monitoradas</div>
   </div>
@@ -108,7 +108,7 @@
     <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Timestamp</th><th>Câmera</th><th>ID</th><th>Tamanho</th></tr>
+        <tr><th>Timestamp</th><th>Bezerra</th><th>ID</th><th>Tamanho</th></tr>
       </thead>
       <tbody>
         {% for r in recent_images %}
@@ -123,12 +123,12 @@
     </table>
     </div>
     <div style="margin-top:12px">
-      <a href="{{ url_for('cameras') }}" class="btn btn-ghost btn-sm">Ver câmeras →</a>
+      <a href="{{ url_for('calf_monitor') }}" class="btn btn-ghost btn-sm">Abrir calf monitor →</a>
     </div>
     {% else %}
     <div class="empty-state">
       <div class="icon">📷</div>
-      Aguardando imagens das câmeras de baia
+      Aguardando imagens do calf monitor
     </div>
     {% endif %}
   </div>
@@ -147,7 +147,12 @@
     <div class="api-row">
       <span class="method">POST</span>
       <span class="url">/api/upload</span>
-      <span style="color:var(--text2)">— Câmera de baia (multipart/form-data: image, device_name, capture_id, rssi)</span>
+      <span style="color:var(--text2)">— Calf monitor (multipart/form-data: image, device_name, capture_id, rssi)</span>
+    </div>
+    <div class="api-row">
+      <span class="method">POST</span>
+      <span class="url">/api/perspicuus/events</span>
+      <span style="color:var(--text2)">— Perspicuus (brete inteligente: RFID + frontal/lateral/posterior/superior)</span>
     </div>
     <div class="api-row">
       <span class="method">GET</span>
@@ -163,7 +168,7 @@
   <p style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:12px">
     Configure <code style="color:var(--accent2)">serverURL</code> no firmware para:
     <code style="color:var(--accent)">https://&lt;seu-app&gt;.onrender.com/api/sensors</code>
-    (estação) ou <code style="color:var(--accent)">…/api/upload</code> (câmera).
+    (estação) ou <code style="color:var(--accent)">…/api/upload</code> (calf monitor).
     {% if not config.get('API_KEY') %}
     <br>⚠ API_KEY não configurada — endpoint aberto. Defina no Render → Environment.
     {% endif %}

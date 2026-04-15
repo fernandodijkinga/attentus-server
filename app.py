@@ -4,11 +4,12 @@
   GenMate Field Intelligence Platform
 ============================================================
   Recebe dados de estações meteorológicas (ESP32+DHT22+BMP280+BH1750)
-  e câmeras de baia (ESP32-CAM) via HTTP.
+  e monitor de bezerras (ESP32-CAM) via HTTP.
 
   Endpoints de ingestão:
     POST /api/sensors   → JSON da estação meteorológica
-    POST /api/upload    → multipart/form-data da câmera
+    POST /api/upload    → multipart/form-data do calf monitor
+    POST /api/perspicuus/events → JSON do brete inteligente (RFID + frames)
 
   Implantação: Render.com
     - Web Service (Python / Gunicorn)
@@ -98,6 +99,7 @@ ADMIN_PASS_HASH = generate_password_hash(os.environ.get('ADMIN_PASS', 'attentus2
 
 # Chave de API para dispositivos (vazio = sem restrição)
 API_KEY = os.environ.get('API_KEY', '')
+PERSPICUUS_IMAGE_KEYS = ('frontal', 'lateral', 'posterior', 'superior')
 
 
 # Temperatura/umidade: DHT22 (dht22_*) ou chaves legadas bmp280/bme280 no JSON do firmware
@@ -163,6 +165,72 @@ def _temp_humidity_for_thi(row_dict):
     return t, h
 
 
+def _sanitize_perspicuus_frames(items):
+    """Normaliza lista de frames: [{'frame_index': int, 'path': str}, ...]."""
+    out = []
+    if not isinstance(items, list):
+        return out
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get('path', '')).strip()
+        if not path:
+            continue
+        try:
+            frame_index = int(item.get('frame_index', len(out) + 1))
+        except (TypeError, ValueError):
+            frame_index = len(out) + 1
+        out.append({'frame_index': frame_index, 'path': path})
+    return out
+
+
+def _normalize_perspicuus_payload(payload):
+    """Valida e normaliza payload do brete inteligente."""
+    if not isinstance(payload, dict):
+        return None, 'JSON inválido'
+
+    event_id = str(payload.get('event_id', '')).strip()
+    timestamp_utc = str(payload.get('timestamp_utc', '')).strip()
+    station_id = str(payload.get('station_id', '')).strip()
+    device_id = str(payload.get('device_id', '')).strip()
+    animal = payload.get('animal') if isinstance(payload.get('animal'), dict) else {}
+    images = payload.get('images') if isinstance(payload.get('images'), dict) else {}
+
+    animal_rfid = str(animal.get('rfid', '')).strip()
+    animal_status = str(animal.get('status', '')).strip()
+    try:
+        animal_repetition = int(animal.get('repetition', 0))
+    except (TypeError, ValueError):
+        animal_repetition = 0
+
+    if not event_id:
+        return None, 'Campo obrigatório ausente: event_id'
+    if not timestamp_utc or _parse_utc_received(timestamp_utc) is None:
+        return None, 'timestamp_utc inválido (use ISO UTC, ex: 2026-04-15T17:33:55.182Z)'
+    if not station_id:
+        return None, 'Campo obrigatório ausente: station_id'
+    if not device_id:
+        return None, 'Campo obrigatório ausente: device_id'
+    if not animal_rfid:
+        return None, 'Campo obrigatório ausente: animal.rfid'
+
+    by_view = {k: _sanitize_perspicuus_frames(images.get(k, [])) for k in PERSPICUUS_IMAGE_KEYS}
+    total_images = sum(len(by_view[k]) for k in PERSPICUUS_IMAGE_KEYS)
+
+    return {
+        'event_id': event_id,
+        'timestamp_utc': timestamp_utc,
+        'station_id': station_id,
+        'device_id': device_id,
+        'animal_rfid': animal_rfid,
+        'animal_status': animal_status,
+        'animal_repetition': animal_repetition,
+        'inference_ready': 1 if bool(payload.get('inference_ready', False)) else 0,
+        'images': by_view,
+        'total_images': total_images,
+    }, None
+
+
 ALLOWED_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png'}
 MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10 MB
 app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
@@ -212,10 +280,32 @@ def init_db():
         notes       TEXT    DEFAULT ''
     );
 
+    CREATE TABLE IF NOT EXISTS perspicuus_events (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id          TEXT    NOT NULL UNIQUE,
+        received_at       TEXT    NOT NULL,
+        timestamp_utc     TEXT    NOT NULL,
+        station_id        TEXT    NOT NULL,
+        device_id         TEXT    NOT NULL,
+        animal_rfid       TEXT    NOT NULL,
+        animal_status     TEXT    DEFAULT '',
+        animal_repetition INTEGER DEFAULT 0,
+        inference_ready   INTEGER NOT NULL DEFAULT 0,
+        frontal_json      TEXT    NOT NULL DEFAULT '[]',
+        lateral_json      TEXT    NOT NULL DEFAULT '[]',
+        posterior_json    TEXT    NOT NULL DEFAULT '[]',
+        superior_json     TEXT    NOT NULL DEFAULT '[]',
+        total_images      INTEGER NOT NULL DEFAULT 0,
+        raw_json          TEXT    NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_weather_received ON weather(received_at);
     CREATE INDEX IF NOT EXISTS idx_weather_device   ON weather(device_name);
     CREATE INDEX IF NOT EXISTS idx_images_received  ON images(received_at);
     CREATE INDEX IF NOT EXISTS idx_images_device    ON images(device_name);
+    CREATE INDEX IF NOT EXISTS idx_persp_ts         ON perspicuus_events(timestamp_utc);
+    CREATE INDEX IF NOT EXISTS idx_persp_station    ON perspicuus_events(station_id);
+    CREATE INDEX IF NOT EXISTS idx_persp_rfid       ON perspicuus_events(animal_rfid);
     """)
     db.commit()
     db.close()
@@ -327,11 +417,11 @@ def weather():
         thi_thresholds=thi_thresholds_json(),
     )
 
-@app.route('/cameras')
+@app.route('/calf-monitor')
 @login_required
-def cameras():
+def calf_monitor():
     db = get_db()
-    # Última imagem por câmera
+    # Última imagem por monitor de bezerra
     rows = db.execute("""
         SELECT i.id, i.device_name, i.filename, i.received_at, i.filesize, i.rssi, i.capture_id, i.notes
         FROM images i
@@ -343,12 +433,86 @@ def cameras():
         ORDER BY i.received_at DESC
     """).fetchall()
 
-    # Contagem total por câmera
+    # Contagem total por monitor
     counts = dict(db.execute(
         "SELECT device_name, COUNT(*) FROM images GROUP BY device_name"
     ).fetchall())
 
     return render_template('cameras.html', cameras=rows, counts=counts)
+
+
+@app.route('/perspicuus')
+@login_required
+def perspicuus():
+    db = get_db()
+    page = max(1, int(request.args.get('page', 1)))
+    per_page = 20
+    offset = (page - 1) * per_page
+    station = request.args.get('station', '').strip()
+    rfid = request.args.get('rfid', '').strip()
+    ready = request.args.get('ready', '').strip()
+
+    conditions, params = ['1=1'], []
+    if station:
+        conditions.append('station_id = ?')
+        params.append(station)
+    if rfid:
+        conditions.append('animal_rfid LIKE ?')
+        params.append(f'%{rfid}%')
+    if ready in ('0', '1'):
+        conditions.append('inference_ready = ?')
+        params.append(int(ready))
+    where = ' AND '.join(conditions)
+
+    total = db.execute(f'SELECT COUNT(*) FROM perspicuus_events WHERE {where}', params).fetchone()[0]
+    rows = db.execute(
+        f"SELECT * FROM perspicuus_events WHERE {where} ORDER BY timestamp_utc DESC LIMIT ? OFFSET ?",
+        params + [per_page, offset]
+    ).fetchall()
+
+    records = []
+    for row in rows:
+        d = dict(row)
+        for key in PERSPICUUS_IMAGE_KEYS:
+            raw = d.get(f'{key}_json') or '[]'
+            try:
+                d[key] = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                d[key] = []
+            d[f'{key}_count'] = len(d[key])
+        d['inference_ready'] = bool(d.get('inference_ready', 0))
+        records.append(d)
+
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    stations = [r[0] for r in db.execute(
+        'SELECT DISTINCT station_id FROM perspicuus_events ORDER BY station_id'
+    ).fetchall()]
+    stats = {
+        'total': db.execute('SELECT COUNT(*) FROM perspicuus_events').fetchone()[0],
+        'ready': db.execute('SELECT COUNT(*) FROM perspicuus_events WHERE inference_ready = 1').fetchone()[0],
+        'stations': db.execute('SELECT COUNT(DISTINCT station_id) FROM perspicuus_events').fetchone()[0],
+        'rfids': db.execute('SELECT COUNT(DISTINCT animal_rfid) FROM perspicuus_events').fetchone()[0],
+    }
+
+    return render_template(
+        'perspicuus.html',
+        records=records,
+        stations=stations,
+        station_filter=station,
+        rfid_filter=rfid,
+        ready_filter=ready,
+        page=page,
+        total_pages=total_pages,
+        total=total,
+        stats=stats,
+    )
+
+
+@app.route('/cameras')
+@login_required
+def cameras():
+    # Compatibilidade com links antigos
+    return redirect(url_for('calf_monitor'), code=302)
 
 @app.route('/database')
 @login_required
@@ -435,7 +599,7 @@ def receive_sensors():
 @app.route('/api/upload', methods=['POST'])
 @api_auth
 def receive_image():
-    """POST multipart/form-data da câmera ESP32-CAM"""
+    """POST multipart/form-data do monitor de bezerra ESP32-CAM"""
     if 'image' not in request.files:
         return jsonify({'error': 'Campo "image" ausente'}), 400
 
@@ -466,6 +630,65 @@ def receive_image():
     db.commit()
     log.info(f"[UPLOAD] {device_name} → {filename} ({filesize} bytes)")
     return jsonify({'status': 'ok', 'filename': filename, 'size': filesize}), 201
+
+
+@app.route('/api/perspicuus/events', methods=['POST'])
+@api_auth
+def receive_perspicuus_event():
+    """POST JSON do brete inteligente (RFID + 4 vistas com 3 frames cada)."""
+    payload = request.get_json(force=True, silent=True)
+    data, err = _normalize_perspicuus_payload(payload)
+    if err:
+        return jsonify({'error': err}), 400
+
+    now = datetime.utcnow().isoformat() + 'Z'
+    db = get_db()
+    db.execute("""
+        INSERT INTO perspicuus_events (
+            event_id, received_at, timestamp_utc, station_id, device_id,
+            animal_rfid, animal_status, animal_repetition, inference_ready,
+            frontal_json, lateral_json, posterior_json, superior_json,
+            total_images, raw_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(event_id) DO UPDATE SET
+            received_at=excluded.received_at,
+            timestamp_utc=excluded.timestamp_utc,
+            station_id=excluded.station_id,
+            device_id=excluded.device_id,
+            animal_rfid=excluded.animal_rfid,
+            animal_status=excluded.animal_status,
+            animal_repetition=excluded.animal_repetition,
+            inference_ready=excluded.inference_ready,
+            frontal_json=excluded.frontal_json,
+            lateral_json=excluded.lateral_json,
+            posterior_json=excluded.posterior_json,
+            superior_json=excluded.superior_json,
+            total_images=excluded.total_images,
+            raw_json=excluded.raw_json
+    """, (
+        data['event_id'], now, data['timestamp_utc'], data['station_id'], data['device_id'],
+        data['animal_rfid'], data['animal_status'], data['animal_repetition'], data['inference_ready'],
+        json.dumps(data['images']['frontal']),
+        json.dumps(data['images']['lateral']),
+        json.dumps(data['images']['posterior']),
+        json.dumps(data['images']['superior']),
+        data['total_images'],
+        json.dumps(payload),
+    ))
+    db.commit()
+    log.info(
+        "[PERSPICUUS] station=%s rfid=%s frames=%s ready=%s",
+        data['station_id'], data['animal_rfid'], data['total_images'], bool(data['inference_ready'])
+    )
+    return jsonify({
+        'status': 'ok',
+        'event_id': data['event_id'],
+        'station_id': data['station_id'],
+        'animal_rfid': data['animal_rfid'],
+        'total_images': data['total_images'],
+        'inference_ready': bool(data['inference_ready']),
+        'received_at': now,
+    }), 201
 
 # ─── API: DADOS PARA FRONTEND ─────────────────────────────────────────────────
 
@@ -503,9 +726,10 @@ def weather_data():
         out.append(d)
     return jsonify(out)
 
+@app.route('/api/calf-monitor/latest')
 @app.route('/api/cameras/latest')
 @login_required
-def cameras_latest():
+def calf_monitor_latest():
     db   = get_db()
     rows = db.execute("""
         SELECT i.device_name, i.filename, i.received_at, i.filesize, i.rssi, i.capture_id

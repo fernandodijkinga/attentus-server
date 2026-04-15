@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Perspicuus{% endblock %}
+
+{% block head %}
+<style>
+.filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+.events { display: grid; gap: 14px; }
+.event-card {
+  background: var(--surf);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.event-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.event-id { font-family: var(--mono); font-size: 12px; color: var(--accent2); }
+.meta { font-family: var(--mono); font-size: 11px; color: var(--text2); display: flex; gap: 12px; flex-wrap: wrap; }
+.views-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+@media(max-width: 1100px) { .views-grid { grid-template-columns: repeat(2, minmax(150px, 1fr)); } }
+@media(max-width: 700px)  { .views-grid { grid-template-columns: 1fr; } }
+.view-box {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--bg);
+}
+.view-title { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; font-family: var(--mono); }
+.view-count { font-family: var(--mono); font-size: 11px; color: var(--text); margin-bottom: 6px; }
+.view-list { list-style: none; font-family: var(--mono); font-size: 10px; color: var(--text2); display: grid; gap: 4px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">🧠 <span>Perspicuus</span></div>
+    <div class="page-sub">Brete inteligente — RFID e pacotes de imagens por passagem</div>
+  </div>
+  <div class="flex gap-8">
+    <span class="pill pill-blue">{{ stats.total }} eventos</span>
+    <span class="pill pill-green">{{ stats.ready }} prontos p/ inferência</span>
+    <span class="pill pill-orange">{{ stats.stations }} estações</span>
+    <span class="pill">{{ stats.rfids }} RFIDs únicos</span>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <form class="filters" method="get" action="{{ url_for('perspicuus') }}">
+    <div class="field" style="margin:0">
+      <label>Estação</label>
+      <select name="station">
+        <option value="">Todas</option>
+        {% for s in stations %}
+        <option value="{{ s }}" {% if station_filter == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field" style="margin:0">
+      <label>RFID</label>
+      <input type="search" name="rfid" value="{{ rfid_filter }}" placeholder="982000123456789">
+    </div>
+    <div class="field" style="margin:0">
+      <label>Inferência</label>
+      <select name="ready">
+        <option value="" {% if ready_filter == '' %}selected{% endif %}>Todos</option>
+        <option value="1" {% if ready_filter == '1' %}selected{% endif %}>Pronto</option>
+        <option value="0" {% if ready_filter == '0' %}selected{% endif %}>Pendente</option>
+      </select>
+    </div>
+    <div class="flex gap-8" style="align-items:center">
+      <button class="btn btn-accent btn-sm" type="submit">Filtrar</button>
+      {% if station_filter or rfid_filter or ready_filter %}
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('perspicuus') }}">Limpar</a>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+<div class="events">
+  {% for ev in records %}
+  <div class="event-card">
+    <div class="event-top">
+      <div>
+        <div class="event-id">{{ ev.event_id }}</div>
+        <div class="meta" style="margin-top:6px">
+          <span><b>timestamp:</b> {{ ev.timestamp_utc|br_dt('%d/%m/%Y %H:%M:%S') }}</span>
+          <span><b>station:</b> {{ ev.station_id }}</span>
+          <span><b>device:</b> {{ ev.device_id }}</span>
+          <span><b>rfid:</b> {{ ev.animal_rfid }}</span>
+          <span><b>status:</b> {{ ev.animal_status or '—' }}</span>
+          <span><b>rep:</b> {{ ev.animal_repetition }}</span>
+          <span><b>total:</b> {{ ev.total_images }}</span>
+        </div>
+      </div>
+      <div>
+        {% if ev.inference_ready %}
+        <span class="pill pill-green">inference_ready = true</span>
+        {% else %}
+        <span class="pill pill-orange">inference_ready = false</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="views-grid">
+      {% for view in ['frontal', 'lateral', 'posterior', 'superior'] %}
+      <div class="view-box">
+        <div class="view-title">{{ view }}</div>
+        <div class="view-count">{{ ev[view + '_count'] }} frame(s)</div>
+        <ul class="view-list">
+          {% for frame in ev[view][:3] %}
+          <li>#{{ frame.frame_index }} — {{ frame.path.split('/')[-1] }}</li>
+          {% else %}
+          <li>sem frames</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="icon">🧠</div>
+    Nenhum evento Perspicuus encontrado para o filtro atual.
+  </div>
+  {% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+  {% if page > 1 %}
+  <a class="page-link" href="{{ url_for('perspicuus', page=page-1, station=station_filter, rfid=rfid_filter, ready=ready_filter) }}">‹</a>
+  {% endif %}
+  {% for p in range([1, page-3]|max, [total_pages+1, page+4]|min) %}
+  <a class="page-link {% if p == page %}current{% endif %}" href="{{ url_for('perspicuus', page=p, station=station_filter, rfid=rfid_filter, ready=ready_filter) }}">{{ p }}</a>
+  {% endfor %}
+  {% if page < total_pages %}
+  <a class="page-link" href="{{ url_for('perspicuus', page=page+1, station=station_filter, rfid=rfid_filter, ready=ready_filter) }}">›</a>
+  {% endif %}
+  <span class="page-info">página {{ page }} / {{ total_pages }} · {{ total }} eventos</span>
+</div>
+{% endif %}
+{% endblock %}

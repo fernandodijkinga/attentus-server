@@ -1,7 +1,8 @@
 # Attentus Server — GenMate Field Intelligence
 
 Servidor central de coleta de dados para o piloto de monitoramento de bezerras.
-Recebe dados da estação meteorológica (ESP32+BME280+BH1750) e câmeras de baia (ESP32-CAM)
+Recebe dados da estação meteorológica (ESP32+BME280+BH1750), calf monitor de baias (ESP32-CAM)
+e eventos do brete inteligente Perspicuus (RFID + múltiplas vistas de câmera)
 via HTTP, armazena com timestamps e disponibiliza para análise e treinamento de IA.
 
 ---
@@ -80,7 +81,7 @@ Equivalente com chaves legadas (mesmo conteúdo que o exemplo acima):
 }
 ```
 
-### Câmera de Baia (ESP32CAM_FieldCapture3.ino)
+### Calf Monitor de Baia (ESP32CAM_FieldCapture3.ino)
 
 ```cpp
 serverURL = "https://attentus-server.onrender.com/api/upload"
@@ -100,13 +101,43 @@ Upload multipart esperado (já gerado pelo firmware): campos `image`, `device_na
 | Método | Endpoint | Descrição |
 |--------|----------|-----------|
 | `POST` | `/api/sensors` | Recebe JSON da estação meteo |
-| `POST` | `/api/upload` | Recebe imagem da câmera |
+| `POST` | `/api/upload` | Recebe imagem do calf monitor |
+| `POST` | `/api/perspicuus/events` | Recebe evento do brete inteligente (RFID + frames) |
 | `GET`  | `/api/weather/data?hours=24&device=X` | JSON para gráficos |
-| `GET`  | `/api/cameras/latest` | Última imagem por câmera |
+| `GET`  | `/api/calf-monitor/latest` | Última imagem por baia monitorada |
 | `GET`  | `/api/image/<device>/<filename>` | Servir imagem |
 | `GET`  | `/health` | Healthcheck (sem auth) |
 | `GET`  | `/download/weather?device=X` | CSV de dados meteo |
 | `GET`  | `/download/images?device=X` | ZIP de imagens com manifest.csv |
+
+---
+
+### Payload Perspicuus (exemplo)
+
+`POST /api/perspicuus/events`
+
+```json
+{
+  "event_id": "brete_01_2026-04-15T14-33-55-182",
+  "timestamp_utc": "2026-04-15T17:33:55.182Z",
+  "station_id": "brete_01",
+  "device_id": "attentus_edge_01",
+  "animal": {
+    "rfid": "982000123456789",
+    "status": "nova passagem",
+    "repetition": 1
+  },
+  "images": {
+    "frontal": [{"frame_index": 1, "path": "capturas_brinco/frontal/..." }],
+    "lateral": [{"frame_index": 1, "path": "capturas_brinco/lateral/..." }],
+    "posterior": [{"frame_index": 1, "path": "capturas_brinco/posterior/..." }],
+    "superior": [{"frame_index": 1, "path": "capturas_brinco/superior/..." }]
+  },
+  "inference_ready": true
+}
+```
+
+> O endpoint faz upsert por `event_id`: reenvio do mesmo evento atualiza o registro.
 
 ---
 
@@ -117,7 +148,8 @@ Upload multipart esperado (já gerado pelo firmware): campos `image`, `device_na
 | `/login` | Autenticação |
 | `/` | Dashboard com estatísticas e últimas leituras |
 | `/weather` | Gráficos temporais de temperatura, lux, pressão, umidade |
-| `/cameras` | Grid das câmeras com última imagem de cada baia |
+| `/calf-monitor` | Grid do calf monitor com última imagem de cada baia |
+| `/perspicuus` | Eventos de brete inteligente com RFID e frames por vista |
 | `/database?tab=weather` | Tabela paginada de dados meteo (editável, deletável) |
 | `/database?tab=images` | Tabela paginada de imagens (com prévia, notas, download) |
 
@@ -136,6 +168,13 @@ id, received_at (UTC), device_name, capture_id, filename, filesize, rssi, notes
 ```
 
 Imagens armazenadas em: `/data/uploads/<device_name>/<device>_<timestamp>_<capture_id>.jpg`
+
+### Tabela `perspicuus_events`
+```
+event_id, received_at, timestamp_utc, station_id, device_id, animal_rfid, animal_status,
+animal_repetition, inference_ready, frontal_json, lateral_json, posterior_json, superior_json,
+total_images, raw_json
+```
 
 ---
 
@@ -165,7 +204,7 @@ GET /download/images
 ```
 Contém:
 - `manifest.csv` — metadados de cada imagem com timestamps e IDs
-- `<device_name>/<filename>.jpg` — imagens organizadas por câmera
+- `<device_name>/<filename>.jpg` — imagens organizadas por baia monitorada
 
 ---
 
@@ -184,3 +223,10 @@ ADMIN_PASS=admin python app.py
 ```
 
 Os dados serão salvos em `./data/` (criado automaticamente).
+
+
+# ATUALIZAR GITHUB
+# cd /Users/fernandojeandijkinga/codigos/Render-Attentus/attentus-server
+# git add -A
+# git commit -m "Descrição clara do que mudou"
+# git push origin main

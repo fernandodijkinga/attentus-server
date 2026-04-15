@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Câmeras{% endblock %}
+{% block title %}Calf Monitor{% endblock %}
 
 {% block head %}
 <style>
@@ -87,8 +87,8 @@
 {% block content %}
 <div class="page-header">
   <div>
-    <div class="page-title">📷 <span>Câmeras de Baia</span></div>
-    <div class="page-sub">Última imagem recebida por câmera — atualiza a cada 30s</div>
+    <div class="page-title">🐄 <span>Calf Monitor</span></div>
+    <div class="page-sub">Última imagem recebida por baia de bezerras — atualiza a cada 30s</div>
   </div>
   <div class="flex gap-8" style="align-items:center">
     <div class="refresh-bar">
@@ -148,7 +148,7 @@
 <div style="grid-column:1/-1">
   <div class="empty-state">
     <div class="icon">📷</div>
-    Nenhuma câmera conectada ainda.<br>
+    Nenhum monitor de bezerra conectado ainda.<br>
     <span style="font-size:11px;margin-top:8px;display:block">
       Configure o ESP32-CAM para enviar para
       <code style="color:var(--accent)">POST /api/upload</code>
@@ -195,7 +195,7 @@ document.addEventListener('keydown', e => { if (e.key==='Escape') closeLightbox(
 // Auto-refresh das imagens a cada 30s
 async function refreshCameras() {
   try {
-    const res  = await fetch('/api/cameras/latest');
+    const res  = await fetch('/api/calf-monitor/latest');
     const cams = await res.json();
     cams.forEach(cam => {
       const id  = 'img-' + cam.device_name.replace(/-/g,'_');
