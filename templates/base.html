@@ -312,6 +312,9 @@ select { cursor: pointer; }
     <a href="{{ url_for('perspicuus') }}"  class="nav-link {% if request.endpoint == 'perspicuus' %}active{% endif %}">
       <span class="icon">🧠</span> Perspicuus
     </a>
+    <a href="{{ url_for('perspicuus_animais') }}" class="nav-link {% if request.endpoint == 'perspicuus_animais' %}active{% endif %}">
+      <span class="icon">🐂</span> Animais MK1
+    </a>
     <a href="{{ url_for('perspicuus_inferencias') }}" class="nav-link {% if request.endpoint == 'perspicuus_inferencias' %}active{% endif %}">
       <span class="icon">◇</span> Inferências MK1
     </a>

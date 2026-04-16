@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block title %}Animais Perspicuus{% endblock %}
+
+{% block head %}
+<style>
+.animals-grid { display: grid; gap: 16px; }
+.animal-card {
+  background: var(--surf);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.animal-top {
+  display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.rfid { font-family: var(--mono); font-size: 16px; color: var(--accent2); font-weight: 700; }
+.meta-line {
+  display: flex; flex-wrap: wrap; gap: 8px 14px;
+  font-size: 11px; color: var(--text2); font-family: var(--mono);
+}
+.layout-row {
+  display: grid; grid-template-columns: 300px 1fr; gap: 14px;
+}
+@media (max-width: 980px) { .layout-row { grid-template-columns: 1fr; } }
+.photo-col {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 10px;
+}
+.photo-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.photo-item img {
+  width: 100%; height: 150px; object-fit: cover;
+  border-radius: 8px; border: 1px solid var(--border);
+  display: block;
+}
+.photo-item .label {
+  font-family: var(--mono); color: var(--text2); font-size: 10px;
+  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px;
+}
+.photo-empty {
+  display: flex; align-items: center; justify-content: center;
+  height: 150px; border: 1px dashed var(--border); border-radius: 8px;
+  color: var(--muted); font-size: 11px; font-family: var(--mono);
+}
+.traits-col {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 12px;
+}
+.trait-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+.trait-box {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surf2);
+  padding: 10px;
+}
+.trait-name {
+  font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--muted); font-family: var(--mono);
+}
+.trait-val {
+  font-family: var(--mono); font-size: 21px; font-weight: 700;
+  color: var(--accent); margin: 6px 0 8px;
+}
+.spark {
+  height: 46px; display: flex; align-items: end; gap: 4px;
+}
+.spark-bar {
+  width: 7px; border-radius: 4px 4px 1px 1px;
+  background: linear-gradient(180deg, var(--accent2), var(--accent));
+  opacity: .95;
+  height: 30%;
+}
+.spark-bar.h10 { height: 10%; } .spark-bar.h20 { height: 20%; } .spark-bar.h30 { height: 30%; }
+.spark-bar.h40 { height: 40%; } .spark-bar.h50 { height: 50%; } .spark-bar.h60 { height: 60%; }
+.spark-bar.h70 { height: 70%; } .spark-bar.h80 { height: 80%; } .spark-bar.h90 { height: 90%; }
+.spark-bar.h100 { height: 100%; }
+.spark-empty {
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+}
+.trait-foot {
+  margin-top: 6px; font-size: 10px; color: var(--text2); font-family: var(--mono);
+}
+.filters-row {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 16px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">🐂 <span>Animais</span> <span style="color:var(--accent)">Perspicuus</span></div>
+    <div class="page-sub">Última inferência por RFID, histórico visual de traits e últimas fotos lateral/posterior</div>
+  </div>
+  <div class="flex gap-8">
+    <span class="pill pill-blue">{{ stats.animals_total }} animais totais</span>
+    <span class="pill pill-green">{{ stats.animals_with_inference }} com inferência</span>
+    <a href="{{ url_for('perspicuus') }}" class="btn btn-ghost btn-sm">Eventos</a>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <form class="filters-row" method="get" action="{{ url_for('perspicuus_animais') }}">
+    <div class="field" style="margin:0">
+      <label>Estação</label>
+      <select name="station">
+        <option value="">Todas</option>
+        {% for s in stations %}
+        <option value="{{ s }}" {% if station_filter == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field" style="margin:0; min-width:260px">
+      <label>Busca</label>
+      <input type="text" name="q" value="{{ q_filter }}" placeholder="RFID, status, estação">
+    </div>
+    <div class="flex gap-8">
+      <button class="btn btn-accent btn-sm" type="submit">Filtrar</button>
+      <a href="{{ url_for('perspicuus_animais') }}" class="btn btn-ghost btn-sm">Limpar</a>
+    </div>
+  </form>
+</div>
+
+<div class="animals-grid">
+  {% for card in cards %}
+  <div class="animal-card">
+    <div class="animal-top">
+      <div>
+        <div class="rfid">{{ card.rfid }}</div>
+        <div class="meta-line">
+          <span>status: {{ card.status }}</span>
+          <span>estação: {{ card.station_id }}</span>
+          <span>device: {{ card.device_id }}</span>
+          <span>último evento: {{ card.last_ts|br_dt }}</span>
+          <span>event_id: {{ card.last_event_id }}</span>
+        </div>
+      </div>
+      <div class="meta-line">
+        <span>{{ card.n_events }} evento(s)</span>
+        <span>{{ card.n_inferred }} inferência(s)</span>
+      </div>
+    </div>
+
+    <div class="layout-row">
+      <div class="photo-col">
+        <div class="photo-grid">
+          <div class="photo-item">
+            <div class="label">Lateral</div>
+            {% set lat_url = card.last_lateral_path|perspicuus_media_url %}
+            {% if lat_url %}
+            <img src="{{ lat_url }}" alt="lateral {{ card.rfid }}">
+            {% else %}
+            <div class="photo-empty">Sem imagem lateral</div>
+            {% endif %}
+          </div>
+          <div class="photo-item">
+            <div class="label">Posterior</div>
+            {% set post_url = card.last_posterior_path|perspicuus_media_url %}
+            {% if post_url %}
+            <img src="{{ post_url }}" alt="posterior {{ card.rfid }}">
+            {% else %}
+            <div class="photo-empty">Sem imagem posterior</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="traits-col">
+        {% if card.trait_cards %}
+        <div class="trait-grid">
+          {% for t in card.trait_cards %}
+          <div class="trait-box">
+            <div class="trait-name">{{ t.name }}</div>
+            <div class="trait-val">{{ '%.2f'|format(t.current) }}</div>
+            <div class="spark">
+              {% if t.bars %}
+                {% for b in t.bars %}
+                <div class="spark-bar h{{ b.bucket }}" title="{{ '%.2f'|format(b.value) }}"></div>
+                {% endfor %}
+              {% else %}
+                <div class="spark-empty">Sem histórico ainda</div>
+              {% endif %}
+            </div>
+            <div class="trait-foot">{{ t.n }} ponto(s) no histórico</div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state" style="margin:0">
+          <div class="icon">◇</div>
+          Sem traits inferidas para este animal até ao momento.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="icon">🐂</div>
+    Nenhum animal encontrado com o filtro atual.
+  </div>
+  {% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+  {% if page > 1 %}
+  <a class="page-link" href="{{ url_for('perspicuus_animais', page=page-1, station=station_filter, q=q_filter) }}">‹</a>
+  {% endif %}
+  {% for p in range([1, page-3]|max, [total_pages+1, page+4]|min) %}
+  <a class="page-link {% if p == page %}current{% endif %}" href="{{ url_for('perspicuus_animais', page=p, station=station_filter, q=q_filter) }}">{{ p }}</a>
+  {% endfor %}
+  {% if page < total_pages %}
+  <a class="page-link" href="{{ url_for('perspicuus_animais', page=page+1, station=station_filter, q=q_filter) }}">›</a>
+  {% endif %}
+  <span class="page-info">{{ total_animals }} animal(is) · página {{ page }} / {{ total_pages }}</span>
+</div>
+{% endif %}
+{% endblock %}

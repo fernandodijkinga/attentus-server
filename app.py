@@ -736,6 +736,212 @@ def _traits_mean_summary(inf: dict, view: str, max_traits: int = 5) -> str:
     return s
 
 
+def _safe_load_json(text: str, fallback):
+    try:
+        return json.loads(text) if text else fallback
+    except (json.JSONDecodeError, TypeError):
+        return fallback
+
+
+def _last_frame_path(raw_json: str) -> str | None:
+    frames = _safe_load_json(raw_json or '[]', [])
+    if not isinstance(frames, list) or not frames:
+        return None
+    for item in reversed(frames):
+        if isinstance(item, dict):
+            p = str(item.get('path', '')).strip()
+            if p:
+                return p
+    return None
+
+
+def _merged_traits_mean(inf: dict) -> dict[str, float]:
+    views = inf.get('views') or {}
+    merged: dict[str, list[float]] = defaultdict(list)
+    for view in ('lateral', 'posterior'):
+        block = views.get(view)
+        if isinstance(block, list):
+            block = {'traits_mean': {}, 'frames': block}
+        if not isinstance(block, dict):
+            continue
+        tm = block.get('traits_mean') or {}
+        if not isinstance(tm, dict):
+            continue
+        for k, v in tm.items():
+            try:
+                merged[str(k)].append(float(v))
+            except (TypeError, ValueError):
+                continue
+    return {k: sum(vals) / len(vals) for k, vals in merged.items() if vals}
+
+
+def _history_bars(values: list[float]) -> list[dict[str, float | int]]:
+    def _mk(v: float, h: float) -> dict[str, float | int]:
+        bucket = max(10, min(100, int(round(h / 10.0) * 10)))
+        return {'value': v, 'height': h, 'bucket': bucket}
+
+    if not values:
+        return []
+    lo, hi = min(values), max(values)
+    if abs(hi - lo) < 1e-9:
+        return [_mk(v, 55.0) for v in values]
+    return [
+        _mk(v, 18.0 + ((v - lo) / (hi - lo)) * 82.0)
+        for v in values
+    ]
+
+
+@app.route('/perspicuus/animais')
+@login_required
+def perspicuus_animais():
+    """Visão por animal: última inferência, histórico de traits e últimas fotos."""
+    db = get_db()
+    page = max(1, int(request.args.get('page', 1)))
+    per_page = 12
+    offset = (page - 1) * per_page
+    station = request.args.get('station', '').strip()
+    q = request.args.get('q', '').strip()
+
+    conditions = ["animal_rfid IS NOT NULL", "trim(animal_rfid) != ''"]
+    params: list[str] = []
+    if station:
+        conditions.append("station_id = ?")
+        params.append(station)
+    if q:
+        like = f'%{q}%'
+        conditions.append(
+            "(animal_rfid LIKE ? OR animal_status LIKE ? OR station_id LIKE ?)"
+        )
+        params.extend([like, like, like])
+    where = " AND ".join(conditions)
+
+    total_animals = db.execute(
+        f"SELECT COUNT(DISTINCT animal_rfid) FROM perspicuus_events WHERE {where}",
+        params,
+    ).fetchone()[0]
+    total_pages = max(1, (total_animals + per_page - 1) // per_page) if total_animals else 1
+
+    animals_rows = db.execute(
+        f"""
+        SELECT
+            animal_rfid,
+            MAX(timestamp_utc) AS last_ts,
+            COUNT(*) AS n_events,
+            SUM(CASE WHEN inference_at IS NOT NULL AND trim(inference_at) != '' THEN 1 ELSE 0 END) AS n_inferred
+        FROM perspicuus_events
+        WHERE {where}
+        GROUP BY animal_rfid
+        ORDER BY last_ts DESC
+        LIMIT ? OFFSET ?
+        """,
+        params + [per_page, offset],
+    ).fetchall()
+
+    cards = []
+    for r in animals_rows:
+        rfid = str(r['animal_rfid'])
+        last_row = db.execute(
+            """
+            SELECT *
+            FROM perspicuus_events
+            WHERE animal_rfid = ?
+            ORDER BY timestamp_utc DESC
+            LIMIT 1
+            """,
+            (rfid,),
+        ).fetchone()
+        if not last_row:
+            continue
+        latest = dict(last_row)
+        latest_inf = _safe_load_json(latest.get('inference_json') or '{}', {})
+        latest_traits = _merged_traits_mean(latest_inf)
+
+        hist_rows = db.execute(
+            """
+            SELECT timestamp_utc, inference_json
+            FROM perspicuus_events
+            WHERE animal_rfid = ?
+              AND inference_at IS NOT NULL
+              AND trim(inference_at) != ''
+            ORDER BY timestamp_utc DESC
+            LIMIT 12
+            """,
+            (rfid,),
+        ).fetchall()
+        hist_points: dict[str, list[float]] = defaultdict(list)
+        for hr in reversed(hist_rows):
+            inf = _safe_load_json(hr['inference_json'] or '{}', {})
+            for trait, val in _merged_traits_mean(inf).items():
+                hist_points[trait].append(float(val))
+
+        ranked_traits = sorted(
+            latest_traits.items(),
+            key=lambda kv: kv[1],
+            reverse=True,
+        )
+        if not ranked_traits:
+            ranked_traits = sorted(
+                ((k, vals[-1]) for k, vals in hist_points.items() if vals),
+                key=lambda kv: kv[1],
+                reverse=True,
+            )
+
+        trait_cards = []
+        for trait, cur in ranked_traits[:10]:
+            vals = hist_points.get(trait, [])
+            trait_cards.append({
+                'name': trait,
+                'current': float(cur),
+                'bars': _history_bars(vals),
+                'n': len(vals),
+            })
+
+        cards.append({
+            'rfid': rfid,
+            'status': latest.get('animal_status') or '—',
+            'station_id': latest.get('station_id') or '—',
+            'device_id': latest.get('device_id') or '—',
+            'last_ts': latest.get('timestamp_utc'),
+            'last_event_id': latest.get('event_id'),
+            'n_events': int(r['n_events'] or 0),
+            'n_inferred': int(r['n_inferred'] or 0),
+            'last_lateral_path': _last_frame_path(latest.get('lateral_json') or '[]'),
+            'last_posterior_path': _last_frame_path(latest.get('posterior_json') or '[]'),
+            'trait_cards': trait_cards,
+        })
+
+    stations = [row[0] for row in db.execute(
+        'SELECT DISTINCT station_id FROM perspicuus_events ORDER BY station_id'
+    ).fetchall()]
+    stats = {
+        'animals_total': db.execute(
+            "SELECT COUNT(DISTINCT animal_rfid) FROM perspicuus_events WHERE animal_rfid IS NOT NULL AND trim(animal_rfid) != ''"
+        ).fetchone()[0],
+        'animals_with_inference': db.execute(
+            """
+            SELECT COUNT(DISTINCT animal_rfid)
+            FROM perspicuus_events
+            WHERE animal_rfid IS NOT NULL
+              AND trim(animal_rfid) != ''
+              AND inference_at IS NOT NULL
+              AND trim(inference_at) != ''
+            """
+        ).fetchone()[0],
+    }
+
+    return render_template(
+        'perspicuus_animais.html',
+        cards=cards,
+        page=page,
+        total_pages=total_pages,
+        total_animals=total_animals,
+        station_filter=station,
+        q_filter=q,
+        stations=stations,
+        stats=stats,
+    )
+
+
 @app.route('/perspicuus/inferencias')
 @login_required
 def perspicuus_inferencias():
