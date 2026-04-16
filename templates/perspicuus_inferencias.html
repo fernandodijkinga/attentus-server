@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}Inferências MK1{% endblock %}
+
+{% block head %}
+<style>
+.stat-grid-infer { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.filters-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 16px; }
+.badge-inf { font-size: 10px; padding: 3px 8px; border-radius: 6px; font-family: var(--mono); font-weight: 600; }
+.badge-ok { background: rgba(0,229,160,.15); color: var(--accent); border: 1px solid rgba(0,229,160,.25); }
+.badge-pending { background: rgba(255,224,102,.12); color: var(--warn); border: 1px solid rgba(255,224,102,.2); }
+.badge-err { background: rgba(255,77,106,.12); color: var(--err); border: 1px solid rgba(255,77,106,.25); }
+.sum-cell { max-width: 220px; white-space: normal; font-size: 11px; line-height: 1.35; color: var(--text2); }
+.actions-cell { white-space: nowrap; }
+.infer-modal-overlay {
+  display: none; position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0,0,0,.55); align-items: center; justify-content: center; padding: 24px;
+}
+.infer-modal-overlay.open { display: flex; }
+.infer-modal {
+  width: min(920px, 96vw); max-height: 88vh; overflow: auto;
+  background: var(--surf); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px 18px; box-shadow: 0 16px 48px rgba(0,0,0,.35);
+}
+.infer-modal pre { margin: 0; font-size: 11px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); color: var(--text2); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">◇ <span>Inferências</span> <span style="color:var(--accent)">MK1</span></div>
+    <div class="page-sub">Gerir execuções dos modelos (YOLO + iudicium lateral/posterior), médias por pose e detalhe por imagem</div>
+  </div>
+  <div class="flex gap-8">
+    <a href="{{ url_for('perspicuus') }}" class="btn btn-ghost btn-sm">← Eventos Perspicuus</a>
+    <a href="{{ url_for('database', tab='perspicuus') }}" class="btn btn-ghost btn-sm">Database</a>
+  </div>
+</div>
+
+<div class="stat-grid-infer">
+  <div class="stat-card">
+    <div class="stat-label">Total eventos</div>
+    <div class="stat-value">{{ infer_stats.total_all }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Pendentes</div>
+    <div class="stat-value orange">{{ infer_stats.pending }}</div>
+    <div class="stat-sub">sem inferência gravada</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">OK</div>
+    <div class="stat-value accent">{{ infer_stats.ok }}</div>
+    <div class="stat-sub">com scores</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Erro config</div>
+    <div class="stat-value" style="color:var(--err)">{{ infer_stats.error }}</div>
+    <div class="stat-sub">campo error no JSON</div>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <form class="filters-row" method="get" action="{{ url_for('perspicuus_inferencias') }}">
+    <div class="field" style="margin:0">
+      <label>Estação</label>
+      <select name="station">
+        <option value="">Todas</option>
+        {% for s in stations %}
+        <option value="{{ s }}" {% if station_filter == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field" style="margin:0">
+      <label>Estado inferência</label>
+      <select name="status">
+        <option value="" {% if status_filter == '' %}selected{% endif %}>Todos</option>
+        <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pendente</option>
+        <option value="ok" {% if status_filter == 'ok' %}selected{% endif %}>OK (sem erro)</option>
+        <option value="error" {% if status_filter == 'error' %}selected{% endif %}>Erro (JSON)</option>
+      </select>
+    </div>
+    <div class="field" style="margin:0;min-width:200px">
+      <label>Buscar</label>
+      <input type="search" name="q" value="{{ q_filter }}" placeholder="event_id, RFID, estação…">
+    </div>
+    <button type="submit" class="btn btn-accent btn-sm">Filtrar</button>
+    {% if station_filter or status_filter or q_filter %}
+    <a href="{{ url_for('perspicuus_inferencias') }}" class="btn btn-ghost btn-sm">Limpar</a>
+    {% endif %}
+  </form>
+  {% if not inference_engine_ready %}
+  <p class="page-sub" style="margin:0">Motor ONNX não configurado no servidor — inferências automáticas e botão recalcular ficam indisponíveis até definir as variáveis de ambiente.</p>
+  {% endif %}
+</div>
+
+<div class="card" style="padding:0;overflow:hidden;">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Event ID</th>
+          <th>Estação</th>
+          <th>Recebido</th>
+          <th>Estado</th>
+          <th>Média lateral</th>
+          <th>Média posterior</th>
+          <th>Origem</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in records %}
+        <tr>
+          <td class="mono text-muted">{{ r.id }}</td>
+          <td class="mono" style="max-width:140px;overflow:hidden;text-overflow:ellipsis" title="{{ r.event_id }}">{{ r.event_id }}</td>
+          <td class="td-accent">{{ r.station_id }}</td>
+          <td class="mono">{{ r.received_at|br_dt }}</td>
+          <td>
+            {% if r.infer_badge == 'ok' %}
+            <span class="badge-inf badge-ok">OK</span>
+            {% elif r.infer_badge == 'pending' %}
+            <span class="badge-inf badge-pending">Pendente</span>
+            {% else %}
+            <span class="badge-inf badge-err">Erro</span>
+            {% endif %}
+          </td>
+          <td class="sum-cell">{{ r.lat_sum }}</td>
+          <td class="sum-cell">{{ r.post_sum }}</td>
+          <td class="mono" style="font-size:10px;color:var(--muted)">{{ (r.inference.trigger or '—') if r.inference else '—' }}</td>
+          <td class="actions-cell">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="openInferDetail({{ r.id }})">Ver JSON</button>
+            {% if inference_engine_ready %}
+            <button type="button" class="btn btn-accent btn-sm" onclick="recalcInfer({{ r.id }})">Recalcular</button>
+            {% endif %}
+            <a href="{{ url_for('perspicuus') }}#ev-{{ r.id }}" class="btn btn-ghost btn-sm">Evento</a>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9"><div class="empty-state"><div class="icon">◇</div>Nenhum registro com este filtro.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+  {% if page > 1 %}
+  <a class="page-link" href="{{ url_for('perspicuus_inferencias', page=page-1, station=station_filter, status=status_filter, q=q_filter) }}">‹</a>
+  {% endif %}
+  {% for p in range([1, page-3]|max, [total_pages+1, page+4]|min) %}
+  <a class="page-link {% if p == page %}current{% endif %}" href="{{ url_for('perspicuus_inferencias', page=p, station=station_filter, status=status_filter, q=q_filter) }}">{{ p }}</a>
+  {% endfor %}
+  {% if page < total_pages %}
+  <a class="page-link" href="{{ url_for('perspicuus_inferencias', page=page+1, station=station_filter, status=status_filter, q=q_filter) }}">›</a>
+  {% endif %}
+  <span class="page-info">{{ total }} registro(s) · página {{ page }} / {{ total_pages }}</span>
+</div>
+{% endif %}
+
+<div id="infer-modal-overlay" class="infer-modal-overlay" onclick="if(event.target===this) closeInferDetail()">
+  <div class="infer-modal" onclick="event.stopPropagation()">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;">
+      <span style="font-weight:600;">Resultado da inferência (JSON)</span>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="closeInferDetail()">Fechar</button>
+    </div>
+    <pre id="infer-modal-pre"></pre>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function openInferDetail(id) {
+  const r = await fetch('/api/record/perspicuus/' + id);
+  if (!r.ok) { toast('Erro ao carregar', false); return; }
+  const data = await r.json();
+  let inf = data.inference;
+  if (inf == null && data.inference_json) {
+    try { inf = typeof data.inference_json === 'string' ? JSON.parse(data.inference_json) : data.inference_json; }
+    catch (e) { inf = {}; }
+  }
+  if (inf == null) inf = {};
+  document.getElementById('infer-modal-pre').textContent = JSON.stringify(inf, null, 2);
+  document.getElementById('infer-modal-overlay').classList.add('open');
+}
+function closeInferDetail() {
+  document.getElementById('infer-modal-overlay').classList.remove('open');
+}
+async function recalcInfer(id) {
+  const r = await fetch('/api/record/perspicuus/' + id + '/infer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rerun: true }),
+  });
+  let j = {};
+  try { j = await r.json(); } catch (e) {}
+  if (r.ok) { toast('Inferência recalculada'); location.reload(); }
+  else toast(j.error || ('HTTP ' + r.status), false);
+}
+</script>
+{% endblock %}

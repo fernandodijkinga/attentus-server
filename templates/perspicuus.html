@@ -154,7 +154,7 @@
 
 <div class="events">
   {% for ev in records %}
-  <div class="event-card">
+  <div class="event-card" id="ev-{{ ev.id }}">
     <div class="event-top">
       <div>
         <div class="event-id">{{ ev.event_id }}</div>

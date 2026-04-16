@@ -93,6 +93,18 @@ DATA_DIR = os.environ.get(
 DB_PATH     = os.path.join(DATA_DIR, 'attentus.db')
 UPLOADS_DIR = os.path.join(DATA_DIR, 'uploads')
 os.makedirs(UPLOADS_DIR, exist_ok=True)
+# Alinha perspicuus_inference.get_models_dir() com o mesmo DATA_DIR do processo
+os.environ.setdefault('DATA_DIR', DATA_DIR)
+ML_MODELS_DIR = os.path.join(DATA_DIR, 'ml_models')
+os.makedirs(ML_MODELS_DIR, exist_ok=True)
+MAX_MODEL_UPLOAD_BYTES = int(os.environ.get('MAX_MODEL_UPLOAD_MB', '500')) * 1024 * 1024
+PERSPICUUS_MODEL_ROLE_EXT = {
+    'yolo': {'.onnx'},
+    'lateral': {'.onnx'},
+    'posterior': {'.onnx'},
+    'lateral_meta': {'.json'},
+    'posterior_meta': {'.json'},
+}
 log.info(f"DATA_DIR={DATA_DIR}")
 
 # Autenticação de usuário web
@@ -247,6 +259,11 @@ def _serialize_perspicuus_row(row):
         d['payload'] = json.loads(raw_s) if raw_s else {}
     except (json.JSONDecodeError, TypeError):
         d['payload'] = {}
+    inf_s = d.get('inference_json') or '{}'
+    try:
+        d['inference'] = json.loads(inf_s) if inf_s else {}
+    except (json.JSONDecodeError, TypeError):
+        d['inference'] = {}
     return d
 
 
@@ -697,6 +714,273 @@ def perspicuus():
         total=total,
         stats=stats,
         inference_engine_ready=_perspicuus_inference_engine_ready(),
+    )
+
+
+def _traits_mean_summary(inf: dict, view: str, max_traits: int = 5) -> str:
+    """Uma linha curta para tabela (médias por trait)."""
+    views = inf.get('views') or {}
+    v = views.get(view)
+    if isinstance(v, list):
+        v = {'traits_mean': {}, 'frames': v}
+    if not isinstance(v, dict):
+        return '—'
+    tm = v.get('traits_mean') or {}
+    if not tm:
+        return '—'
+    items = list(tm.items())[:max_traits]
+    s = ', '.join(f'{k}:{float(val):.2f}' for k, val in items)
+    if len(tm) > max_traits:
+        s += '…'
+    return s
+
+
+@app.route('/perspicuus/inferencias')
+@login_required
+def perspicuus_inferencias():
+    """Gestão e visualização agregada das inferências MK1."""
+    db = get_db()
+    page = max(1, int(request.args.get('page', 1)))
+    per_page = 25
+    offset = (page - 1) * per_page
+    station = request.args.get('station', '').strip()
+    status_f = request.args.get('status', '').strip()
+    q = request.args.get('q', '').strip()
+
+    base_c, base_p = ['1=1'], []
+    if station:
+        base_c.append('station_id = ?')
+        base_p.append(station)
+    if q:
+        like = f'%{q}%'
+        base_c.append(
+            '(event_id LIKE ? OR animal_rfid LIKE ? OR station_id LIKE ? OR inference_json LIKE ?)'
+        )
+        base_p.extend([like, like, like, like])
+    base_where = ' AND '.join(base_c)
+
+    list_c = list(base_c)
+    list_p = list(base_p)
+    if status_f == 'pending':
+        list_c.append("(inference_at IS NULL OR trim(inference_at) = '')")
+    elif status_f == 'ok':
+        list_c.append("inference_at IS NOT NULL AND trim(inference_at) != ''")
+        list_c.append('json_extract(inference_json, \'$.error\') IS NULL')
+    elif status_f == 'error':
+        list_c.append("json_extract(inference_json, '$.error') IS NOT NULL")
+
+    where_list = ' AND '.join(list_c)
+
+    def _safe_count(sql: str, p):
+        try:
+            return db.execute(sql, p).fetchone()[0]
+        except sqlite3.OperationalError:
+            return 0
+
+    try:
+        total = db.execute(
+            f'SELECT COUNT(*) FROM perspicuus_events WHERE {where_list}', list_p
+        ).fetchone()[0]
+        rows = db.execute(
+            f'SELECT * FROM perspicuus_events WHERE {where_list} ORDER BY received_at DESC LIMIT ? OFFSET ?',
+            list_p + [per_page, offset],
+        ).fetchall()
+    except sqlite3.OperationalError:
+        if status_f in ('ok', 'error'):
+            list_c = list(base_c)
+            list_p = list(base_p)
+            where_list = ' AND '.join(list_c)
+            total = db.execute(
+                f'SELECT COUNT(*) FROM perspicuus_events WHERE {where_list}', list_p
+            ).fetchone()[0]
+            rows = db.execute(
+                f'SELECT * FROM perspicuus_events WHERE {where_list} ORDER BY received_at DESC LIMIT ? OFFSET ?',
+                list_p + [per_page, offset],
+            ).fetchall()
+        else:
+            total, rows = 0, []
+
+    records = []
+    for row in rows:
+        d = dict(row)
+        raw = d.get('inference_json') or '{}'
+        try:
+            d['inference'] = json.loads(raw) if raw else {}
+        except (json.JSONDecodeError, TypeError):
+            d['inference'] = {}
+        d['lat_sum'] = _traits_mean_summary(d['inference'], 'lateral')
+        d['post_sum'] = _traits_mean_summary(d['inference'], 'posterior')
+        err = d['inference'].get('error')
+        if err:
+            d['infer_badge'] = 'error'
+        elif not d.get('inference_at'):
+            d['infer_badge'] = 'pending'
+        else:
+            d['infer_badge'] = 'ok'
+        records.append(d)
+
+    total_pages = max(1, (total + per_page - 1) // per_page) if total else 1
+
+    stations = [r[0] for r in db.execute(
+        'SELECT DISTINCT station_id FROM perspicuus_events ORDER BY station_id'
+    ).fetchall()]
+
+    infer_stats = {
+        'pending': _safe_count(
+            f'SELECT COUNT(*) FROM perspicuus_events WHERE {base_where} '
+            'AND (inference_at IS NULL OR trim(inference_at) = \'\')',
+            base_p,
+        ),
+        'ok': _safe_count(
+            f'SELECT COUNT(*) FROM perspicuus_events WHERE {base_where} '
+            'AND inference_at IS NOT NULL AND trim(inference_at) != \'\' '
+            'AND json_extract(inference_json, \'$.error\') IS NULL',
+            base_p,
+        ),
+        'error': _safe_count(
+            f'SELECT COUNT(*) FROM perspicuus_events WHERE {base_where} '
+            "AND json_extract(inference_json, '$.error') IS NOT NULL",
+            base_p,
+        ),
+        'total_all': db.execute('SELECT COUNT(*) FROM perspicuus_events').fetchone()[0],
+    }
+
+    return render_template(
+        'perspicuus_inferencias.html',
+        records=records,
+        stations=stations,
+        station_filter=station,
+        status_filter=status_f,
+        q_filter=q,
+        page=page,
+        total_pages=total_pages,
+        total=total,
+        infer_stats=infer_stats,
+        inference_engine_ready=_perspicuus_inference_engine_ready(),
+    )
+
+
+def _clear_perspicuus_model_slot(role: str) -> None:
+    from perspicuus_inference import get_models_dir, load_registry, save_registry
+
+    reg = load_registry()
+    old_fn = reg.get(role)
+    save_registry({role: None})
+    if not old_fn:
+        return
+    models_dir = os.path.abspath(get_models_dir())
+    old_fp = os.path.join(models_dir, os.path.basename(str(old_fn)))
+    if old_fp.startswith(models_dir + os.sep) and os.path.isfile(old_fp):
+        try:
+            os.remove(old_fp)
+        except OSError:
+            log.warning('Falha ao remover modelo em %s', old_fp)
+
+
+@app.route('/perspicuus/modelos', methods=['GET', 'POST'])
+@login_required
+def perspicuus_modelos():
+    from perspicuus_inference import (
+        get_models_dir,
+        load_registry,
+        save_registry,
+        reset_engine,
+        resolve_model_path,
+        model_path_source,
+        ROLE_TO_ENV,
+        get_engine,
+    )
+
+    roles = list(ROLE_TO_ENV.keys())
+    if request.method == 'POST':
+        action = request.form.get('action', 'upload')
+        if action == 'clear':
+            role = request.form.get('role', '').strip()
+            if role not in ROLE_TO_ENV:
+                flash('Função inválida.', 'error')
+            else:
+                _clear_perspicuus_model_slot(role)
+                reset_engine()
+                flash(
+                    'Registo em registry.json atualizado e ficheiro em ml_models removido se existia. '
+                    'Se a variável de ambiente estiver definida para este papel, o modelo continua a ser o do ambiente.',
+                    'success',
+                )
+            return redirect(url_for('perspicuus_modelos'))
+
+        role = request.form.get('role', '').strip()
+        file = request.files.get('file')
+        if role not in ROLE_TO_ENV:
+            flash('Função inválida.', 'error')
+            return redirect(url_for('perspicuus_modelos'))
+        if not file or not file.filename:
+            flash('Selecione um ficheiro.', 'error')
+            return redirect(url_for('perspicuus_modelos'))
+        cl = request.content_length
+        if cl is not None and cl > MAX_MODEL_UPLOAD_BYTES:
+            flash(
+                f'Ficheiro demasiado grande (máx. {MAX_MODEL_UPLOAD_BYTES // (1024 * 1024)} MB).',
+                'error',
+            )
+            return redirect(url_for('perspicuus_modelos'))
+        ext = os.path.splitext(file.filename)[1].lower()
+        allow = PERSPICUUS_MODEL_ROLE_EXT.get(role, set())
+        if ext not in allow:
+            flash(
+                'Extensão inválida para esta função (permitido: '
+                + ', '.join(sorted(allow))
+                + ').',
+                'error',
+            )
+            return redirect(url_for('perspicuus_modelos'))
+        fname = secure_filename(file.filename)
+        if not fname:
+            flash('Nome de ficheiro inválido.', 'error')
+            return redirect(url_for('perspicuus_modelos'))
+        models_dir = get_models_dir()
+        dest = os.path.join(models_dir, fname)
+        reg = load_registry()
+        old_fn = reg.get(role)
+        try:
+            file.save(dest)
+        except OSError as e:
+            log.warning('Upload modelo: %s', e)
+            flash(f'Erro ao gravar ficheiro: {e}', 'error')
+            return redirect(url_for('perspicuus_modelos'))
+        save_registry({role: fname})
+        if old_fn and os.path.basename(str(old_fn)) != fname:
+            old_fp = os.path.join(models_dir, os.path.basename(str(old_fn)))
+            abd = os.path.abspath(models_dir) + os.sep
+            if old_fp.startswith(abd) and os.path.isfile(old_fp):
+                try:
+                    os.remove(old_fp)
+                except OSError:
+                    pass
+        reset_engine()
+        flash(f'Modelo guardado: {fname}. Sessões ONNX serão recarregadas na próxima inferência.', 'success')
+        return redirect(url_for('perspicuus_modelos'))
+
+    reg = load_registry()
+    slots = []
+    for role in roles:
+        p = resolve_model_path(role)
+        src = model_path_source(role)
+        sz = os.path.getsize(p) if p and os.path.isfile(p) else None
+        slots.append({
+            'role': role,
+            'env_var': ROLE_TO_ENV[role],
+            'source': src,
+            'path': p,
+            'size': sz,
+            'registry_name': reg.get(role),
+        })
+    return render_template(
+        'perspicuus_modelos.html',
+        slots=slots,
+        max_mb=MAX_MODEL_UPLOAD_BYTES // (1024 * 1024),
+        ml_models_dir=ML_MODELS_DIR,
+        inference_engine_ready=get_engine().is_ready(),
+        role_ext=PERSPICUUS_MODEL_ROLE_EXT,
     )
 
 

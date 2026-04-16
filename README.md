@@ -154,6 +154,7 @@ Upload multipart esperado (já gerado pelo firmware): campos `image`, `device_na
 | `/weather` | Gráficos temporais de temperatura, lux, pressão, umidade |
 | `/calf-monitor` | Grid do calf monitor com última imagem de cada baia |
 | `/perspicuus` | Eventos de brete inteligente com RFID e frames por vista |
+| `/perspicuus/inferencias` | Gestão das inferências MK1: filtros, médias por vista, JSON e recalcular |
 | `/database?tab=weather` | Tabela paginada de dados meteo (editável, deletável) |
 | `/database?tab=images` | Tabela paginada de imagens (com prévia, notas, download) |
 
@@ -200,6 +201,41 @@ total_images, raw_json, inference_json, inference_at
 | `PERSPICUUS_POSTERIOR_METADATA_JSON` | — | Opcional |
 | `PERSPICUUS_YOLO_BBOX_FORMAT` | auto | `xywh` ou `xyxy` se o auto-detetor falhar |
 | `PERSPICUUS_AUTO_INFER` | `1` | Se `1`, após cada `POST /api/perspicuus/events` com frames lateral ou posterior, agenda inferência em background (uma imagem de cada vez; média por trait). `0` desliga. |
+
+### Modelos ONNX — nomes de ficheiro e onde colocar
+
+O código **não exige nomes fixos**: cada variável acima deve ser o **caminho absoluto** até ao ficheiro no disco (ex.: `/data/models/cowview.onnx`). Podes usar qualquer nome; uma convenção clara ajuda:
+
+| Ficheiro | Exemplo de nome | Variável |
+|----------|-----------------|----------|
+| YOLO (CowView / deteção) | `cowview.onnx` ou `NeloreView.onnx` | `PERSPICUUS_YOLO_ONNX` |
+| iudicium vista lateral | `iudicium_lateral_fp32.onnx` | `PERSPICUUS_LATERAL_ONNX` |
+| iudicium vista posterior | `iudicium_posterior_fp32.onnx` | `PERSPICUUS_POSTERIOR_ONNX` |
+| metadata (opcional) | `metadata_lateral.json` | `PERSPICUUS_LATERAL_METADATA_JSON` |
+| metadata (opcional) | `metadata_posterior.json` | `PERSPICUUS_POSTERIOR_METADATA_JSON` |
+
+**Local / dev:** coloca os `.onnx` numa pasta (ex.: `attentus-server/data/models/`) e define no ambiente, por exemplo:
+
+```bash
+export PERSPICUUS_YOLO_ONNX="/Users/voce/caminho/CowView.onnx"
+export PERSPICUUS_LATERAL_ONNX="/Users/voce/caminho/output-ECC/onnx_export/iudicium_fp32.onnx"
+export PERSPICUUS_POSTERIOR_ONNX="..."   # outro ficheiro se treinaste modelo separado
+export PERSPICUUS_LATERAL_METADATA_JSON="/Users/voce/caminho/output-ECC/onnx_export/metadata.json"
+```
+
+**Render.com (disco persistente):** com `DATA_DIR=/data` e disco montado em `/data`, cria uma pasta e copia os ficheiros para lá (não entram no Git por serem pesados):
+
+1. No dashboard: **Shell** do serviço, ou SSH se ativado.
+2. Exemplo: `mkdir -p /data/models` e faz **upload** com `scp` a partir do teu PC:  
+   `scp CowView.onnx iudicium_*.onnx metadata.json user@render-host:/data/models/`
+3. No Render → **Environment**, define por exemplo:  
+   `PERSPICUUS_YOLO_ONNX=/data/models/cowview.onnx`  
+   `PERSPICUUS_LATERAL_ONNX=/data/models/iudicium_lateral_fp32.onnx`  
+   `PERSPICUUS_POSTERIOR_ONNX=/data/models/iudicium_posterior_fp32.onnx`  
+   (e os JSON de metadata se existirem.)
+4. **Redeploy** ou reinicia o serviço para carregar as novas variáveis.
+
+**Nota:** se lateral e posterior usarem **o mesmo** ONNX por agora, podes apontar as duas variáveis para o **mesmo caminho** de ficheiro. O tamanho do disco em `render.yaml` pode precisar de subir se os modelos forem grandes.
 
 ---
 

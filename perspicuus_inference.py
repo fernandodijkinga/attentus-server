@@ -4,12 +4,14 @@ Inferência Perspicuus MK1 (YOLO CowView + iudicium ONNX por vista).
 Apenas vistas **lateral** e **posterior** — modelos distintos via variáveis de ambiente.
 Armazena todas as traits devolvidas pelo ONNX (nomes vindos de metadata.json).
 
-Variáveis de ambiente (paths absolutos ou relativos ao CWD):
+Variáveis de ambiente (paths absolutos ou relativos ao CWD) — têm prioridade sobre ficheiros em DATA_DIR/ml_models/:
   PERSPICUUS_YOLO_ONNX          — CowView / NeloreView (obrigatório para inferir)
   PERSPICUUS_LATERAL_ONNX       — modelo iudicium para lateral
   PERSPICUUS_POSTERIOR_ONNX     — modelo iudicium para posterior
   PERSPICUUS_LATERAL_METADATA_JSON   — opcional (trait_names, input_size, …)
   PERSPICUUS_POSTERIOR_METADATA_JSON — opcional
+
+Sem env: usa registry.json em DATA_DIR/ml_models/ (upload pela UI / API interna).
 
 Dependências: onnxruntime, opencv-python-headless, numpy, Pillow
 """
@@ -44,6 +46,96 @@ SCORE_CLAMP = 5.0
 
 _MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+# ─── Modelos em disco (upload UI) ───────────────────────────────────────────
+ROLE_TO_ENV: Dict[str, str] = {
+    "yolo": "PERSPICUUS_YOLO_ONNX",
+    "lateral": "PERSPICUUS_LATERAL_ONNX",
+    "posterior": "PERSPICUUS_POSTERIOR_ONNX",
+    "lateral_meta": "PERSPICUUS_LATERAL_METADATA_JSON",
+    "posterior_meta": "PERSPICUUS_POSTERIOR_METADATA_JSON",
+}
+REGISTRY_FILENAME = "registry.json"
+
+
+def data_dir_default() -> str:
+    return os.environ.get(
+        "DATA_DIR",
+        "/data" if os.environ.get("RENDER") else os.path.join(os.path.dirname(__file__), "data"),
+    )
+
+
+def get_models_dir() -> str:
+    d = os.path.join(data_dir_default(), "ml_models")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def load_registry() -> Dict[str, Optional[str]]:
+    path = os.path.join(get_models_dir(), REGISTRY_FILENAME)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: Dict[str, Optional[str]] = {}
+    for k in ROLE_TO_ENV:
+        v = data.get(k)
+        if v is None or v == "":
+            out[k] = None
+        else:
+            out[k] = str(v)
+    return out
+
+
+def save_registry(updates: Dict[str, Optional[str]]) -> None:
+    base = load_registry()
+    for k, v in updates.items():
+        if k in ROLE_TO_ENV:
+            base[k] = v
+    path = os.path.join(get_models_dir(), REGISTRY_FILENAME)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(base, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+
+def resolve_model_path(role: str) -> Optional[str]:
+    """Env (ficheiro existente) > ficheiro em ml_models/registry."""
+    if role not in ROLE_TO_ENV:
+        return None
+    env_p = os.environ.get(ROLE_TO_ENV[role], "").strip()
+    if env_p and os.path.isfile(env_p):
+        return env_p
+    reg = load_registry()
+    fn = reg.get(role)
+    if not fn:
+        return None
+    safe = os.path.basename(str(fn))
+    fp = os.path.join(get_models_dir(), safe)
+    if os.path.isfile(fp):
+        return fp
+    return None
+
+
+def model_path_source(role: str) -> str:
+    """Para UI: origem do path efetivo."""
+    if role not in ROLE_TO_ENV:
+        return "missing"
+    env_p = os.environ.get(ROLE_TO_ENV[role], "").strip()
+    if env_p and os.path.isfile(env_p):
+        return "env"
+    reg = load_registry()
+    fn = reg.get(role)
+    if fn:
+        safe = os.path.basename(str(fn))
+        fp = os.path.join(get_models_dir(), safe)
+        if os.path.isfile(fp):
+            return "registry"
+    return "missing"
 
 
 def _providers() -> List[str]:
@@ -229,24 +321,21 @@ class PerspicuusInferenceEngine:
         self._heads: Dict[str, _HeadState] = {v: _HeadState() for v in self.VIEWS}
 
     def is_ready(self) -> bool:
-        yolo = os.environ.get("PERSPICUUS_YOLO_ONNX", "").strip()
-        lat = os.environ.get("PERSPICUUS_LATERAL_ONNX", "").strip()
-        post = os.environ.get("PERSPICUUS_POSTERIOR_ONNX", "").strip()
-        return bool(yolo and os.path.isfile(yolo) and (
-            (lat and os.path.isfile(lat)) or (post and os.path.isfile(post))
-        ))
+        yolo = resolve_model_path("yolo")
+        lat = resolve_model_path("lateral")
+        post = resolve_model_path("posterior")
+        return bool(yolo and ((lat) or (post)))
 
     def onnx_path_for(self, view: str) -> Optional[str]:
-        key = "PERSPICUUS_LATERAL_ONNX" if view == "lateral" else "PERSPICUUS_POSTERIOR_ONNX"
-        p = os.environ.get(key, "").strip()
-        return p if p and os.path.isfile(p) else None
+        role = "lateral" if view == "lateral" else "posterior"
+        return resolve_model_path(role)
 
     def _load_yolo(self) -> None:
         if self._yolo_sess is not None:
             return
-        path = os.environ.get("PERSPICUUS_YOLO_ONNX", "").strip()
-        if not path or not os.path.isfile(path):
-            raise FileNotFoundError(f"YOLO ONNX não encontrado: {path}")
+        path = resolve_model_path("yolo")
+        if not path:
+            raise FileNotFoundError("YOLO ONNX não encontrado (env ou upload em ml_models)")
         self._yolo_sess = ort.InferenceSession(path, providers=_providers())
         inp0 = self._yolo_sess.get_inputs()[0]
         self._yolo_in_name = inp0.name
@@ -259,12 +348,14 @@ class PerspicuusInferenceEngine:
         st = self._heads[view]
         if st.sess is not None:
             return st
-        env_key = "PERSPICUUS_LATERAL_ONNX" if view == "lateral" else "PERSPICUUS_POSTERIOR_ONNX"
-        meta_key = "PERSPICUUS_LATERAL_METADATA_JSON" if view == "lateral" else "PERSPICUUS_POSTERIOR_METADATA_JSON"
-        onnx_path = os.environ.get(env_key, "").strip()
-        if not onnx_path or not os.path.isfile(onnx_path):
-            raise FileNotFoundError(f"ONNX {view} não encontrado ({env_key}={onnx_path})")
-        meta_path = os.environ.get(meta_key, "").strip()
+        role_onnx = "lateral" if view == "lateral" else "posterior"
+        role_meta = "lateral_meta" if view == "lateral" else "posterior_meta"
+        onnx_path = resolve_model_path(role_onnx)
+        if not onnx_path:
+            raise FileNotFoundError(
+                f"ONNX {view} não encontrado (env {ROLE_TO_ENV[role_onnx]} ou upload)"
+            )
+        meta_path = resolve_model_path(role_meta) or ""
         meta = load_metadata(meta_path)
         st.trait_names = list(meta["trait_names"])
         st.img_size = int(meta["input_size"])
@@ -373,6 +464,12 @@ def get_engine() -> PerspicuusInferenceEngine:
     return _ENGINE
 
 
+def reset_engine() -> None:
+    """Após alterar modelos no disco/registry, força recarregar sessões ONNX."""
+    global _ENGINE
+    _ENGINE = None
+
+
 def traits_mean_from_frames(rows: List[Dict[str, Any]]) -> Dict[str, float]:
     """
     Média por nome de trait em todos os frames com inferência bem-sucedida
@@ -424,7 +521,9 @@ def run_inference_for_event(event: Dict[str, Any], uploads_root: str) -> Dict[st
         "config_ok": eng.is_ready(),
     }
     if not eng.is_ready():
-        out["error"] = "Modelos não configurados (defina PERSPICUUS_YOLO_ONNX e LATERAL/POSTERIOR ONNX)"
+        out["error"] = (
+            "Modelos não configurados (env PERSPICUUS_* ou upload em Perspicuus → Modelos MK1)"
+        )
         out["inferred_at_utc"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         return out
 
@@ -438,8 +537,10 @@ def run_inference_for_event(event: Dict[str, Any], uploads_root: str) -> Dict[st
         if not isinstance(frames, list):
             frames = []
         if not eng.onnx_path_for(view):
-            ek = "PERSPICUUS_LATERAL_ONNX" if view == "lateral" else "PERSPICUUS_POSTERIOR_ONNX"
-            out["skipped"][view] = f"Ficheiro ONNX em falta ou inválido ({ek})"
+            role = "lateral" if view == "lateral" else "posterior"
+            out["skipped"][view] = (
+                f"ONNX {view} em falta (env {ROLE_TO_ENV[role]} ou upload)"
+            )
             continue
 
         view_rows: List[Dict[str, Any]] = []

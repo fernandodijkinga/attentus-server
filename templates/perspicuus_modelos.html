@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Modelos MK1{% endblock %}
+
+{% block head %}
+<style>
+.role-grid { display: grid; gap: 14px; }
+.role-card {
+  background: var(--surf2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px 16px;
+  align-items: start;
+}
+@media (max-width: 720px) { .role-card { grid-template-columns: 1fr; } }
+.role-title { font-weight: 700; font-size: 14px; color: #fff; margin-bottom: 4px; }
+.role-meta { font-size: 11px; font-family: var(--mono); color: var(--text2); line-height: 1.45; word-break: break-all; }
+.badge-src {
+  font-size: 9px; font-weight: 700; padding: 3px 8px; border-radius: 6px; font-family: var(--mono);
+  text-transform: uppercase; letter-spacing: .5px;
+}
+.src-env { background: rgba(0,153,255,.12); color: var(--accent2); border: 1px solid rgba(0,153,255,.25); }
+.src-registry { background: rgba(0,229,160,.12); color: var(--accent); border: 1px solid rgba(0,229,160,.25); }
+.src-missing { background: rgba(255,224,102,.1); color: var(--warn); border: 1px solid rgba(255,224,102,.2); }
+.upload-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.flash-bar {
+  padding: 12px 16px; border-radius: 8px; margin-bottom: 18px; font-size: 13px; line-height: 1.45;
+}
+.flash-bar.success { background: rgba(0,229,160,.1); border: 1px solid rgba(0,229,160,.25); color: var(--accent); }
+.flash-bar.error { background: rgba(255,77,106,.1); border: 1px solid rgba(255,77,106,.25); color: var(--err); }
+.hint-box {
+  font-size: 12px; color: var(--text2); line-height: 1.5; margin-top: 8px;
+  padding: 12px 14px; background: var(--surf3); border-radius: 8px; border: 1px solid var(--border);
+}
+</style>
+{% endblock %}
+
+{% set role_labels = {
+  'yolo': 'YOLO (deteção / crop)',
+  'lateral': 'iudicium — vista lateral',
+  'posterior': 'iudicium — vista posterior',
+  'lateral_meta': 'Metadata JSON — lateral',
+  'posterior_meta': 'Metadata JSON — posterior',
+} %}
+
+{% macro fmt_size(n) -%}
+  {%- if n is none -%}—{%- elif n < 1024 -%}{{ n }} B{%- elif n < 1048576 -%}{{ (n / 1024)|round(1) }} KB{%- else -%}{{ (n / 1048576)|round(2) }} MB{%- endif -%}
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">📦 <span>Modelos</span> <span style="color:var(--accent)">MK1</span></div>
+    <div class="page-sub">Carregar ONNX e metadata para {{ ml_models_dir }} · prioridade: variáveis de ambiente &gt; ficheiros carregados</div>
+  </div>
+  <div class="flex gap-8">
+    <a href="{{ url_for('perspicuus') }}" class="btn btn-ghost btn-sm">← Perspicuus</a>
+    <a href="{{ url_for('perspicuus_inferencias') }}" class="btn btn-ghost btn-sm">Inferências</a>
+  </div>
+</div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+      <div class="flash-bar {{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
+
+<div class="stat-grid mb-16">
+  <div class="stat-card">
+    <div class="stat-label">Motor MK1</div>
+    <div class="stat-value {% if inference_engine_ready %}accent{% endif %}"{% if not inference_engine_ready %} style="color:var(--err)"{% endif %}>
+      {% if inference_engine_ready %}OK{% else %}Incompleto{% endif %}
+    </div>
+    <div class="stat-sub">YOLO + pelo menos um iudicium (lateral ou posterior)</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Limite por upload</div>
+    <div class="stat-value blue">{{ max_mb }} MB</div>
+    <div class="stat-sub">MAX_MODEL_UPLOAD_MB no ambiente</div>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-title">Pasta no servidor</div>
+  <p class="role-meta" style="margin:0">{{ ml_models_dir }}</p>
+  <p class="hint-box" style="margin-top:12px;margin-bottom:0">
+    Em produção (Render), os ficheiros ficam no disco persistente sob <code style="color:var(--accent2)">DATA_DIR</code>.
+    Variáveis <code>PERSPICUUS_*_ONNX</code> continuam a ter prioridade: úteis para apontar para paths fora desta pasta.
+  </p>
+</div>
+
+<div class="role-grid">
+  {% for s in slots %}
+  <div class="role-card">
+    <div>
+      <div class="role-title">{{ role_labels.get(s.role, s.role) }}</div>
+      <div class="role-meta">
+        <strong>Variável:</strong> {{ s.env_var }}<br>
+        <strong>Ficheiro activo:</strong> {{ s.path or '—' }}<br>
+        <strong>Tamanho:</strong> {{ fmt_size(s.size) }}
+        {% if s.registry_name %}<br><strong>registry.json:</strong> {{ s.registry_name }}{% endif %}
+      </div>
+      <div class="upload-row">
+        <form method="post" enctype="multipart/form-data" action="{{ url_for('perspicuus_modelos') }}">
+          <input type="hidden" name="action" value="upload">
+          <input type="hidden" name="role" value="{{ s.role }}">
+          <input type="file" name="file" required accept="{{ role_ext[s.role]|sort|join(',') }}">
+          <button type="submit" class="btn btn-sm" style="margin-left:4px">Enviar</button>
+        </form>
+      </div>
+      <div class="role-meta" style="margin-top:8px">Extensões: {{ role_ext[s.role]|join(', ') }}</div>
+    </div>
+    <div style="text-align:right">
+      {% if s.source == 'env' %}
+        <span class="badge-src src-env">ambiente</span>
+      {% elif s.source == 'registry' %}
+        <span class="badge-src src-registry">ml_models</span>
+      {% else %}
+        <span class="badge-src src-missing">em falta</span>
+      {% endif %}
+      <form method="post" action="{{ url_for('perspicuus_modelos') }}" style="margin-top:10px" onsubmit="return confirm('Remover entrada do registry e apagar o ficheiro em ml_models (se existir)?');">
+        <input type="hidden" name="action" value="clear">
+        <input type="hidden" name="role" value="{{ s.role }}">
+        <button type="submit" class="btn btn-ghost btn-sm" style="color:var(--err)">Limpar registo</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

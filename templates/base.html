@@ -312,6 +312,12 @@ select { cursor: pointer; }
     <a href="{{ url_for('perspicuus') }}"  class="nav-link {% if request.endpoint == 'perspicuus' %}active{% endif %}">
       <span class="icon">🧠</span> Perspicuus
     </a>
+    <a href="{{ url_for('perspicuus_inferencias') }}" class="nav-link {% if request.endpoint == 'perspicuus_inferencias' %}active{% endif %}">
+      <span class="icon">◇</span> Inferências MK1
+    </a>
+    <a href="{{ url_for('perspicuus_modelos') }}" class="nav-link {% if request.endpoint == 'perspicuus_modelos' %}active{% endif %}">
+      <span class="icon">📦</span> Modelos MK1
+    </a>
 
     <div class="nav-section">Dados</div>
     <a href="{{ url_for('database') }}"         class="nav-link {% if request.endpoint == 'database' and request.args.get('tab','weather')=='weather' %}active{% endif %}">
@@ -319,6 +325,9 @@ select { cursor: pointer; }
     </a>
     <a href="{{ url_for('database', tab='images') }}" class="nav-link {% if request.endpoint == 'database' and request.args.get('tab')=='images' %}active{% endif %}">
       <span class="icon">🗂</span> Imagens DB
+    </a>
+    <a href="{{ url_for('database', tab='perspicuus') }}" class="nav-link {% if request.endpoint == 'database' and request.args.get('tab')=='perspicuus' %}active{% endif %}">
+      <span class="icon">◆</span> Perspicuus DB
     </a>
 
     <div class="nav-section">Export</div>
