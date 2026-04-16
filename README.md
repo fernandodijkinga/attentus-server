@@ -103,6 +103,7 @@ Upload multipart esperado (já gerado pelo firmware): campos `image`, `device_na
 | `POST` | `/api/sensors` | Recebe JSON da estação meteo |
 | `POST` | `/api/upload` | Recebe imagem do calf monitor |
 | `POST` | `/api/perspicuus/events` | Recebe evento do brete inteligente (RFID + frames) |
+| `POST` | `/api/record/perspicuus/<id>/infer` | Inferência MK1 (YOLO + ONNX lateral/posterior); requer login web |
 | `GET`  | `/api/weather/data?hours=24&device=X` | JSON para gráficos |
 | `GET`  | `/api/calf-monitor/latest` | Última imagem por baia monitorada |
 | `GET`  | `/api/image/<device>/<filename>` | Servir imagem |
@@ -176,8 +177,10 @@ Imagens armazenadas em: `/data/uploads/<device_name>/<device>_<timestamp>_<captu
 ```
 event_id, received_at, timestamp_utc, station_id, device_id, animal_rfid, animal_status,
 animal_repetition, inference_ready, frontal_json, lateral_json, posterior_json, superior_json,
-total_images, raw_json
+total_images, raw_json, inference_json, inference_at
 ```
+
+`inference_json` guarda o pipeline MK1: por vista, **frames** (score por imagem, em sequência) e **traits_mean** (média dos traits nas imagens válidas daquela pose). Preenchido automaticamente no ingest (se `PERSPICUUS_AUTO_INFER=1` e ONNX OK) ou por `POST /api/record/perspicuus/<id>/infer` / botão **Recalcular**.
 
 ---
 
@@ -190,6 +193,13 @@ total_images, raw_json
 | `ADMIN_PASS` | `attentus2024` | **Altere antes do deploy!** |
 | `API_KEY` | `` (vazio) | Chave dos ESP32 (vazio = sem auth) |
 | `DATA_DIR` | `/data` | Diretório do banco e imagens |
+| `PERSPICUUS_YOLO_ONNX` | — | Path ao `CowView.onnx` (crop do animal) |
+| `PERSPICUUS_LATERAL_ONNX` | — | Modelo iudicium (traits) para vista **lateral** |
+| `PERSPICUUS_POSTERIOR_ONNX` | — | Modelo iudicium para vista **posterior** |
+| `PERSPICUUS_LATERAL_METADATA_JSON` | — | Opcional (`trait_names`, `input_size`, …) |
+| `PERSPICUUS_POSTERIOR_METADATA_JSON` | — | Opcional |
+| `PERSPICUUS_YOLO_BBOX_FORMAT` | auto | `xywh` ou `xyxy` se o auto-detetor falhar |
+| `PERSPICUUS_AUTO_INFER` | `1` | Se `1`, após cada `POST /api/perspicuus/events` com frames lateral ou posterior, agenda inferência em background (uma imagem de cada vez; média por trait). `0` desliga. |
 
 ---
 

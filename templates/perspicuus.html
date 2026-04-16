@@ -64,6 +64,40 @@
   padding: 8px; font-family: var(--mono); font-size: 9px; color: var(--muted);
   line-height: 1.35; border: 1px dashed var(--border); border-radius: 8px;
 }
+.inference-actions {
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+}
+.inference-panel {
+  margin-top: 12px; padding: 12px 14px;
+  border: 1px solid rgba(0,229,160,.2); border-radius: 10px;
+  background: rgba(0,229,160,.04);
+}
+.inference-panel h4 {
+  margin: 0 0 10px 0; font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase;
+  color: var(--accent); font-family: var(--mono);
+}
+.infer-view-block { margin-bottom: 14px; }
+.infer-view-block:last-child { margin-bottom: 0; }
+.infer-view-title { font-size: 10px; font-weight: 700; color: var(--text2); margin-bottom: 6px; font-family: var(--mono); }
+.infer-frame {
+  margin-bottom: 10px; padding: 8px 10px; border-radius: 8px; background: var(--bg);
+  border: 1px solid var(--border);
+}
+.trait-scores {
+  list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 14px;
+  font-family: var(--mono); font-size: 11px;
+}
+.trait-scores li span { color: var(--muted); margin-right: 4px; }
+.trait-scores li strong { color: var(--accent2); }
+.infer-meta-line { font-size: 10px; color: var(--muted); margin-top: 6px; font-family: var(--mono); }
+.infer-err { color: #f07178; font-size: 12px; margin-bottom: 8px; }
+.infer-skip { font-size: 11px; color: var(--text2); margin-bottom: 4px; }
+.traits-mean-box {
+  margin-bottom: 12px; padding: 10px 12px; border-radius: 8px;
+  background: rgba(0,229,160,.12); border: 1px solid rgba(0,229,160,.25);
+}
+.traits-mean-box .mean-label { font-size: 10px; color: var(--accent); margin-bottom: 6px; font-family: var(--mono); text-transform: uppercase; letter-spacing: 1px; }
 </style>
 {% endblock %}
 
@@ -72,6 +106,11 @@
   <div>
     <div class="page-title">🧠 <span>Perspicuus</span></div>
     <div class="page-sub">Brete inteligente — RFID e pacotes de imagens por passagem</div>
+    {% if not inference_engine_ready %}
+    <div class="page-sub" style="margin-top:6px;opacity:.9">Inferência MK1: defina <span class="mono">PERSPICUUS_YOLO_ONNX</span>, <span class="mono">PERSPICUUS_LATERAL_ONNX</span> e <span class="mono">PERSPICUUS_POSTERIOR_ONNX</span> no servidor.</div>
+    {% elif inference_engine_ready %}
+    <div class="page-sub" style="margin-top:6px;opacity:.85">Com ONNX ativo, eventos com vistas lateral/posterior disparam inferência automática (uma imagem de cada vez; média por trait na pose). Use <b>Recalcular</b> para repetir.</div>
+    {% endif %}
   </div>
   <div class="flex gap-8">
     <span class="pill pill-blue">{{ stats.total }} eventos</span>
@@ -129,11 +168,16 @@
           <span><b>total:</b> {{ ev.total_images }}</span>
         </div>
       </div>
-      <div>
+      <div class="flex gap-8" style="flex-wrap:wrap;align-items:center">
         {% if ev.inference_ready %}
         <span class="pill pill-green">inference_ready = true</span>
         {% else %}
         <span class="pill pill-orange">inference_ready = false</span>
+        {% endif %}
+        {% if inference_engine_ready %}
+        <button type="button" class="btn btn-accent btn-sm" onclick="runPerspInfer({{ ev.id }})">
+          {% if ev.inference_at %}↻ Recalcular inferência{% else %}▶ Inferir agora{% endif %}
+        </button>
         {% endif %}
       </div>
     </div>
@@ -170,6 +214,74 @@
       </div>
       {% endfor %}
     </div>
+
+    {% if ev.inference_at and ev.inference %}
+    <div class="inference-panel">
+      <h4>Inferência morfológica (MK1)</h4>
+      {% if ev.inference.error %}
+      <div class="infer-err">{{ ev.inference.error }}</div>
+      {% endif %}
+      {% if ev.inference.skipped %}
+        {% for sk, msg in ev.inference.skipped.items() %}
+        <div class="infer-skip"><b>{{ sk }}:</b> {{ msg }}</div>
+        {% endfor %}
+      {% endif %}
+      {% if ev.inference.views %}
+        {% for vname in ['lateral', 'posterior'] %}
+          {% set vd = ev.inference.views.get(vname) %}
+          {% if vd is mapping %}
+            {% set vrows = vd.get('frames', []) %}
+            {% set tmean = vd.get('traits_mean', {}) %}
+          {% elif vd %}
+            {% set vrows = vd %}
+            {% set tmean = {} %}
+          {% else %}
+            {% set vrows = [] %}
+            {% set tmean = {} %}
+          {% endif %}
+          {% if vrows or tmean %}
+          <div class="infer-view-block">
+            <div class="infer-view-title">{{ vname }}</div>
+            {% if tmean %}
+            <div class="traits-mean-box">
+              <div class="mean-label">Média dos scores ({% if vd is mapping %}{{ vd.get('n_frames_inferred', vrows|length) }}{% else %}{{ vrows|length }}{% endif %} frame(s) com sucesso)</div>
+              <ul class="trait-scores">
+                {% for name, val in tmean.items() %}
+                <li><span>{{ name }}</span><strong>{{ '%.4f'|format(val) }}</strong></li>
+                {% endfor %}
+              </ul>
+            </div>
+            {% endif %}
+            {% for row in vrows %}
+            <div class="infer-frame">
+              <div class="mono text-muted" style="font-size:10px;margin-bottom:6px">Por imagem · frame #{{ row.frame_index }}</div>
+              {% if row.traits %}
+              <ul class="trait-scores">
+                {% for name, val in row.traits.items() %}
+                <li><span>{{ name }}</span><strong>{{ '%.4f'|format(val) }}</strong></li>
+                {% endfor %}
+              </ul>
+              {% elif row.error %}
+              <span class="infer-err">{{ row.error }}</span>
+              {% endif %}
+              <div class="infer-meta-line">
+                {% if row.yolo_conf is not none %}yolo {{ '%.2f'|format(row.yolo_conf) }}{% endif %}
+                {% if row.infer_ms is not none %} · {{ row.infer_ms }} ms{% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+      {% if ev.inference.get('trigger') %}
+      <div class="infer-meta-line" style="margin-top:8px">Origem: <span class="mono">{{ ev.inference.trigger }}</span></div>
+      {% endif %}
+      {% if ev.inference.get('inferred_at_utc') %}
+      <div class="infer-meta-line" style="margin-top:10px">UTC: {{ ev.inference.inferred_at_utc }}</div>
+      {% endif %}
+    </div>
+    {% endif %}
   </div>
   {% else %}
   <div class="empty-state">
@@ -193,4 +305,24 @@
   <span class="page-info">página {{ page }} / {{ total_pages }} · {{ total }} eventos</span>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function runPerspInfer(id) {
+  const r = await fetch('/api/record/perspicuus/' + id + '/infer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rerun: true }),
+  });
+  let j = {};
+  try { j = await r.json(); } catch (e) {}
+  if (r.ok) {
+    toast('Inferência recalculada (imagem a imagem)');
+    location.reload();
+  } else {
+    toast(j.error || ('HTTP ' + r.status), false);
+  }
+}
+</script>
 {% endblock %}

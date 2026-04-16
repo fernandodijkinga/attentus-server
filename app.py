@@ -28,6 +28,7 @@ import os
 import re
 import sqlite3
 import json
+import threading
 import zipfile
 import io
 import csv
@@ -412,7 +413,9 @@ def init_db():
         posterior_json    TEXT    NOT NULL DEFAULT '[]',
         superior_json     TEXT    NOT NULL DEFAULT '[]',
         total_images      INTEGER NOT NULL DEFAULT 0,
-        raw_json          TEXT    NOT NULL
+        raw_json          TEXT    NOT NULL,
+        inference_json    TEXT    NOT NULL DEFAULT '{}',
+        inference_at      TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_weather_received ON weather(received_at);
@@ -424,10 +427,77 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_persp_rfid       ON perspicuus_events(animal_rfid);
     """)
     db.commit()
+    try:
+        cols = {row[1] for row in db.execute("PRAGMA table_info(perspicuus_events)")}
+        if "inference_json" not in cols:
+            db.execute(
+                "ALTER TABLE perspicuus_events ADD COLUMN inference_json TEXT NOT NULL DEFAULT '{}'"
+            )
+        if "inference_at" not in cols:
+            db.execute("ALTER TABLE perspicuus_events ADD COLUMN inference_at TEXT")
+        db.commit()
+    except sqlite3.OperationalError as e:
+        log.warning("Migração perspicuus_events: %s", e)
     db.close()
     log.info("DB inicializado OK")
 
 init_db()
+
+
+def _perspicuus_inference_engine_ready():
+    try:
+        from perspicuus_inference import get_engine
+        return get_engine().is_ready()
+    except Exception:
+        return False
+
+
+def _perspicuus_auto_infer_enabled():
+    v = os.environ.get('PERSPICUUS_AUTO_INFER', '1').strip().lower()
+    return v not in ('0', 'false', 'no', 'off')
+
+
+def _run_perspicuus_inference_job(row_id: int, trigger: str):
+    """
+    Background: processa cada frame em sequência; médias por vista em run_inference_for_event.
+    Usa sqlite3 direto (sem Flask g).
+    """
+    try:
+        from perspicuus_inference import run_inference_for_event, get_engine
+        if not get_engine().is_ready():
+            log.info('[PERSPICUUS] auto-infer ignorada (ONNX não configurado) id=%s', row_id)
+            return
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            'SELECT * FROM perspicuus_events WHERE id = ?', (row_id,)
+        ).fetchone()
+        conn.close()
+        if not row:
+            return
+        d = dict(row)
+        result = run_inference_for_event(d, UPLOADS_DIR)
+        result['trigger'] = trigger
+        now = datetime.utcnow().isoformat() + 'Z'
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            'UPDATE perspicuus_events SET inference_json = ?, inference_at = ? WHERE id = ?',
+            (json.dumps(result, ensure_ascii=False), now, row_id),
+        )
+        conn.commit()
+        conn.close()
+        log.info('[PERSPICUUS] inferência %s gravada id=%s', trigger, row_id)
+    except Exception:
+        log.exception('[PERSPICUUS] inferência em background falhou id=%s', row_id)
+
+
+def _schedule_perspicuus_auto_infer(row_id: int):
+    threading.Thread(
+        target=_run_perspicuus_inference_job,
+        args=(row_id, 'auto_ingest'),
+        daemon=True,
+    ).start()
+
 
 # ─── DECORATORS ──────────────────────────────────────────────────────────────
 
@@ -597,6 +667,11 @@ def perspicuus():
                 d[key] = []
             d[f'{key}_count'] = len(d[key])
         d['inference_ready'] = bool(d.get('inference_ready', 0))
+        inf_raw = d.get('inference_json') or '{}'
+        try:
+            d['inference'] = json.loads(inf_raw) if inf_raw else {}
+        except (json.JSONDecodeError, TypeError):
+            d['inference'] = {}
         records.append(d)
 
     total_pages = max(1, (total + per_page - 1) // per_page)
@@ -621,6 +696,7 @@ def perspicuus():
         total_pages=total_pages,
         total=total,
         stats=stats,
+        inference_engine_ready=_perspicuus_inference_engine_ready(),
     )
 
 
@@ -844,6 +920,22 @@ def receive_perspicuus_event():
         "[PERSPICUUS] station=%s rfid=%s frames=%s ready=%s",
         data['station_id'], data['animal_rfid'], data['total_images'], bool(data['inference_ready'])
     )
+    lat = data['images'].get('lateral') or []
+    post = data['images'].get('posterior') or []
+    rid_row = db.execute(
+        'SELECT id FROM perspicuus_events WHERE event_id = ?',
+        (data['event_id'],),
+    ).fetchone()
+    inference_queued = False
+    if rid_row and _perspicuus_auto_infer_enabled() and (lat or post):
+        try:
+            from perspicuus_inference import get_engine
+            if get_engine().is_ready():
+                _schedule_perspicuus_auto_infer(rid_row[0])
+                inference_queued = True
+        except Exception:
+            log.debug('auto-infer não agendada (motor indisponível)', exc_info=True)
+
     out = {
         'status': 'ok',
         'event_id': data['event_id'],
@@ -853,6 +945,7 @@ def receive_perspicuus_event():
         'inference_ready': bool(data['inference_ready']),
         'received_at': now,
         'files_saved': files_saved,
+        'inference_queued': inference_queued,
     }
     return jsonify(out), 201
 
@@ -1105,6 +1198,34 @@ def delete_perspicuus_record(rid):
     if cur.rowcount == 0:
         return jsonify({'error': 'Não encontrado'}), 404
     return jsonify({'status': 'deleted', 'id': rid})
+
+
+@app.route('/api/record/perspicuus/<int:rid>/infer', methods=['POST'])
+@login_required
+def infer_perspicuus_record_api(rid):
+    """Executa YOLO + iudicium em frames lateral/posterior com ficheiros no disco."""
+    try:
+        from perspicuus_inference import run_inference_for_event
+    except ImportError as e:
+        return jsonify({'error': f'Módulo de inferência indisponível: {e}'}), 503
+    db = get_db()
+    row = db.execute('SELECT * FROM perspicuus_events WHERE id = ?', (rid,)).fetchone()
+    if not row:
+        return jsonify({'error': 'Não encontrado'}), 404
+    d = dict(row)
+    try:
+        result = run_inference_for_event(d, UPLOADS_DIR)
+        result['trigger'] = 'manual_rerun'
+    except Exception as e:
+        log.exception('infer perspicuus id=%s', rid)
+        return jsonify({'error': str(e)}), 500
+    now = datetime.utcnow().isoformat() + 'Z'
+    db.execute(
+        'UPDATE perspicuus_events SET inference_json = ?, inference_at = ? WHERE id = ?',
+        (json.dumps(result, ensure_ascii=False), now, rid),
+    )
+    db.commit()
+    return jsonify({'status': 'ok', 'inference': result}), 200
 
 # ─── DOWNLOADS ────────────────────────────────────────────────────────────────
 
