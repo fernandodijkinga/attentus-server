@@ -366,7 +366,8 @@ def _normalize_perspicuus_payload(payload):
 
 
 ALLOWED_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png'}
-MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10 MB
+# Werkzeug rejeita o corpo antes da view; tem de ser >= uploads de modelos ONNX (MAX_MODEL_UPLOAD_MB).
+MAX_CONTENT_LENGTH = max(10 * 1024 * 1024, MAX_MODEL_UPLOAD_BYTES)
 app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 
 # ─── BANCO DE DADOS ───────────────────────────────────────────────────────────
