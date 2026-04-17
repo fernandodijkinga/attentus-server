@@ -775,20 +775,64 @@ def _merged_traits_mean(inf: dict) -> dict[str, float]:
     return {k: sum(vals) / len(vals) for k, vals in merged.items() if vals}
 
 
-def _history_bars(values: list[float]) -> list[dict[str, float | int]]:
-    def _mk(v: float, h: float) -> dict[str, float | int]:
-        bucket = max(10, min(100, int(round(h / 10.0) * 10)))
-        return {'value': v, 'height': h, 'bucket': bucket}
+def _trait_sort_key(name: str):
+    """Ordena T1, T2, … T10 corretamente; resto alfabético."""
+    s = str(name)
+    m = re.match(r'^T(\d+)$', s, re.IGNORECASE)
+    if m:
+        return (0, int(m.group(1)))
+    return (1, s.lower())
 
-    if not values:
+
+def _parse_trait_order_env() -> list[str]:
+    """
+    Lista opcional de nomes de traits na ordem desejada (Animais MK1).
+    Ex.: PERSPICUUS_TRAIT_ORDER=T1,T2,T3,ECC
+    """
+    raw = os.environ.get('PERSPICUUS_TRAIT_ORDER', '').strip()
+    if not raw:
         return []
-    lo, hi = min(values), max(values)
-    if abs(hi - lo) < 1e-9:
-        return [_mk(v, 55.0) for v in values]
-    return [
-        _mk(v, 18.0 + ((v - lo) / (hi - lo)) * 82.0)
-        for v in values
-    ]
+    out, seen = [], set()
+    for part in raw.split(','):
+        k = part.strip()
+        if k and k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+
+def _traits_detail_rows(
+    latest: dict[str, float],
+    hist_points: dict[str, list[float]],
+) -> list[dict]:
+    """
+    Uma linha por trait, na sequência definida por PERSPICUUS_TRAIT_ORDER
+    ou ordenação automática (T1… depois resto).
+    """
+    env_order = _parse_trait_order_env()
+    all_keys = set(latest.keys()) | set(hist_points.keys())
+    rows: list[dict] = []
+
+    def _row(name: str) -> dict:
+        cur = latest.get(name)
+        vals = hist_points.get(name, [])
+        return {
+            'name': name,
+            'current': float(cur) if cur is not None else None,
+            'n': len(vals),
+        }
+
+    if env_order:
+        for name in env_order:
+            rows.append(_row(name))
+        rest = sorted(all_keys - set(env_order), key=_trait_sort_key)
+        for name in rest:
+            rows.append(_row(name))
+        return rows
+
+    for name in sorted(all_keys, key=_trait_sort_key):
+        rows.append(_row(name))
+    return rows
 
 
 @app.route('/perspicuus/animais')
@@ -874,27 +918,7 @@ def perspicuus_animais():
             for trait, val in _merged_traits_mean(inf).items():
                 hist_points[trait].append(float(val))
 
-        ranked_traits = sorted(
-            latest_traits.items(),
-            key=lambda kv: kv[1],
-            reverse=True,
-        )
-        if not ranked_traits:
-            ranked_traits = sorted(
-                ((k, vals[-1]) for k, vals in hist_points.items() if vals),
-                key=lambda kv: kv[1],
-                reverse=True,
-            )
-
-        trait_cards = []
-        for trait, cur in ranked_traits[:10]:
-            vals = hist_points.get(trait, [])
-            trait_cards.append({
-                'name': trait,
-                'current': float(cur),
-                'bars': _history_bars(vals),
-                'n': len(vals),
-            })
+        trait_cards = _traits_detail_rows(latest_traits, hist_points)
 
         cards.append({
             'rfid': rfid,
@@ -939,6 +963,7 @@ def perspicuus_animais():
         q_filter=q,
         stations=stations,
         stats=stats,
+        trait_order_defined=bool(_parse_trait_order_env()),
     )
 
 

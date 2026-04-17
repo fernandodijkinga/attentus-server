@@ -54,43 +54,75 @@
   background: var(--bg);
   padding: 12px;
 }
-.trait-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 10px;
+.traits-title {
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-family: var(--mono);
+  margin-bottom: 4px;
 }
-.trait-box {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surf2);
-  padding: 10px;
+.traits-hint {
+  font-size: 10px;
+  color: var(--text2);
+  font-family: var(--mono);
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+.trait-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.trait-head {
+  display: grid;
+  grid-template-columns: 1.75rem 1fr 4.5rem 6rem;
+  gap: 10px;
+  align-items: baseline;
+  padding: 0 0 6px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 9px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+@media (max-width: 640px) {
+  .trait-head { display: none; }
+}
+.trait-row {
+  display: grid;
+  grid-template-columns: 1.75rem 1fr 4.5rem 6rem;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.trait-row:last-child { border-bottom: none; }
+.trait-idx {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: var(--mono);
+  text-align: right;
 }
 .trait-name {
-  font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
-  color: var(--muted); font-family: var(--mono);
+  color: var(--text);
+  font-family: var(--mono);
+  letter-spacing: .2px;
 }
 .trait-val {
-  font-family: var(--mono); font-size: 21px; font-weight: 700;
-  color: var(--accent); margin: 6px 0 8px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  text-align: right;
 }
-.spark {
-  height: 46px; display: flex; align-items: end; gap: 4px;
-}
-.spark-bar {
-  width: 7px; border-radius: 4px 4px 1px 1px;
-  background: linear-gradient(180deg, var(--accent2), var(--accent));
-  opacity: .95;
-  height: 30%;
-}
-.spark-bar.h10 { height: 10%; } .spark-bar.h20 { height: 20%; } .spark-bar.h30 { height: 30%; }
-.spark-bar.h40 { height: 40%; } .spark-bar.h50 { height: 50%; } .spark-bar.h60 { height: 60%; }
-.spark-bar.h70 { height: 70%; } .spark-bar.h80 { height: 80%; } .spark-bar.h90 { height: 90%; }
-.spark-bar.h100 { height: 100%; }
-.spark-empty {
-  font-family: var(--mono); font-size: 10px; color: var(--muted);
-}
-.trait-foot {
-  margin-top: 6px; font-size: 10px; color: var(--text2); font-family: var(--mono);
+.trait-hist {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text2);
+  text-align: right;
 }
 .filters-row {
   display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 16px;
@@ -102,7 +134,7 @@
 <div class="page-header">
   <div>
     <div class="page-title">🐂 <span>Animais</span> <span style="color:var(--accent)">Perspicuus</span></div>
-    <div class="page-sub">Última inferência por RFID, histórico visual de traits e últimas fotos lateral/posterior</div>
+    <div class="page-sub">Última inferência por RFID — traits em sequência (detalhe, uma linha cada) e últimas fotos lateral/posterior</div>
   </div>
   <div class="flex gap-8">
     <span class="pill pill-blue">{{ stats.animals_total }} animais totais</span>
@@ -179,21 +211,25 @@
 
       <div class="traits-col">
         {% if card.trait_cards %}
-        <div class="trait-grid">
+        <div class="traits-title">Traits (última inferência)</div>
+        {% if trait_order_defined %}
+        <p class="traits-hint">Ordem fixa via <span class="mono" style="color:var(--accent2)">PERSPICUUS_TRAIT_ORDER</span> (traits extra no fim).</p>
+        {% else %}
+        <p class="traits-hint">Ordem automática: <span class="mono">T1</span>, <span class="mono">T2</span>, … e restantes alfabeticamente.</p>
+        {% endif %}
+        <div class="trait-list">
+          <div class="trait-head" aria-hidden="true">
+            <span>#</span>
+            <span>Trait</span>
+            <span style="text-align:right">Valor</span>
+            <span style="text-align:right">Histórico</span>
+          </div>
           {% for t in card.trait_cards %}
-          <div class="trait-box">
-            <div class="trait-name">{{ t.name }}</div>
-            <div class="trait-val">{{ '%.2f'|format(t.current) }}</div>
-            <div class="spark">
-              {% if t.bars %}
-                {% for b in t.bars %}
-                <div class="spark-bar h{{ b.bucket }}" title="{{ '%.2f'|format(b.value) }}"></div>
-                {% endfor %}
-              {% else %}
-                <div class="spark-empty">Sem histórico ainda</div>
-              {% endif %}
-            </div>
-            <div class="trait-foot">{{ t.n }} ponto(s) no histórico</div>
+          <div class="trait-row">
+            <span class="trait-idx">{{ loop.index }}</span>
+            <span class="trait-name">{{ t.name }}</span>
+            <span class="trait-val">{% if t.current is not none %}{{ '%.2f'|format(t.current) }}{% else %}—{% endif %}</span>
+            <span class="trait-hist">{% if t.n %}{{ t.n }} inf.{% else %}—{% endif %}</span>
           </div>
           {% endfor %}
         </div>
