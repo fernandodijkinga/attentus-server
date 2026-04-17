@@ -150,6 +150,68 @@
 .badge-thi.alert { background: rgba(255, 224, 102, 0.12); color: var(--warn); border: 1px solid rgba(255, 224, 102, 0.22); }
 .badge-thi.stress { background: rgba(255, 77, 106, 0.12); color: var(--err); border: 1px solid rgba(255, 77, 106, 0.22); }
 .thi-last-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* Mini heatmaps THI */
+.thi-heatmaps {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  padding: 0 16px 18px;
+  border-top: 1px solid var(--border);
+  background: rgba(7, 13, 20, 0.25);
+}
+@media (max-width: 960px) { .thi-heatmaps { grid-template-columns: 1fr; } }
+.thi-heatmap-card {
+  padding: 14px 12px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surf2);
+}
+.thi-mini-h {
+  font-size: 11px; font-weight: 700; letter-spacing: 1.2px;
+  text-transform: uppercase; color: var(--muted); font-family: var(--mono);
+  margin-bottom: 6px;
+}
+.thi-mini-sub {
+  font-size: 11px; color: var(--text2); line-height: 1.45; margin-bottom: 10px; max-width: 52ch;
+}
+.thi-hm-canvas-wrap {
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #070d14;
+}
+.thi-hm-canvas-wrap canvas { display: block; max-width: 100%; height: auto !important; }
+.thi-hm-scale {
+  display: flex; align-items: center; gap: 10px; margin-top: 8px;
+  font-family: var(--mono); font-size: 9px; color: var(--muted);
+  flex-wrap: wrap;
+}
+.thi-hm-scale .grad {
+  flex: 1; min-width: 120px; height: 8px; border-radius: 4px;
+  background: linear-gradient(90deg, #4a90d9 0%, #a8e063 35%, #fff2cc 55%, #ffc000 75%, #ed7d31 88%, #c00000 100%);
+  border: 1px solid var(--border);
+}
+.zone-h-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) 1fr auto;
+  gap: 8px; align-items: center;
+  margin-bottom: 8px; font-size: 11px;
+}
+.zone-h-row:last-child { margin-bottom: 0; }
+.zh-label { color: var(--text2); font-family: var(--mono); line-height: 1.25; }
+.zh-bar {
+  height: 10px; border-radius: 5px; background: var(--bg);
+  border: 1px solid var(--border); overflow: hidden;
+}
+.zh-bar > i {
+  display: block; height: 100%; border-radius: 4px;
+  min-width: 2px; transition: width .35s ease;
+}
+.zh-h { font-family: var(--mono); color: var(--accent); font-weight: 600; font-size: 11px; text-align: right; }
+.thi-zone-total {
+  margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--border);
+  font-size: 10px; color: var(--muted); font-family: var(--mono);
+}
 </style>
 {% endblock %}
 
@@ -387,6 +449,164 @@ function updateThiLatestMeta(data) {
     </div>`;
 }
 
+function parseUtcMs(iso) {
+  return new Date(iso).getTime();
+}
+
+/** Últimos 7 dias corridos (YYYY-MM-DD em Brasília), do mais antigo ao mais recente. */
+function enumerateLast7DaysBr() {
+  const out = [];
+  const now = Date.now();
+  for (let k = 6; k >= 0; k--) {
+    const dt = new Date(now - k * 24 * 60 * 60 * 1000);
+    out.push(dt.toLocaleDateString('en-CA', { timeZone: TZ_BR }));
+  }
+  return out;
+}
+
+function brHour(iso) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: TZ_BR,
+    hour: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(iso));
+  const h = parts.find((p) => p.type === 'hour');
+  return h ? parseInt(h.value, 10) : 0;
+}
+
+function thiCellColor(avg) {
+  if (avg == null || isNaN(avg)) return 'rgba(22, 35, 48, 0.92)';
+  const t = Math.max(0, Math.min(1, (avg - 48) / 62));
+  const r = Math.round(40 + t * 200);
+  const g = Math.round(120 + (1 - t) * 100);
+  const b = Math.round(200 - t * 160);
+  return `rgb(${r},${g},${b})`;
+}
+
+function drawThiTrendHeatmap(thiWeek) {
+  const canvas = document.getElementById('thi-canvas-heatmap-trend');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const days = enumerateLast7DaysBr();
+  const rows = days.length;
+  const cols = 24;
+  const acc = {};
+  (thiWeek || []).forEach((r) => {
+    if (r.thi == null) return;
+    const day = new Date(r.received_at).toLocaleDateString('en-CA', {
+      timeZone: TZ_BR,
+    });
+    const hour = brHour(r.received_at);
+    const k = `${day}-${hour}`;
+    if (!acc[k]) acc[k] = { sum: 0, n: 0 };
+    acc[k].sum += Number(r.thi);
+    acc[k].n += 1;
+  });
+
+  const cw = 12;
+  const ch = 20;
+  const padL = 42;
+  const padT = 16;
+  const padB = 12;
+  const W = padL + cols * cw + 6;
+  const H = padT + rows * ch + padB;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.style.width = `${W}px`;
+  canvas.style.height = `${H}px`;
+  canvas.width = Math.floor(W * dpr);
+  canvas.height = Math.floor(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  ctx.fillStyle = '#070d14';
+  ctx.fillRect(0, 0, W, H);
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const k = `${days[r]}-${c}`;
+      const cell = acc[k];
+      const avg = cell && cell.n ? cell.sum / cell.n : null;
+      ctx.fillStyle = thiCellColor(avg);
+      ctx.fillRect(padL + c * cw, padT + r * ch, cw - 1, ch - 1);
+    }
+  }
+
+  ctx.font = '10px JetBrains Mono, ui-monospace, monospace';
+  ctx.fillStyle = '#7a9aae';
+  for (let r = 0; r < rows; r++) {
+    ctx.fillText(days[r].slice(5), 4, padT + r * ch + Math.floor(ch / 2) + 4);
+  }
+  ctx.font = '9px JetBrains Mono, ui-monospace, monospace';
+  for (let c = 0; c < cols; c += 3) {
+    ctx.fillText(String(c), padL + c * cw, padT - 4);
+  }
+}
+
+function holsteinBandIndex(thi) {
+  if (thi == null || isNaN(thi)) return -1;
+  const zs = THI_ZONES;
+  for (let i = 0; i < zs.length - 1; i++) {
+    if (thi >= zs[i].y_min && thi < zs[i].y_max) return i;
+  }
+  return zs.length - 1;
+}
+
+function computeHoursByHolsteinBand(periodData) {
+  const hrs = THI_ZONES.map(() => 0);
+  const pts = (periodData || [])
+    .filter((r) => r.thi != null)
+    .sort((a, b) => parseUtcMs(a.received_at) - parseUtcMs(b.received_at));
+  if (pts.length < 2) return { hrs, total: 0, sparse: pts.length };
+
+  for (let i = 0; i < pts.length - 1; i++) {
+    const dt =
+      (parseUtcMs(pts[i + 1].received_at) - parseUtcMs(pts[i].received_at)) /
+      3600000;
+    if (dt <= 0 || dt > 72) continue;
+    const idx = holsteinBandIndex(pts[i].thi);
+    if (idx >= 0) hrs[idx] += dt;
+  }
+  const total = hrs.reduce((a, b) => a + b, 0);
+  return { hrs, total, sparse: pts.length };
+}
+
+function shortZoneLabel(z) {
+  const lab = z.label || '';
+  return lab.length > 44 ? `${lab.slice(0, 42)}…` : lab;
+}
+
+function renderZoneHoursBars(periodData) {
+  const wrap = document.getElementById('thi-zone-hours-bars');
+  const tot = document.getElementById('thi-zone-hours-total');
+  if (!wrap) return;
+  const { hrs, total, sparse } = computeHoursByHolsteinBand(periodData);
+  if (sparse < 2) {
+    wrap.innerHTML =
+      '<p style="font-size:12px;color:var(--muted)">São necessárias pelo menos duas amostras com THI no período para estimar horas por faixa.</p>';
+    if (tot) tot.textContent = '';
+    return;
+  }
+  let html = '';
+  THI_ZONES.forEach((z, i) => {
+    const h = hrs[i] || 0;
+    const pct = total > 0 ? (h / total) * 100 : 0;
+    const safe = String(z.label || '').replace(/"/g, '&quot;');
+    html += `<div class="zone-h-row">
+      <span class="zh-label" title="${safe}">${shortZoneLabel(z)}</span>
+      <div class="zh-bar"><span style="display:block;width:${pct.toFixed(1)}%;min-width:${pct > 0 ? 3 : 0}px;background:${z.hex};height:100%;border-radius:4px"></span></div>
+      <span class="zh-h">${h.toFixed(1)} h</span>
+    </div>`;
+  });
+  wrap.innerHTML = html;
+  if (tot) {
+    tot.textContent = `Total aproximado entre amostras: ${total.toFixed(1)} h · ${sparse} pontos THI no período filtrado.`;
+  }
+}
+
+function buildThiMiniHeatmaps(periodData, thiWeek) {
+  drawThiTrendHeatmap(thiWeek || []);
+  renderZoneHoursBars(periodData);
+}
+
 function buildThiChart(data) {
   const canvas = document.getElementById('ch-thi');
   if (!canvas) return;
@@ -487,8 +707,20 @@ async function loadData() {
     return;
   }
 
+  const hasThi = data.some((r) => r.thi != null);
+  let thiWeekForHeat = [];
+  if (hasThi) {
+    const pw = new URLSearchParams({ hours: '168' });
+    if (device) pw.append('device', device);
+    try {
+      const rw = await fetch('/api/weather/data?' + pw.toString());
+      thiWeekForHeat = await rw.json();
+    } catch (e) {
+      thiWeekForHeat = [];
+    }
+  }
+
   const hasHum  = data.some(r => r.humidity != null);
-  const hasThi  = data.some(r => r.thi != null);
   const hasMqRaw = data.some(r => r.mq135_raw != null);
   const hasMqPpm = data.some(r => r.mq135_ppm != null);
 
@@ -526,6 +758,20 @@ async function loadData() {
           <div class="thi-kpi-grid" id="ch-thi-stats"></div>
           <div class="thi-last" id="thi-status-line"></div>
         </footer>
+        <div class="thi-heatmaps" id="thi-heatmaps">
+          <div class="thi-heatmap-card">
+            <div class="thi-mini-h">Mapa de calor — tendência THI (7 dias)</div>
+            <p class="thi-mini-sub">Média do THI por dia (linha) e hora (coluna), horário de Brasília. Células vazias = sem amostra naquela hora.</p>
+            <div class="thi-hm-canvas-wrap"><canvas id="thi-canvas-heatmap-trend" width="400" height="220"></canvas></div>
+            <div class="thi-hm-scale"><span>Baixo THI</span><div class="grad" aria-hidden="true"></div><span>Alto THI</span></div>
+          </div>
+          <div class="thi-heatmap-card">
+            <div class="thi-mini-h">Horas por faixa ambiental</div>
+            <p class="thi-mini-sub">Tempo estimado entre amostras consecutivas no período selecionado (filtro acima), atribuído à faixa Holstein do primeiro ponto de cada intervalo.</p>
+            <div id="thi-zone-hours-bars"></div>
+            <div class="thi-zone-total" id="thi-zone-hours-total"></div>
+          </div>
+        </div>
       </div>
     </div>` : ''}
     <div class="chart-card">
@@ -583,7 +829,10 @@ async function loadData() {
     const tc = document.getElementById('thi-category');
     if (tc) tc.onchange = () => updateThiLatestMeta(data);
 
-    if (hasThi) buildThiChart(data);
+    if (hasThi) {
+      buildThiChart(data);
+      buildThiMiniHeatmaps(data, thiWeekForHeat);
+    }
 
     buildChart('ch-temp',  data, 'temp_c',    'Temperatura', '°C',  'temp');
     buildChart('ch-lux',   data, 'lux',        'Luminosidade','lx',  'lux');
