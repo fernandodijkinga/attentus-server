@@ -185,7 +185,9 @@
       <tr>
         <th>ID</th><th>Recebido (Brasília)</th><th>Dispositivo</th>
         <th>Lux</th><th>Temp °C</th><th>Pressão hPa</th>
-        <th>Alt m</th><th>Umid %</th><th>RSSI</th><th></th>
+        <th>Alt m</th><th>Umid %</th>
+        <th>MQ135 (ADC)</th><th>MQ135 (ppm)</th>
+        <th>RSSI</th><th></th>
       </tr>
     </thead>
     <tbody>
@@ -202,6 +204,10 @@
           ondblclick="startEdit(this)">{{ '%.1f' % r.press_hpa if r.press_hpa else '—' }}</td>
       <td class="mono">{{ '%.1f' % r.alt_m if r.alt_m else '—' }}</td>
       <td class="mono">{{ '%.1f' % r.humidity if r.humidity else '—' }}</td>
+      <td class="edit-cell mono" data-id="{{ r.id }}" data-field="mq135_raw"
+          ondblclick="startEdit(this)">{{ '%.1f' % r.mq135_raw if r.mq135_raw is not none else '—' }}</td>
+      <td class="edit-cell mono" data-id="{{ r.id }}" data-field="mq135_ppm"
+          ondblclick="startEdit(this)">{{ '%.2f' % r.mq135_ppm if r.mq135_ppm is not none else '—' }}</td>
       <td class="mono">{{ r.rssi if r.rssi else '—' }}</td>
       <td>
         <button class="btn btn-danger btn-sm"
@@ -211,7 +217,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="10"><div class="empty-state"><div class="icon">☁</div>Nenhum dado meteorológico</div></td></tr>
+    <tr><td colspan="12"><div class="empty-state"><div class="icon">☁</div>Nenhum dado meteorológico</div></td></tr>
     {% endfor %}
     </tbody>
   </table>

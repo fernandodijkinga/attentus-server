@@ -40,27 +40,116 @@
            margin-right: 10px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .full-chart { grid-column: 1 / -1; }
-.thi-card { margin-bottom: 4px; }
-.thi-card canvas { height: 240px !important; }
-.thi-head {
+/* ── THI: layout dedicado ───────────────────────────── */
+.thi-card {
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(0, 229, 160, 0.22);
+  background: linear-gradient(165deg, rgba(0, 229, 160, 0.06) 0%, var(--surf) 42%);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+}
+.thi-shell { display: flex; flex-direction: column; gap: 0; }
+.thi-header {
   display: flex; justify-content: space-between; align-items: flex-start;
-  gap: 16px; flex-wrap: wrap; margin-bottom: 12px;
+  gap: 20px; flex-wrap: wrap;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--border);
 }
-.thi-sub { font-size: 12px; color: var(--muted); margin-top: 4px; max-width: 52ch; line-height: 1.45; }
-.thi-head-controls { display: flex; gap: 12px; align-items: flex-end; }
+.thi-headline { display: flex; gap: 14px; align-items: flex-start; max-width: min(100%, 42rem); }
+.thi-icon {
+  font-size: 28px; line-height: 1; flex-shrink: 0;
+  filter: drop-shadow(0 2px 8px rgba(0, 229, 160, 0.25));
+}
+.thi-title {
+  margin: 0; font-size: 17px; font-weight: 800; letter-spacing: -0.3px; color: #fff;
+  font-family: var(--sans);
+}
+.thi-caption {
+  margin: 6px 0 0; font-size: 12px; color: var(--text2); line-height: 1.5; max-width: 48ch;
+}
+.thi-controls {
+  display: flex; flex-direction: column; gap: 6px; min-width: 220px;
+  flex-shrink: 0;
+}
+.thi-controls .thi-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--muted); font-family: var(--mono);
+}
+.thi-select {
+  width: 100%; max-width: 320px;
+  padding: 10px 12px; border-radius: 8px;
+  border: 1px solid var(--border2); background: var(--surf2); color: var(--text);
+  font-family: var(--sans); font-size: 13px;
+  cursor: pointer;
+}
+.thi-select:focus {
+  outline: none; border-color: rgba(0, 229, 160, 0.45);
+  box-shadow: 0 0 0 2px rgba(0, 229, 160, 0.12);
+}
+.thi-chart-wrap {
+  position: relative;
+  margin: 0 12px 12px;
+  padding: 12px 8px 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  min-height: 288px;
+}
+.thi-chart-wrap canvas { height: 280px !important; max-height: 42vh; }
 .thi-legend {
-  display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 14px; padding-top: 12px;
-  border-top: 1px solid var(--border); font-family: var(--mono); font-size: 10px; color: var(--muted);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px 12px;
+  margin: 0 20px 14px;
+  padding: 0;
+  font-family: var(--mono); font-size: 10px; color: var(--text2);
 }
-.thi-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.thi-legend .thi-chip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-radius: 8px;
+  background: var(--surf2); border: 1px solid var(--border);
+  line-height: 1.35;
+}
 .thi-legend i {
-  display: inline-block; width: 12px; height: 12px; border-radius: 2px;
-  border: 1px solid rgba(255,255,255,.12);
+  display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0;
+  border: 1px solid rgba(255,255,255,.1);
 }
-.badge-thi { font-weight: 700; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-family: var(--mono); }
-.badge-thi.normal { background: rgba(226,239,218,.25); color: #a8d4a0; }
-.badge-thi.alert { background: rgba(255,242,204,.2); color: #e8c96a; }
-.badge-thi.stress { background: rgba(255,0,0,.12); color: #ff8a8a; }
+.thi-footer {
+  display: flex; flex-wrap: wrap; align-items: stretch; gap: 14px;
+  padding: 14px 20px 18px;
+  border-top: 1px solid var(--border);
+  background: rgba(7, 13, 20, 0.35);
+}
+.thi-kpi-grid {
+  display: flex; flex-wrap: wrap; gap: 10px; flex: 1; min-width: 200px;
+}
+.thi-kpi {
+  flex: 1; min-width: 88px; max-width: 140px;
+  padding: 10px 12px; border-radius: 8px;
+  background: var(--surf2); border: 1px solid var(--border);
+  text-align: center;
+}
+.thi-kpi .k {
+  display: block; font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase;
+  color: var(--muted); font-family: var(--mono); margin-bottom: 4px;
+}
+.thi-kpi .v {
+  font-family: var(--mono); font-size: 18px; font-weight: 700; color: var(--accent);
+}
+.thi-last {
+  flex: 1; min-width: 220px; max-width: 420px;
+  padding: 12px 14px; border-radius: 8px;
+  border: 1px solid rgba(0, 229, 160, 0.2);
+  background: rgba(0, 229, 160, 0.05);
+  font-size: 12px; color: var(--text2); line-height: 1.5;
+  align-self: center;
+}
+.thi-last b { color: #fff; font-family: var(--mono); }
+.badge-thi { font-weight: 700; padding: 3px 10px; border-radius: 6px; font-size: 11px; font-family: var(--mono); margin-left: 6px; }
+.badge-thi.normal { background: rgba(0, 229, 160, 0.15); color: var(--accent); border: 1px solid rgba(0, 229, 160, 0.25); }
+.badge-thi.alert { background: rgba(255, 224, 102, 0.12); color: var(--warn); border: 1px solid rgba(255, 224, 102, 0.22); }
+.badge-thi.stress { background: rgba(255, 77, 106, 0.12); color: var(--err); border: 1px solid rgba(255, 77, 106, 0.22); }
+.thi-last-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 </style>
 {% endblock %}
 
@@ -68,7 +157,7 @@
 <div class="page-header">
   <div>
     <div class="page-title">🌡 <span>Weather</span></div>
-    <div class="page-sub">Dados meteorológicos das estações Attentus</div>
+    <div class="page-sub">Meteorologia + MQ-135 (qualidade do ar) das estações Attentus</div>
   </div>
   <a href="{{ url_for('download_weather') }}" class="btn btn-ghost btn-sm">↓ Exportar CSV</a>
 </div>
@@ -161,6 +250,15 @@ function applyBrasilTimeAxis(cfg) {
   };
 }
 
+/** Fundo THI mais suave para a linha destacar sem competir visualmente. */
+function softenThiZones(zones, alpha = 0.22) {
+  return zones.map((z) => {
+    const m = String(z.rgba || '').match(/rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
+    if (!m) return z;
+    return { ...z, rgba: `rgba(${m[1]},${m[2]},${m[3]},${alpha})` };
+  });
+}
+
 function createThiZonePlugin(zones) {
   return {
     id: 'thiHolsteinZones',
@@ -188,7 +286,9 @@ const COLORS = {
   press: { line:'#0099ff', bg:'rgba(0,153,255,.06)' },
   hum:   { line:'#cc66ff', bg:'rgba(204,102,255,.07)' },
   rssi:  { line:'#ff4d6a', bg:'rgba(255,77,106,.06)' },
-  thi:   { line:'#dce9f5', bg:'rgba(0,0,0,0)' },
+  thi:   { line:'#00e5a0', bg:'rgba(0,229,160,.06)' },
+  mq135: { line:'#a8e063', bg:'rgba(168,224,99,.12)' },
+  mqppm: { line:'#56ab2f', bg:'rgba(86,171,47,.1)' },
 };
 
 const CHART_DEFAULTS = {
@@ -268,13 +368,23 @@ function updateThiLatestMeta(data) {
   const el = document.getElementById('thi-status-line');
   if (!el) return;
   if (!last) {
-    el.innerHTML = '';
+    el.innerHTML = '<span style="color:var(--muted)">Sem pontos THI no período.</span>';
     return;
   }
   const st = classifyThiStatus(last.thi, cat);
   const badge = st ? `<span class="badge-thi ${st}">${statusLabelPt(st)}</span>` : '';
   const label = THI_CATEGORY_LABELS[cat] || cat;
-  el.innerHTML = `Último ponto · THI <b>${last.thi}</b> &nbsp; ${label}: ${badge}`;
+  el.innerHTML = `
+    <div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:6px;">
+      Último ponto · ${label}
+    </div>
+    <div class="thi-last-row">
+      THI <b>${last.thi}</b>
+      ${badge}
+      ${last.temp_c != null || last.humidity != null ? `<span style="margin-left:8px;color:var(--muted);font-size:11px;font-family:var(--mono)">
+        ${last.temp_c != null ? last.temp_c + '°C' : ''}${last.temp_c != null && last.humidity != null ? ' · ' : ''}${last.humidity != null ? last.humidity + '% UR' : ''}
+      </span>` : ''}
+    </div>`;
 }
 
 function buildThiChart(data) {
@@ -306,6 +416,15 @@ function buildThiChart(data) {
     if (row.humidity != null) t += ` · ${row.humidity}% UR`;
     return t;
   };
+  cfg.scales.y.grid = { color: 'rgba(28, 48, 64, 0.55)' };
+  cfg.scales.x.grid = { color: 'rgba(28, 48, 64, 0.45)' };
+  cfg.scales.y.title = {
+    display: true,
+    text: 'Índice THI',
+    color: '#5a7a8c',
+    font: { family: 'JetBrains Mono', size: 10 },
+  };
+  cfg.animation = { duration: 450 };
 
   const ds = data.map(r => ({
     x: r.received_at,
@@ -313,8 +432,10 @@ function buildThiChart(data) {
     _row: r,
   }));
 
+  const zonePlugin = createThiZonePlugin(softenThiZones(THI_ZONES, 0.24));
+
   charts['ch-thi'] = new Chart(ctx, {
-    plugins: [createThiZonePlugin(THI_ZONES)],
+    plugins: [zonePlugin],
     type: 'line',
     data: {
       datasets: [{
@@ -323,8 +444,11 @@ function buildThiChart(data) {
         borderColor: COLORS.thi.line,
         backgroundColor: 'transparent',
         borderWidth: 2.5,
-        pointRadius: data.length < 120 ? 2 : 0,
+        pointRadius: data.length < 120 ? 3 : 0,
+        pointHoverRadius: 5,
         pointBackgroundColor: COLORS.thi.line,
+        pointBorderColor: '#070d14',
+        pointBorderWidth: 1,
         tension: 0.35,
         fill: false,
         spanGaps: false,
@@ -335,8 +459,13 @@ function buildThiChart(data) {
 
   const s = computeStats(thiVals);
   const statEl = document.getElementById('ch-thi-stats');
-  if (statEl) statEl.innerHTML =
-    `min <b>${s.min}</b> &nbsp; max <b>${s.max}</b> &nbsp; média <b>${s.avg}</b> &nbsp; <span style="color:var(--muted)">(índice THI)</span>`;
+  if (statEl) {
+    statEl.innerHTML = `
+      <div class="thi-kpi"><span class="k">Mín</span><span class="v">${s.min}</span></div>
+      <div class="thi-kpi"><span class="k">Máx</span><span class="v">${s.max}</span></div>
+      <div class="thi-kpi"><span class="k">Média</span><span class="v">${s.avg}</span></div>
+    `;
+  }
   updateThiLatestMeta(data);
 }
 
@@ -360,19 +489,24 @@ async function loadData() {
 
   const hasHum  = data.some(r => r.humidity != null);
   const hasThi  = data.some(r => r.thi != null);
+  const hasMqRaw = data.some(r => r.mq135_raw != null);
+  const hasMqPpm = data.some(r => r.mq135_ppm != null);
 
   grid.innerHTML = `
     ${hasThi ? `
     <div class="chart-card full-chart thi-card" id="thi-block">
-      <div class="thi-head">
-        <div>
-          <div class="chart-heading"><span>🐄</span> THI — conforto térmico (Holstein)</div>
-          <div class="thi-sub">Índice temperatura–umidade no ambiente. Fundo colorido: estresse térmico por faixa THI. A classificação por lote (normal / alerta / estresse) usa os limiares escolhidos para cada categoria.</div>
-        </div>
-        <div class="thi-head-controls">
-          <div class="ctrl-field">
-            <label>Categoria / lote</label>
-            <select id="thi-category">
+      <div class="thi-shell">
+        <header class="thi-header">
+          <div class="thi-headline">
+            <span class="thi-icon" aria-hidden="true">🐄</span>
+            <div>
+              <h2 class="thi-title">THI — conforto térmico</h2>
+              <p class="thi-caption">Índice temperatura–umidade (referência Holstein). O fundo do gráfico mostra as faixas ambientais de risco; a linha verde é o THI medido. O estado (normal / alerta / estresse) depende do lote selecionado.</p>
+            </div>
+          </div>
+          <div class="thi-controls">
+            <span class="thi-label">Lote / categoria</span>
+            <select id="thi-category" class="thi-select">
               <option value="calf" selected>Bezerras</option>
               <option value="heifer">Novilhas</option>
               <option value="low_lactation">Baixa lactação</option>
@@ -383,13 +517,15 @@ async function loadData() {
               <option value="multiparous_high">Multíparas — alta produção</option>
             </select>
           </div>
+        </header>
+        <div class="thi-chart-wrap">
+          <canvas id="ch-thi" height="280"></canvas>
         </div>
-      </div>
-      <canvas id="ch-thi" height="240"></canvas>
-      <div class="thi-legend" id="thi-legend"></div>
-      <div class="stat-row" style="align-items:center">
-        <div class="stat-item" id="ch-thi-stats"></div>
-        <div class="stat-item" id="thi-status-line" style="margin-left:auto;text-align:right"></div>
+        <div class="thi-legend" id="thi-legend"></div>
+        <footer class="thi-footer">
+          <div class="thi-kpi-grid" id="ch-thi-stats"></div>
+          <div class="thi-last" id="thi-status-line"></div>
+        </footer>
       </div>
     </div>` : ''}
     <div class="chart-card">
@@ -413,6 +549,18 @@ async function loadData() {
       <canvas id="ch-hum" height="200"></canvas>
       <div class="stat-row"><div class="stat-item" id="ch-hum-stats"></div></div>
     </div>` : ''}
+    ${hasMqRaw ? `
+    <div class="chart-card">
+      <div class="chart-heading"><span>🌫</span> MQ-135 — leitura bruta</div>
+      <canvas id="ch-mq135" height="200"></canvas>
+      <div class="stat-row"><div class="stat-item" id="ch-mq135-stats"></div></div>
+    </div>` : ''}
+    ${hasMqPpm ? `
+    <div class="chart-card">
+      <div class="chart-heading"><span>🧪</span> MQ-135 — estimativa (ppm)</div>
+      <canvas id="ch-mq135-ppm" height="200"></canvas>
+      <div class="stat-row"><div class="stat-item" id="ch-mq135-ppm-stats"></div></div>
+    </div>` : ''}
     <div class="chart-card">
       <div class="chart-heading"><span>📶</span> RSSI (sinal WiFi)</div>
       <canvas id="ch-rssi" height="200"></canvas>
@@ -429,7 +577,7 @@ async function loadData() {
     const leg = document.getElementById('thi-legend');
     if (leg) {
       leg.innerHTML = THI_ZONES.map(z =>
-        `<span><i style="background:${z.hex}"></i> ${z.label}</span>`
+        `<div class="thi-chip"><i style="background:${z.hex}" title=""></i><span>${z.label}</span></div>`
       ).join('');
     }
     const tc = document.getElementById('thi-category');
@@ -442,6 +590,10 @@ async function loadData() {
     buildChart('ch-press', data, 'press_hpa',  'Pressão',     'hPa', 'press');
     if (hasHum)
       buildChart('ch-hum', data, 'humidity',   'Umidade',     '%',   'hum', { yMin: 0, yMax: 100 });
+    if (hasMqRaw)
+      buildChart('ch-mq135', data, 'mq135_raw', 'MQ-135', 'ADC', 'mq135');
+    if (hasMqPpm)
+      buildChart('ch-mq135-ppm', data, 'mq135_ppm', 'ppm', 'ppm', 'mqppm');
     buildChart('ch-rssi', data, 'rssi',       'RSSI',        'dBm', 'rssi');
     buildChart('ch-alt',   data, 'alt_m',      'Altitude',    'm',   'press');
   });

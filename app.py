@@ -185,6 +185,32 @@ def _ingest_humidity(data):
     return None
 
 
+def _ingest_mq135_raw(data):
+    """Leitura bruta do MQ-135 (ADC ou valor normalizado), conforme chaves do firmware."""
+    if not isinstance(data, dict):
+        return None
+    for key in ('mq135_raw', 'mq135_adc', 'mq135_analog', 'mq135'):
+        if key not in data:
+            continue
+        v = _float_or_none(data[key])
+        if v is not None:
+            return v
+    return None
+
+
+def _ingest_mq135_ppm(data):
+    """PPM / estimativa de gás, se o nó enviar valor calibrado."""
+    if not isinstance(data, dict):
+        return None
+    for key in ('mq135_ppm', 'mq135_gas_ppm', 'gas_ppm', 'air_ppm'):
+        if key not in data:
+            continue
+        v = _float_or_none(data[key])
+        if v is not None:
+            return v
+    return None
+
+
 def _float_or_none(v):
     if v is None:
         return None
@@ -401,6 +427,8 @@ def init_db():
         humidity    REAL,
         uptime_s    INTEGER,
         rssi        INTEGER,
+        mq135_raw   REAL,
+        mq135_ppm   REAL,
         raw_json    TEXT
     );
 
@@ -456,6 +484,15 @@ def init_db():
         db.commit()
     except sqlite3.OperationalError as e:
         log.warning("Migração perspicuus_events: %s", e)
+    try:
+        wcols = {row[1] for row in db.execute("PRAGMA table_info(weather)")}
+        if "mq135_raw" not in wcols:
+            db.execute("ALTER TABLE weather ADD COLUMN mq135_raw REAL")
+        if "mq135_ppm" not in wcols:
+            db.execute("ALTER TABLE weather ADD COLUMN mq135_ppm REAL")
+        db.commit()
+    except sqlite3.OperationalError as e:
+        log.warning("Migração weather mq135: %s", e)
     db.close()
     log.info("DB inicializado OK")
 
@@ -1308,10 +1345,13 @@ def receive_sensors():
     device = data.get('device') or data.get('device_name', 'unknown')
 
     db = get_db()
+    mq_raw = _ingest_mq135_raw(data)
+    mq_ppm = _ingest_mq135_ppm(data)
     db.execute("""
         INSERT INTO weather
-          (received_at, device_name, lux, temp_c, press_hpa, alt_m, humidity, uptime_s, rssi, raw_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (received_at, device_name, lux, temp_c, press_hpa, alt_m, humidity, uptime_s, rssi,
+           mq135_raw, mq135_ppm, raw_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         now, device,
         data.get('bh1750_lux'),
@@ -1321,10 +1361,19 @@ def receive_sensors():
         _ingest_humidity(data),
         data.get('uptime_s'),
         data.get('rssi'),
+        mq_raw,
+        mq_ppm,
         json.dumps(data),
     ))
     db.commit()
-    log.info(f"[SENSORS] {device} → lux={data.get('bh1750_lux')} temp={_ingest_temp_c(data)}")
+    log.info(
+        "[SENSORS] %s → lux=%s temp=%s mq135_raw=%s mq135_ppm=%s",
+        device,
+        data.get('bh1750_lux'),
+        _ingest_temp_c(data),
+        mq_raw,
+        mq_ppm,
+    )
     return jsonify({'status': 'ok', 'received_at': now}), 201
 
 @app.route('/api/upload', methods=['POST'])
@@ -1482,13 +1531,29 @@ def weather_data():
 
     where = " AND ".join(conditions)
     rows = db.execute(
-        f"SELECT received_at, device_name, lux, temp_c, press_hpa, alt_m, humidity, rssi, raw_json "
+        f"SELECT received_at, device_name, lux, temp_c, press_hpa, alt_m, humidity, rssi, "
+        f"mq135_raw, mq135_ppm, raw_json "
         f"FROM weather WHERE {where} ORDER BY received_at ASC LIMIT 1000",
         params
     ).fetchall()
     out = []
     for r in rows:
         d = dict(r)
+        raw_j = d.get('raw_json')
+        if raw_j and (d.get('mq135_raw') is None or d.get('mq135_ppm') is None):
+            try:
+                j = json.loads(raw_j) if isinstance(raw_j, str) else {}
+                if isinstance(j, dict):
+                    if d.get('mq135_raw') is None:
+                        v = _ingest_mq135_raw(j)
+                        if v is not None:
+                            d['mq135_raw'] = v
+                    if d.get('mq135_ppm') is None:
+                        v = _ingest_mq135_ppm(j)
+                        if v is not None:
+                            d['mq135_ppm'] = v
+            except (json.JSONDecodeError, TypeError):
+                pass
         t, h = _temp_humidity_for_thi(d)
         if t is not None and h is not None:
             try:
@@ -1549,7 +1614,10 @@ def delete_weather(rid):
 @login_required
 def edit_weather(rid):
     data    = request.get_json(silent=True) or {}
-    allowed = {'lux', 'temp_c', 'press_hpa', 'alt_m', 'humidity', 'rssi', 'device_name'}
+    allowed = {
+        'lux', 'temp_c', 'press_hpa', 'alt_m', 'humidity', 'rssi', 'device_name',
+        'mq135_raw', 'mq135_ppm',
+    }
     updates = {k: v for k, v in data.items() if k in allowed}
     if not updates:
         return jsonify({'error': 'Nenhum campo válido'}), 400
@@ -1754,14 +1822,18 @@ def download_weather():
     params = (device,) if device else ()
 
     rows = db.execute(
-        f"SELECT id, received_at, device_name, lux, temp_c, press_hpa, alt_m, humidity, uptime_s, rssi "
+        f"SELECT id, received_at, device_name, lux, temp_c, press_hpa, alt_m, humidity, uptime_s, rssi, "
+        f"mq135_raw, mq135_ppm "
         f"FROM weather {where} ORDER BY received_at ASC", params
     ).fetchall()
 
     output = io.StringIO()
     w = csv.writer(output)
-    w.writerow(['id', 'received_at_utc', 'device_name', 'lux_lx',
-                'temp_c', 'press_hpa', 'alt_m', 'humidity_pct', 'uptime_s', 'rssi_dbm'])
+    w.writerow([
+        'id', 'received_at_utc', 'device_name', 'lux_lx',
+        'temp_c', 'press_hpa', 'alt_m', 'humidity_pct', 'uptime_s', 'rssi_dbm',
+        'mq135_raw', 'mq135_ppm',
+    ])
     for r in rows:
         w.writerow(list(r))
 
