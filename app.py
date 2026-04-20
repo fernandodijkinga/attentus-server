@@ -49,6 +49,7 @@ from ecc_module import (
     safe_slug as ecc_safe_slug,
     parse_iso_day as ecc_parse_iso_day,
     infer_ecc_posterior,
+    save_ecc_crop_thumbnail,
     ecc_farm_time_series,
 )
 
@@ -479,9 +480,10 @@ def init_db():
         farm_id        TEXT    NOT NULL,
         inference_date TEXT    NOT NULL,   -- YYYY-MM-DD (data funcional da inferência)
         animal_tag     TEXT    NOT NULL,   -- brinco
-        view           TEXT    NOT NULL DEFAULT 'lateral',
+        view           TEXT    NOT NULL DEFAULT 'posterior',
         filename       TEXT    NOT NULL,
         image_path     TEXT    NOT NULL,   -- /api/ecc/media/...
+        thumb_path     TEXT    DEFAULT '', -- thumbnail cropada (bbox)
         trait_name     TEXT    DEFAULT '',
         raw_score      REAL,
         ecc_score      REAL,
@@ -521,6 +523,13 @@ def init_db():
         db.commit()
     except sqlite3.OperationalError as e:
         log.warning("Migração weather mq135: %s", e)
+    try:
+        ecc_cols = {row[1] for row in db.execute("PRAGMA table_info(ecc_bcs_records)")}
+        if "thumb_path" not in ecc_cols:
+            db.execute("ALTER TABLE ecc_bcs_records ADD COLUMN thumb_path TEXT DEFAULT ''")
+        db.commit()
+    except sqlite3.OperationalError as e:
+        log.warning("Migração ecc thumb_path: %s", e)
     db.close()
     log.info("DB inicializado OK")
 
@@ -1330,12 +1339,19 @@ def ecc_analise():
 
             web_path = f"/api/ecc/media/{safe_farm}/{safe_day}/{final_name}"
             inf = infer_ecc_posterior(dest)
+            thumb_web = ''
+            bbox = (inf.get('meta') or {}).get('bbox')
+            if bbox:
+                thumb_name = f"thumb_{final_name}"
+                thumb_abs = os.path.join(folder, thumb_name)
+                if save_ecc_crop_thumbnail(dest, bbox, thumb_abs):
+                    thumb_web = f"/api/ecc/media/{safe_farm}/{safe_day}/{thumb_name}"
             db.execute(
                 """
                 INSERT INTO ecc_bcs_records (
-                    created_at, farm_id, inference_date, animal_tag, view, filename, image_path,
+                    created_at, farm_id, inference_date, animal_tag, view, filename, image_path, thumb_path,
                     trait_name, raw_score, ecc_score, traits_json, meta_json, error_text
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     now_iso,
@@ -1345,6 +1361,7 @@ def ecc_analise():
                     'posterior',
                     final_name,
                     web_path,
+                    thumb_web,
                     inf.get('trait_name') or '',
                     inf.get('raw_score'),
                     inf.get('ecc_score'),
@@ -1508,7 +1525,7 @@ def cameras():
 def database():
     db      = get_db()
     tab     = request.args.get('tab', 'weather')
-    if tab not in ('weather', 'images', 'perspicuus'):
+    if tab not in ('weather', 'images', 'perspicuus', 'ecc'):
         tab = 'weather'
     page    = max(1, int(request.args.get('page', 1)))
     per_page = 30
@@ -1551,6 +1568,26 @@ def database():
         ).fetchall()
         devices = [r[0] for r in db.execute(
             "SELECT DISTINCT station_id FROM perspicuus_events ORDER BY station_id"
+        ).fetchall()]
+    elif tab == 'ecc':
+        conditions, params = ["1=1"], []
+        if device_filter:
+            conditions.append("farm_id = ?"); params.append(device_filter)
+        if search:
+            like = f'%{search}%'
+            conditions.append(
+                "(farm_id LIKE ? OR animal_tag LIKE ? OR inference_date LIKE ? OR trait_name LIKE ? OR error_text LIKE ?)"
+            )
+            params.extend([like, like, like, like, like])
+        where = " AND ".join(conditions)
+
+        total = db.execute(f"SELECT COUNT(*) FROM ecc_bcs_records WHERE {where}", params).fetchone()[0]
+        records = db.execute(
+            f"SELECT * FROM ecc_bcs_records WHERE {where} ORDER BY inference_date DESC, id DESC LIMIT ? OFFSET ?",
+            params + [per_page, offset]
+        ).fetchall()
+        devices = [r[0] for r in db.execute(
+            "SELECT DISTINCT farm_id FROM ecc_bcs_records ORDER BY farm_id"
         ).fetchall()]
     else:
         conditions, params = ["1=1"], []
@@ -1893,6 +1930,47 @@ def edit_image_notes(rid):
     db = get_db()
     db.execute("UPDATE images SET notes=? WHERE id=?", (notes, rid))
     db.commit()
+    return jsonify({'status': 'updated'})
+
+
+@app.route('/api/record/ecc/<int:rid>', methods=['DELETE'])
+@login_required
+def delete_ecc_record(rid):
+    db = get_db()
+    cur = db.execute("DELETE FROM ecc_bcs_records WHERE id = ?", (rid,))
+    db.commit()
+    if cur.rowcount <= 0:
+        return jsonify({'error': 'Não encontrado'}), 404
+    return jsonify({'status': 'deleted', 'id': rid})
+
+
+@app.route('/api/record/ecc/<int:rid>', methods=['PATCH'])
+@login_required
+def edit_ecc_record(rid):
+    data = request.get_json(silent=True) or {}
+    allowed = {'farm_id', 'animal_tag', 'inference_date', 'ecc_score', 'trait_name', 'error_text'}
+    updates = {k: v for k, v in data.items() if k in allowed}
+    if not updates:
+        return jsonify({'error': 'Nenhum campo válido'}), 400
+
+    if 'inference_date' in updates:
+        d = ecc_parse_iso_day(str(updates.get('inference_date') or ''))
+        if not d:
+            return jsonify({'error': 'inference_date inválida (use YYYY-MM-DD)'}), 400
+        updates['inference_date'] = d
+    if 'ecc_score' in updates and updates['ecc_score'] is not None:
+        try:
+            updates['ecc_score'] = float(updates['ecc_score'])
+        except (TypeError, ValueError):
+            return jsonify({'error': 'ecc_score inválido'}), 400
+
+    sets = ', '.join(f"{k}=?" for k in updates)
+    vals = list(updates.values()) + [rid]
+    db = get_db()
+    cur = db.execute(f"UPDATE ecc_bcs_records SET {sets} WHERE id = ?", vals)
+    db.commit()
+    if cur.rowcount <= 0:
+        return jsonify({'error': 'Não encontrado'}), 404
     return jsonify({'status': 'updated'})
 
 

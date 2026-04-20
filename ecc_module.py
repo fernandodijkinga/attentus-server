@@ -106,6 +106,43 @@ def infer_ecc_posterior(abs_path: str) -> dict[str, Any]:
     }
 
 
+def save_ecc_crop_thumbnail(
+    abs_path: str,
+    bbox: Any,
+    thumb_abs_path: str,
+    target_size: tuple[int, int] = (224, 224),
+) -> bool:
+    """
+    Salva thumbnail cropada no bbox detectado.
+    Retorna False se não conseguir gerar crop válido.
+    """
+    if not bbox or not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+        return False
+    try:
+        x1, y1, x2, y2 = [int(float(v)) for v in bbox[:4]]
+    except (TypeError, ValueError):
+        return False
+
+    img = cv2.imread(abs_path)
+    if img is None:
+        return False
+    h, w = img.shape[:2]
+    x1 = max(0, min(w - 1, x1))
+    y1 = max(0, min(h - 1, y1))
+    x2 = max(0, min(w, x2))
+    y2 = max(0, min(h, y2))
+    if x2 <= x1 or y2 <= y1:
+        return False
+
+    crop = img[y1:y2, x1:x2]
+    if crop.size == 0:
+        return False
+    if target_size and len(target_size) == 2:
+        crop = cv2.resize(crop, target_size, interpolation=cv2.INTER_AREA)
+
+    return bool(cv2.imwrite(thumb_abs_path, crop))
+
+
 def ecc_farm_time_series(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for r in rows:

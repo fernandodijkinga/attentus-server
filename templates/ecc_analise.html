@@ -167,8 +167,8 @@
           <td class="mono">{{ '%.4f' % r.raw_score if r.raw_score is not none else '—' }}</td>
           <td class="mono">{{ r.trait_name or '—' }}</td>
           <td>
-            {% if r.image_path %}
-            <img class="thumb" src="{{ r.image_path }}" alt="ecc" onclick="window.open(this.src)">
+            {% if r.thumb_path or r.image_path %}
+            <img class="thumb" src="{{ r.thumb_path or r.image_path }}" alt="ecc" onclick="window.open('{{ r.image_path }}')">
             {% else %}
             —
             {% endif %}

@@ -73,7 +73,7 @@
     <a href="{{ url_for('download_weather', device=device_filter) }}" class="btn btn-ghost btn-sm">↓ CSV</a>
     {% elif tab == 'perspicuus' %}
     <a href="{{ url_for('download_perspicuus', device=device_filter, q=search) }}" class="btn btn-ghost btn-sm">↓ CSV</a>
-    {% else %}
+    {% elif tab == 'images' %}
     <a href="{{ url_for('download_images', device=device_filter) }}" class="btn btn-ghost btn-sm">↓ ZIP</a>
     {% endif %}
   </div>
@@ -87,12 +87,14 @@
      class="tab-btn {% if tab == 'images' %}active{% endif %}">📷 Imagens</a>
   <a href="{{ url_for('database', tab='perspicuus', device=device_filter, q=search) }}"
      class="tab-btn {% if tab == 'perspicuus' %}active{% endif %}">◆ Perspicuus</a>
+  <a href="{{ url_for('database', tab='ecc', device=device_filter, q=search) }}"
+     class="tab-btn {% if tab == 'ecc' %}active{% endif %}">📈 ECC</a>
 </div>
 
 <!-- FILTERS -->
 <div class="filters">
   <div>
-    <label style="font-size:10px;color:var(--muted);font-family:var(--mono);display:block;margin-bottom:4px;letter-spacing:1.5px;text-transform:uppercase">{% if tab == 'perspicuus' %}Estação{% else %}Dispositivo{% endif %}</label>
+    <label style="font-size:10px;color:var(--muted);font-family:var(--mono);display:block;margin-bottom:4px;letter-spacing:1.5px;text-transform:uppercase">{% if tab == 'perspicuus' %}Estação{% elif tab == 'ecc' %}Fazenda{% else %}Dispositivo{% endif %}</label>
     <select id="filter-device" onchange="applyFilter()">
       <option value="">Todos</option>
       {% for d in devices %}
@@ -103,7 +105,7 @@
   <div>
     <label style="font-size:10px;color:var(--muted);font-family:var(--mono);display:block;margin-bottom:4px;letter-spacing:1.5px;text-transform:uppercase">Buscar</label>
     <input type="search" id="filter-search"
-           placeholder="{% if tab == 'perspicuus' %}evento, estação, RFID, JSON…{% else %}dispositivo, notas…{% endif %}"
+           placeholder="{% if tab == 'perspicuus' %}evento, estação, RFID, JSON…{% elif tab == 'ecc' %}fazenda, brinco, data, trait, erro…{% else %}dispositivo, notas…{% endif %}"
            value="{{ search }}">
   </div>
   <button class="btn btn-ghost btn-sm" onclick="applyFilter()">Filtrar</button>
@@ -218,6 +220,50 @@
     </tr>
     {% else %}
     <tr><td colspan="12"><div class="empty-state"><div class="icon">☁</div>Nenhum dado meteorológico</div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  {% elif tab == 'ecc' %}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Criado</th><th>Fazenda</th><th>Data inf.</th><th>Brinco</th><th>ECC</th><th>Raw</th><th>Trait</th><th>Vista</th><th>Imagem</th><th>Status</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in records %}
+    <tr id="row-ecc-{{ r.id }}">
+      <td class="mono text-muted">{{ r.id }}</td>
+      <td class="mono">{{ r.created_at|br_dt }}</td>
+      <td class="edit-cell mono" data-eid="{{ r.id }}" data-field="farm_id" data-type="text"
+          ondblclick="startEccEdit(this)">{{ r.farm_id }}</td>
+      <td class="edit-cell mono" data-eid="{{ r.id }}" data-field="inference_date" data-type="date"
+          ondblclick="startEccEdit(this)">{{ r.inference_date }}</td>
+      <td class="edit-cell mono" data-eid="{{ r.id }}" data-field="animal_tag" data-type="text"
+          ondblclick="startEccEdit(this)">{{ r.animal_tag }}</td>
+      <td class="edit-cell mono" data-eid="{{ r.id }}" data-field="ecc_score" data-type="number"
+          ondblclick="startEccEdit(this)">{{ '%.2f' % r.ecc_score if r.ecc_score is not none else '—' }}</td>
+      <td class="mono">{{ '%.4f' % r.raw_score if r.raw_score is not none else '—' }}</td>
+      <td class="edit-cell mono" data-eid="{{ r.id }}" data-field="trait_name" data-type="text"
+          ondblclick="startEccEdit(this)">{{ r.trait_name or '—' }}</td>
+      <td class="mono">{{ r.view or '—' }}</td>
+      <td>
+        {% if r.image_path %}
+        <img class="img-thumb" src="{{ r.image_path }}" alt="" onclick="window.open(this.src)">
+        {% else %}—{% endif %}
+      </td>
+      <td class="edit-cell mono" data-eid="{{ r.id }}" data-field="error_text" data-type="text"
+          ondblclick="startEccEdit(this)" style="max-width:160px;overflow:hidden;text-overflow:ellipsis">
+        {{ r.error_text or 'ok' }}
+      </td>
+      <td>
+        <button class="btn btn-danger btn-sm"
+                onclick="apiDelete('/api/record/ecc/{{ r.id }}', () => document.getElementById('row-ecc-{{ r.id }}').remove())">✕</button>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="12"><div class="empty-state"><div class="icon">📈</div>Nenhum dado ECC</div></td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -361,6 +407,65 @@ async function commitEdit(cell) {
 
 function cancelEdit(cell) {
   cell.textContent = cell.dataset.original || '—';
+}
+
+function startEccEdit(cell) {
+  if (cell.querySelector('input')) return;
+  const original = cell.textContent.trim();
+  const val = (original === '—' || original === 'ok') ? '' : original;
+  const tp = cell.dataset.type || 'text';
+  cell.dataset.original = original;
+  let inputType = 'text';
+  let stepAttr = '';
+  if (tp === 'number') { inputType = 'number'; stepAttr = ' step="any"'; }
+  if (tp === 'date') inputType = 'date';
+  cell.innerHTML = `<input class="edit-input" type="${inputType}"${stepAttr} value="${val}">`;
+  const inp = cell.querySelector('input');
+  inp.focus(); inp.select?.();
+  inp.addEventListener('blur',  () => commitEccEdit(cell));
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') commitEccEdit(cell);
+    if (e.key === 'Escape') cell.textContent = cell.dataset.original || '—';
+  });
+}
+
+async function commitEccEdit(cell) {
+  const inp = cell.querySelector('input');
+  if (!inp) return;
+  const id = cell.dataset.eid;
+  const field = cell.dataset.field;
+  const tp = cell.dataset.type || 'text';
+  let newVal = inp.value.trim();
+  const oldVal = cell.dataset.original || '';
+  const oldNorm = (oldVal === '—' || oldVal === 'ok') ? '' : oldVal;
+  if (newVal === oldNorm) { cell.textContent = oldVal || '—'; return; }
+
+  const body = {};
+  if (tp === 'number') {
+    if (newVal === '') body[field] = null;
+    else {
+      const n = parseFloat(newVal);
+      if (Number.isNaN(n)) { cell.textContent = oldVal || '—'; toast('Número inválido', false); return; }
+      body[field] = n;
+    }
+  } else {
+    body[field] = newVal;
+  }
+
+  const r = await fetch(`/api/record/ecc/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    cell.textContent = oldVal || '—';
+    toast('Erro ao atualizar ECC', false);
+    return;
+  }
+  if (field === 'ecc_score' && body[field] != null) cell.textContent = Number(body[field]).toFixed(2);
+  else if (field === 'error_text') cell.textContent = body[field] || 'ok';
+  else cell.textContent = body[field] || '—';
+  toast('ECC atualizado');
 }
 
 // Inline note edit for images
