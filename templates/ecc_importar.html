@@ -109,7 +109,7 @@
           <td class="mono">{{ '%.4f' % r.raw_score if r.raw_score is not none else '—' }}</td>
           <td>
             {% if r.thumb_path or r.image_path %}
-            <img class="thumb" src="{{ r.thumb_path or r.image_path }}" alt="ecc" onclick="window.open('{{ r.image_path }}')">
+            <img class="thumb" src="{{ r.thumb_path or r.image_path }}" alt="ecc" title="Clique para abrir imagem com bbox" onclick="window.open('{{ r.bbox_path or r.image_path }}')">
             {% else %}—{% endif %}
           </td>
           <td class="mono" style="color:{% if r.error_text %}var(--err){% else %}var(--accent){% endif %}">

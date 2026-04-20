@@ -143,6 +143,53 @@ def save_ecc_crop_thumbnail(
     return bool(cv2.imwrite(thumb_abs_path, crop))
 
 
+def save_ecc_bbox_overlay(
+    abs_path: str,
+    bbox: Any,
+    boxed_abs_path: str,
+    yolo_conf: Any = None,
+) -> bool:
+    """
+    Salva uma cópia da imagem original com bounding box desenhado.
+    """
+    if not bbox or not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+        return False
+    try:
+        x1, y1, x2, y2 = [int(float(v)) for v in bbox[:4]]
+    except (TypeError, ValueError):
+        return False
+
+    img = cv2.imread(abs_path)
+    if img is None:
+        return False
+    h, w = img.shape[:2]
+    x1 = max(0, min(w - 1, x1))
+    y1 = max(0, min(h - 1, y1))
+    x2 = max(0, min(w, x2))
+    y2 = max(0, min(h, y2))
+    if x2 <= x1 or y2 <= y1:
+        return False
+
+    out = img.copy()
+    color = (0, 229, 160)  # BGR (verde accent)
+    cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
+    label = "YOLO crop"
+    if yolo_conf is not None:
+        try:
+            label += f" {float(yolo_conf):.2f}"
+        except (TypeError, ValueError):
+            pass
+    (tw, th), base = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+    y_top = max(0, y1 - th - base - 6)
+    x_right = min(w - 1, x1 + tw + 8)
+    cv2.rectangle(out, (x1, y_top), (x_right, y1), color, -1)
+    cv2.putText(
+        out, label, (x1 + 4, max(10, y1 - 6)),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (5, 12, 20), 1, cv2.LINE_AA
+    )
+    return bool(cv2.imwrite(boxed_abs_path, out))
+
+
 def ecc_farm_time_series(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for r in rows:

@@ -50,6 +50,7 @@ from ecc_module import (
     parse_iso_day as ecc_parse_iso_day,
     infer_ecc_posterior,
     save_ecc_crop_thumbnail,
+    save_ecc_bbox_overlay,
     ecc_farm_time_series,
 )
 
@@ -484,6 +485,7 @@ def init_db():
         filename       TEXT    NOT NULL,
         image_path     TEXT    NOT NULL,   -- /api/ecc/media/...
         thumb_path     TEXT    DEFAULT '', -- thumbnail cropada (bbox)
+        bbox_path      TEXT    DEFAULT '', -- imagem original com bbox desenhado
         trait_name     TEXT    DEFAULT '',
         raw_score      REAL,
         ecc_score      REAL,
@@ -527,6 +529,8 @@ def init_db():
         ecc_cols = {row[1] for row in db.execute("PRAGMA table_info(ecc_bcs_records)")}
         if "thumb_path" not in ecc_cols:
             db.execute("ALTER TABLE ecc_bcs_records ADD COLUMN thumb_path TEXT DEFAULT ''")
+        if "bbox_path" not in ecc_cols:
+            db.execute("ALTER TABLE ecc_bcs_records ADD COLUMN bbox_path TEXT DEFAULT ''")
         db.commit()
     except sqlite3.OperationalError as e:
         log.warning("Migração ecc thumb_path: %s", e)
@@ -1320,21 +1324,28 @@ def _ecc_save_one(db, now_iso: str, farm_id: str, inference_date: str, animal_ta
     web_path = f"/api/ecc/media/{safe_farm}/{safe_day}/{final_name}"
     inf = infer_ecc_posterior(dest)
     thumb_web = ''
+    bbox_web = ''
     bbox = (inf.get('meta') or {}).get('bbox')
+    yconf = (inf.get('meta') or {}).get('yolo_conf')
     if bbox:
         thumb_name = f"thumb_{final_name}"
         thumb_abs = os.path.join(folder, thumb_name)
         if save_ecc_crop_thumbnail(dest, bbox, thumb_abs):
             thumb_web = f"/api/ecc/media/{safe_farm}/{safe_day}/{thumb_name}"
+        box_name = f"bbox_{final_name}"
+        box_abs = os.path.join(folder, box_name)
+        if save_ecc_bbox_overlay(dest, bbox, box_abs, yolo_conf=yconf):
+            bbox_web = f"/api/ecc/media/{safe_farm}/{safe_day}/{box_name}"
     db.execute(
         """
         INSERT INTO ecc_bcs_records (
-            created_at, farm_id, inference_date, animal_tag, view, filename, image_path, thumb_path,
+            created_at, farm_id, inference_date, animal_tag, view, filename, image_path, thumb_path, bbox_path,
             trait_name, raw_score, ecc_score, traits_json, meta_json, error_text
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             now_iso, farm_id, inference_date, animal_tag, 'posterior', final_name, web_path, thumb_web,
+            bbox_web,
             inf.get('trait_name') or '', inf.get('raw_score'), inf.get('ecc_score'),
             json.dumps(inf.get('traits') or {}, ensure_ascii=False),
             json.dumps(inf.get('meta') or {}, ensure_ascii=False),
