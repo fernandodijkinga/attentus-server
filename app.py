@@ -1463,7 +1463,7 @@ def ecc_analise_rebanho():
     return render_template(
         'ecc_analise_rebanho.html',
         records=records[:120], farms=farms, farm_filter=farm_filter, q_filter=q,
-        farm_series=ecc_farm_time_series(records), stats=stats,
+        farm_series=ecc_farm_time_series(records), farm_records=records, stats=stats,
     )
 
 

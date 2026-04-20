@@ -22,6 +22,11 @@
 .ecc-metric .k { font-family:var(--mono); font-size:10px; letter-spacing:1.1px; text-transform:uppercase; color:var(--muted); margin-bottom:4px; }
 .ecc-metric .v { font-family:var(--mono); font-size:22px; color:var(--text); }
 .ecc-score-extra { margin-top:10px; display:grid; gap:6px; font-family:var(--mono); font-size:12px; color:var(--text2); }
+.ecc-score-bar-wrap { margin-top:12px; }
+.ecc-score-scale-head { display:flex; justify-content:space-between; font-family:var(--mono); color:var(--text2); font-size:10px; letter-spacing:1px; text-transform:uppercase; margin-bottom:6px; }
+.ecc-score-bar { position:relative; height:12px; border-radius:999px; border:1px solid var(--border); background:linear-gradient(90deg,#ff4d6a 0%,#ff9f40 28%,#00e5a0 50%,#ff9f40 72%,#ff4d6a 100%); overflow:hidden; }
+.ecc-score-marker { position:absolute; top:-4px; width:3px; height:20px; background:#eaf8ff; box-shadow:0 0 0 1px rgba(0,0,0,.35); transform:translateX(-50%); left:50%; }
+.ecc-score-desc { margin-top:8px; font-family:var(--mono); font-size:12px; color:var(--text); border:1px solid var(--border); border-radius:8px; padding:8px; background:rgba(255,255,255,0.03); }
 @media (max-width: 1020px) {
   .ecc-animal-viewer { grid-template-columns: 1fr; }
   .ecc-photo-wrap { height:min(52vh,420px); }
@@ -117,6 +122,13 @@
       <div><strong>Arquivo:</strong> <span id="ecc-filename">—</span></div>
       <div><strong>Status:</strong> <span id="ecc-status">—</span></div>
     </div>
+    <div class="ecc-score-bar-wrap">
+      <div class="ecc-score-scale-head"><span>1.00</span><span>3.00</span><span>5.00</span></div>
+      <div class="ecc-score-bar">
+        <div id="ecc-score-marker" class="ecc-score-marker"></div>
+      </div>
+      <div id="ecc-score-desc" class="ecc-score-desc">Descrição do escore: —</div>
+    </div>
   </div>
 </div>
 
@@ -147,6 +159,25 @@
 <script>
 const ANIMAL_POINTS = {{ animal_points | tojson }};
 const ANIMAL_IMAGES = {{ animal_images | tojson }};
+const ECC_LABELS = {
+  '1.00': 'Caquética',
+  '1.25': 'Muito magra crítica',
+  '1.50': 'Muito magra',
+  '1.75': 'Magra acentuada',
+  '2.00': 'Magra',
+  '2.25': 'Magra moderada',
+  '2.50': 'Levemente magra',
+  '2.75': 'Quase ideal',
+  '3.00': 'Ideal',
+  '3.25': 'Ideal alta',
+  '3.50': 'Levemente gorda',
+  '3.75': 'Gorda moderada',
+  '4.00': 'Gorda',
+  '4.25': 'Gorda alta',
+  '4.50': 'Muito gorda',
+  '4.75': 'Obesa',
+  '5.00': 'Obesa severa',
+};
 function buildAnimalChart() {
   const c = document.getElementById('ch-animal'); if (!c) return;
   const ctx = c.getContext('2d');
@@ -180,6 +211,16 @@ function fmtNum(v, d) {
   return Number.isFinite(n) ? n.toFixed(d) : '—';
 }
 
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function quarterKey(v) {
+  if (v === null || v === undefined || v === '' || Number.isNaN(Number(v))) return null;
+  const q = Math.round(Number(v) * 4) / 4;
+  return q.toFixed(2);
+}
+
 function initAnimalCarousel() {
   const imgEl = document.getElementById('ecc-carousel-image');
   const emptyEl = document.getElementById('ecc-carousel-empty');
@@ -192,6 +233,8 @@ function initAnimalCarousel() {
   const idEl = document.getElementById('ecc-record-id');
   const fileEl = document.getElementById('ecc-filename');
   const statusEl = document.getElementById('ecc-status');
+  const markerEl = document.getElementById('ecc-score-marker');
+  const descEl = document.getElementById('ecc-score-desc');
   if (!imgEl || !prevBtn || !nextBtn) return;
 
   const rows = Array.isArray(ANIMAL_IMAGES) ? ANIMAL_IMAGES : [];
@@ -211,6 +254,8 @@ function initAnimalCarousel() {
       idEl.textContent = '—';
       fileEl.textContent = '—';
       statusEl.textContent = '—';
+      if (markerEl) markerEl.style.left = '50%';
+      if (descEl) descEl.textContent = 'Descrição do escore: —';
       return;
     }
     const r = rows[idx];
@@ -225,11 +270,24 @@ function initAnimalCarousel() {
       emptyEl.style.display = 'block';
     }
     rawEl.textContent = fmtNum(r.raw_score, 4);
-    scoreEl.textContent = fmtNum(r.ecc_score, 2);
+    const eccFmt = fmtNum(r.ecc_score, 2);
+    scoreEl.textContent = eccFmt;
     dateEl.textContent = r.inference_date || '—';
     idEl.textContent = r.id != null ? String(r.id) : '—';
     fileEl.textContent = r.filename || '—';
     statusEl.textContent = r.error_text || 'ok';
+    const eccNum = Number(r.ecc_score);
+    if (markerEl && Number.isFinite(eccNum)) {
+      const pct = ((clamp(eccNum, 1, 5) - 1) / 4) * 100;
+      markerEl.style.left = `${pct}%`;
+    } else if (markerEl) {
+      markerEl.style.left = '50%';
+    }
+    if (descEl) {
+      const key = quarterKey(r.ecc_score);
+      const label = key ? (ECC_LABELS[key] || 'Sem classificação') : '—';
+      descEl.textContent = `Descrição do escore (${key || '—'}): ${label}`;
+    }
   }
 
   prevBtn.addEventListener('click', () => {
