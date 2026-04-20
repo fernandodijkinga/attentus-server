@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}ECC - análise rebanho{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+.chart-card-ecc { background: var(--surf); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+.chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.chart-title { font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
+.chart-sub { font-size: 11px; color: var(--text2); font-family: var(--mono); }
+.chart-card-ecc canvas { width: 100% !important; height: 300px !important; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">🐄 <span>ECC</span> <span style="color:var(--accent)">análise rebanho</span></div>
+    <div class="page-sub">Média e desvio padrão por fazenda ao longo do tempo (com número de animais)</div>
+  </div>
+  <div class="flex gap-8">
+    <span class="pill pill-blue">{{ stats.total_records }} registros</span>
+    <span class="pill pill-orange">{{ stats.farms }} fazenda(s)</span>
+    <span class="pill pill-green">{{ stats.animals }} animal(is)</span>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <form method="get" class="filters-row">
+    <div class="field" style="margin:0">
+      <label>Fazenda</label>
+      <select name="farm">
+        <option value="">Todas</option>
+        {% for f in farms %}
+        <option value="{{ f }}" {% if farm_filter == f %}selected{% endif %}>{{ f }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field" style="margin:0; min-width:240px">
+      <label>Busca</label>
+      <input name="q" value="{{ q_filter }}" placeholder="fazenda ou brinco">
+    </div>
+    <div class="flex gap-8">
+      <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
+      <a href="{{ url_for('ecc_analise_rebanho') }}" class="btn btn-ghost btn-sm">Limpar</a>
+    </div>
+  </form>
+</div>
+
+<div class="chart-card-ecc">
+  <div class="chart-head">
+    <div class="chart-title">Média + desvio padrão por fazenda</div>
+    <div class="chart-sub">barras = nº de animais por data</div>
+  </div>
+  <canvas id="ch-farm"></canvas>
+</div>
+
+<div class="card">
+  <div class="card-title">Registros recentes</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Data</th><th>Fazenda</th><th>Brinco</th><th>ECC</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for r in records %}
+      <tr>
+        <td class="mono">{{ r.inference_date }}</td><td>{{ r.farm_id }}</td><td class="mono">{{ r.animal_tag }}</td>
+        <td class="mono">{{ '%.2f' % r.ecc_score if r.ecc_score is not none else '—' }}</td>
+        <td class="mono">{{ r.error_text or 'ok' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5"><div class="empty-state"><div class="icon">📈</div>Sem dados</div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const FARM_SERIES = {{ farm_series | tojson }};
+const ECC_COLORS = ['#00e5a0', '#0099ff', '#ff9f40', '#cc66ff', '#ff4d6a', '#7dd3fc', '#a3e635'];
+function groupedFarmSeries(rows) {
+  const out = {};
+  (rows || []).forEach((r) => {
+    const farm = r.farm_id || '—';
+    if (!out[farm]) out[farm] = [];
+    out[farm].push(r);
+  });
+  Object.keys(out).forEach((k) => out[k].sort((a, b) => String(a.date).localeCompare(String(b.date))));
+  return out;
+}
+function buildFarmChart() {
+  const c = document.getElementById('ch-farm'); if (!c) return;
+  const ctx = c.getContext('2d');
+  const byFarm = groupedFarmSeries(FARM_SERIES);
+  const datasets = [];
+  let i = 0;
+  Object.entries(byFarm).forEach(([farm, rows]) => {
+    const color = ECC_COLORS[i % ECC_COLORS.length]; i += 1;
+    datasets.push({ type:'line', label:`${farm} · média`, data:rows.map((r)=>({x:r.date,y:r.mean,n:r.n_animals})), parsing:false, borderColor:color, backgroundColor:color, tension:.3, borderWidth:2.2, pointRadius:2.5, yAxisID:'y' });
+    datasets.push({ type:'line', label:`${farm} · desvio padrão`, data:rows.map((r)=>({x:r.date,y:r.std,n:r.n_animals})), parsing:false, borderColor:color+'AA', borderDash:[5,4], pointRadius:0, borderWidth:1.4, yAxisID:'y1' });
+    datasets.push({ type:'bar', label:`${farm} · # animais`, data:rows.map((r)=>({x:r.date,y:r.n_animals})), parsing:false, backgroundColor:color+'33', borderColor:color+'66', borderWidth:1, yAxisID:'y2', barPercentage:.65, categoryPercentage:.8 });
+  });
+  new Chart(ctx, {
+    data:{datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false, interaction:{mode:'nearest', intersect:false},
+      plugins:{ legend:{labels:{color:'#7a9aae', font:{family:'JetBrains Mono', size:10}}} },
+      scales:{
+        x:{type:'time', time:{unit:'day'}, ticks:{color:'#5a7a8c'}, grid:{color:'#1c3040'}},
+        y:{min:1,max:5,ticks:{color:'#7a9aae'},grid:{color:'#1c3040'},title:{display:true,text:'ECC médio'}},
+        y1:{position:'right',min:0,ticks:{color:'#7a9aae'},grid:{drawOnChartArea:false},title:{display:true,text:'Desvio padrão'}},
+        y2:{position:'right',min:0,ticks:{display:false},grid:{drawOnChartArea:false},display:false},
+      },
+    },
+  });
+}
+buildFarmChart();
+</script>
+{% endblock %}

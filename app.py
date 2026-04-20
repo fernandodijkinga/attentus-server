@@ -1300,133 +1300,51 @@ def serve_ecc_media(farm, day, filename):
     return send_file(filepath)
 
 
-@app.route('/ecc/analise', methods=['GET', 'POST'])
-@login_required
-def ecc_analise():
-    """
-    Sistema de análise ECC (dataset separado de Perspicuus events).
-    Upload único/lote, inferência e gráficos de fazenda/animal.
-    """
-    db = get_db()
+def _ecc_save_one(db, now_iso: str, farm_id: str, inference_date: str, animal_tag: str, fs) -> tuple[bool, str]:
+    ext = os.path.splitext(fs.filename or '')[1].lower()
+    if ext not in ECC_IMAGE_EXTS:
+        return False, f'Extensão não permitida: {ext or "sem extensão"}'
+    safe_farm = ecc_safe_slug(farm_id, 'fazenda')
+    safe_day = ecc_safe_slug(inference_date.replace('-', ''), 'day')
+    safe_tag = ecc_safe_slug(animal_tag, 'animal')
+    folder = os.path.join(ECC_UPLOADS_DIR, safe_farm, safe_day)
+    os.makedirs(folder, exist_ok=True)
+    fname = secure_filename(fs.filename or f'{safe_tag}.jpg') or f'{safe_tag}.jpg'
+    final_name = f"{safe_tag}_{int(datetime.utcnow().timestamp() * 1000)}_{fname}"
+    dest = os.path.join(folder, final_name)
+    try:
+        fs.save(dest)
+    except OSError as e:
+        return False, f'Falha ao gravar arquivo: {e}'
 
-    if request.method == 'POST':
-        mode = request.form.get('mode', 'single').strip().lower()
-        now_iso = datetime.utcnow().isoformat() + 'Z'
+    web_path = f"/api/ecc/media/{safe_farm}/{safe_day}/{final_name}"
+    inf = infer_ecc_posterior(dest)
+    thumb_web = ''
+    bbox = (inf.get('meta') or {}).get('bbox')
+    if bbox:
+        thumb_name = f"thumb_{final_name}"
+        thumb_abs = os.path.join(folder, thumb_name)
+        if save_ecc_crop_thumbnail(dest, bbox, thumb_abs):
+            thumb_web = f"/api/ecc/media/{safe_farm}/{safe_day}/{thumb_name}"
+    db.execute(
+        """
+        INSERT INTO ecc_bcs_records (
+            created_at, farm_id, inference_date, animal_tag, view, filename, image_path, thumb_path,
+            trait_name, raw_score, ecc_score, traits_json, meta_json, error_text
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            now_iso, farm_id, inference_date, animal_tag, 'posterior', final_name, web_path, thumb_web,
+            inf.get('trait_name') or '', inf.get('raw_score'), inf.get('ecc_score'),
+            json.dumps(inf.get('traits') or {}, ensure_ascii=False),
+            json.dumps(inf.get('meta') or {}, ensure_ascii=False),
+            inf.get('error'),
+        ),
+    )
+    return True, 'ok'
 
-        def _save_one(
-            farm_id: str,
-            inference_date: str,
-            animal_tag: str,
-            fs,
-        ) -> tuple[bool, str]:
-            ext = os.path.splitext(fs.filename or '')[1].lower()
-            if ext not in ECC_IMAGE_EXTS:
-                return False, f'Extensão não permitida: {ext or "sem extensão"}'
-            safe_farm = ecc_safe_slug(farm_id, 'fazenda')
-            safe_day = ecc_safe_slug(inference_date.replace('-', ''), 'day')
-            safe_tag = ecc_safe_slug(animal_tag, 'animal')
-            folder = os.path.join(ECC_UPLOADS_DIR, safe_farm, safe_day)
-            os.makedirs(folder, exist_ok=True)
-            fname = secure_filename(fs.filename or f'{safe_tag}.jpg')
-            if not fname:
-                fname = f'{safe_tag}.jpg'
-            final_name = f"{safe_tag}_{int(datetime.utcnow().timestamp() * 1000)}_{fname}"
-            dest = os.path.join(folder, final_name)
-            try:
-                fs.save(dest)
-            except OSError as e:
-                return False, f'Falha ao gravar arquivo: {e}'
 
-            web_path = f"/api/ecc/media/{safe_farm}/{safe_day}/{final_name}"
-            inf = infer_ecc_posterior(dest)
-            thumb_web = ''
-            bbox = (inf.get('meta') or {}).get('bbox')
-            if bbox:
-                thumb_name = f"thumb_{final_name}"
-                thumb_abs = os.path.join(folder, thumb_name)
-                if save_ecc_crop_thumbnail(dest, bbox, thumb_abs):
-                    thumb_web = f"/api/ecc/media/{safe_farm}/{safe_day}/{thumb_name}"
-            db.execute(
-                """
-                INSERT INTO ecc_bcs_records (
-                    created_at, farm_id, inference_date, animal_tag, view, filename, image_path, thumb_path,
-                    trait_name, raw_score, ecc_score, traits_json, meta_json, error_text
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    now_iso,
-                    farm_id,
-                    inference_date,
-                    animal_tag,
-                    'posterior',
-                    final_name,
-                    web_path,
-                    thumb_web,
-                    inf.get('trait_name') or '',
-                    inf.get('raw_score'),
-                    inf.get('ecc_score'),
-                    json.dumps(inf.get('traits') or {}, ensure_ascii=False),
-                    json.dumps(inf.get('meta') or {}, ensure_ascii=False),
-                    inf.get('error'),
-                ),
-            )
-            return True, 'ok'
-
-        if mode == 'single':
-            farm_id = str(request.form.get('farm_id', '')).strip()
-            date_iso = ecc_parse_iso_day(request.form.get('inference_date', ''))
-            animal_tag = str(request.form.get('animal_tag', '')).strip()
-            fs = request.files.get('image')
-            if not farm_id or not date_iso or not animal_tag or not fs or not fs.filename:
-                flash('Preencha fazenda, data, brinco e selecione uma imagem.', 'error')
-                return redirect(url_for('ecc_analise'))
-            ok, msg = _save_one(farm_id, date_iso, animal_tag, fs)
-            if ok:
-                db.commit()
-                flash('Imagem enviada e inferida com sucesso.', 'success')
-            else:
-                db.rollback()
-                flash(msg, 'error')
-            return redirect(url_for('ecc_analise'))
-
-        if mode == 'batch':
-            farm_id = str(request.form.get('farm_id_batch', '')).strip()
-            date_iso = ecc_parse_iso_day(request.form.get('inference_date_batch', ''))
-            files = request.files.getlist('images_batch')
-            if not farm_id or not date_iso or not files:
-                flash('Lote: informe fazenda, data e selecione ficheiros.', 'error')
-                return redirect(url_for('ecc_analise'))
-            n_ok, n_err = 0, 0
-            errs = []
-            for fs in files:
-                if not fs or not fs.filename:
-                    continue
-                animal_tag = os.path.splitext(os.path.basename(fs.filename))[0].strip()
-                if not animal_tag:
-                    n_err += 1
-                    errs.append(f'Arquivo sem brinco no nome: {fs.filename}')
-                    continue
-                ok, msg = _save_one(farm_id, date_iso, animal_tag, fs)
-                if ok:
-                    n_ok += 1
-                else:
-                    n_err += 1
-                    errs.append(f'{fs.filename}: {msg}')
-            db.commit()
-            if n_ok:
-                flash(f'Lote processado: {n_ok} arquivo(s) inferido(s).', 'success')
-            if n_err:
-                flash(f'Lote com {n_err} erro(s): ' + '; '.join(errs[:3]), 'error')
-            return redirect(url_for('ecc_analise'))
-
-        flash('Modo de upload inválido.', 'error')
-        return redirect(url_for('ecc_analise'))
-
-    # GET: listagens e gráficos
-    farm_filter = str(request.args.get('farm', '')).strip()
-    animal_filter = str(request.args.get('animal', '')).strip()
-    q = str(request.args.get('q', '')).strip()
-
+def _ecc_load_rows(db, farm_filter: str = '', animal_filter: str = '', q: str = '', limit: int = 3000):
     cond = ['1=1']
     params = []
     if farm_filter:
@@ -1440,28 +1358,113 @@ def ecc_analise():
         cond.append('(farm_id LIKE ? OR animal_tag LIKE ?)')
         params.extend([like, like])
     where = ' AND '.join(cond)
-
     rows = db.execute(
-        f"""
-        SELECT *
-        FROM ecc_bcs_records
-        WHERE {where}
-        ORDER BY inference_date DESC, id DESC
-        LIMIT 3000
-        """,
-        params,
+        f"SELECT * FROM ecc_bcs_records WHERE {where} ORDER BY inference_date DESC, id DESC LIMIT ?",
+        params + [limit],
     ).fetchall()
-    records = [dict(r) for r in rows]
+    return [dict(r) for r in rows]
 
-    farms = [r[0] for r in db.execute(
-        "SELECT DISTINCT farm_id FROM ecc_bcs_records ORDER BY farm_id"
-    ).fetchall()]
-    animals = [r[0] for r in db.execute(
-        "SELECT DISTINCT animal_tag FROM ecc_bcs_records ORDER BY animal_tag"
-    ).fetchall()]
 
-    farm_series = ecc_farm_time_series(records)
+def _ecc_base_lists(db):
+    farms = [r[0] for r in db.execute("SELECT DISTINCT farm_id FROM ecc_bcs_records ORDER BY farm_id").fetchall()]
+    animals = [r[0] for r in db.execute("SELECT DISTINCT animal_tag FROM ecc_bcs_records ORDER BY animal_tag").fetchall()]
+    stats = {
+        'total_records': db.execute("SELECT COUNT(*) FROM ecc_bcs_records").fetchone()[0],
+        'farms': db.execute("SELECT COUNT(DISTINCT farm_id) FROM ecc_bcs_records").fetchone()[0],
+        'animals': db.execute("SELECT COUNT(DISTINCT farm_id || '::' || animal_tag) FROM ecc_bcs_records").fetchone()[0],
+        'with_score': db.execute("SELECT COUNT(*) FROM ecc_bcs_records WHERE ecc_score IS NOT NULL").fetchone()[0],
+    }
+    return farms, animals, stats
 
+
+@app.route('/ecc/analise')
+@login_required
+def ecc_analise():
+    return redirect(url_for('ecc_importar'), code=302)
+
+
+@app.route('/ecc/importar', methods=['GET', 'POST'])
+@login_required
+def ecc_importar():
+    db = get_db()
+    if request.method == 'POST':
+        mode = request.form.get('mode', 'single').strip().lower()
+        now_iso = datetime.utcnow().isoformat() + 'Z'
+        if mode == 'single':
+            farm_id = str(request.form.get('farm_id', '')).strip()
+            date_iso = ecc_parse_iso_day(request.form.get('inference_date', ''))
+            animal_tag = str(request.form.get('animal_tag', '')).strip()
+            fs = request.files.get('image')
+            if not farm_id or not date_iso or not animal_tag or not fs or not fs.filename:
+                flash('Preencha fazenda, data, brinco e selecione uma imagem.', 'error')
+                return redirect(url_for('ecc_importar'))
+            ok, msg = _ecc_save_one(db, now_iso, farm_id, date_iso, animal_tag, fs)
+            if ok:
+                db.commit(); flash('Imagem enviada e inferida com sucesso.', 'success')
+            else:
+                db.rollback(); flash(msg, 'error')
+            return redirect(url_for('ecc_importar'))
+        if mode == 'batch':
+            farm_id = str(request.form.get('farm_id_batch', '')).strip()
+            date_iso = ecc_parse_iso_day(request.form.get('inference_date_batch', ''))
+            files = request.files.getlist('images_batch')
+            if not farm_id or not date_iso or not files:
+                flash('Lote: informe fazenda, data e selecione ficheiros.', 'error')
+                return redirect(url_for('ecc_importar'))
+            n_ok, n_err, errs = 0, 0, []
+            for fs in files:
+                if not fs or not fs.filename:
+                    continue
+                animal_tag = os.path.splitext(os.path.basename(fs.filename))[0].strip()
+                if not animal_tag:
+                    n_err += 1; errs.append(f'Arquivo sem brinco no nome: {fs.filename}'); continue
+                ok, msg = _ecc_save_one(db, now_iso, farm_id, date_iso, animal_tag, fs)
+                if ok: n_ok += 1
+                else: n_err += 1; errs.append(f'{fs.filename}: {msg}')
+            db.commit()
+            if n_ok: flash(f'Lote processado: {n_ok} arquivo(s) inferido(s).', 'success')
+            if n_err: flash(f'Lote com {n_err} erro(s): ' + '; '.join(errs[:3]), 'error')
+            return redirect(url_for('ecc_importar'))
+        flash('Modo de upload inválido.', 'error')
+        return redirect(url_for('ecc_importar'))
+
+    farm_filter = str(request.args.get('farm', '')).strip()
+    animal_filter = str(request.args.get('animal', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    records = _ecc_load_rows(db, farm_filter, animal_filter, q, limit=500)[:120]
+    farms, animals, stats = _ecc_base_lists(db)
+    return render_template(
+        'ecc_importar.html',
+        records=records, farms=farms, animals=animals,
+        farm_filter=farm_filter, animal_filter=animal_filter, q_filter=q,
+        stats=stats,
+    )
+
+
+@app.route('/ecc/analise-rebanho')
+@login_required
+def ecc_analise_rebanho():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    records = _ecc_load_rows(db, farm_filter, '', q, limit=3000)
+    farms, _, stats = _ecc_base_lists(db)
+    return render_template(
+        'ecc_analise_rebanho.html',
+        records=records[:120], farms=farms, farm_filter=farm_filter, q_filter=q,
+        farm_series=ecc_farm_time_series(records), stats=stats,
+    )
+
+
+@app.route('/ecc/analise-individual')
+@login_required
+def ecc_analise_individual():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    animal_filter = str(request.args.get('animal', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    records = _ecc_load_rows(db, farm_filter, animal_filter, q, limit=3000)
+    farms, animals, stats = _ecc_base_lists(db)
     selected_farm = farm_filter or (farms[0] if farms else '')
     selected_animal = animal_filter
     if selected_farm and not selected_animal:
@@ -1477,7 +1480,6 @@ def ecc_analise():
             (selected_farm,),
         ).fetchone()
         selected_animal = rr[0] if rr else ''
-
     animal_points = []
     if selected_farm and selected_animal:
         ar = db.execute(
@@ -1490,27 +1492,12 @@ def ecc_analise():
             (selected_farm, selected_animal),
         ).fetchall()
         animal_points = [dict(x) for x in ar]
-
-    stats = {
-        'total_records': db.execute("SELECT COUNT(*) FROM ecc_bcs_records").fetchone()[0],
-        'farms': db.execute("SELECT COUNT(DISTINCT farm_id) FROM ecc_bcs_records").fetchone()[0],
-        'animals': db.execute("SELECT COUNT(DISTINCT farm_id || '::' || animal_tag) FROM ecc_bcs_records").fetchone()[0],
-        'with_score': db.execute("SELECT COUNT(*) FROM ecc_bcs_records WHERE ecc_score IS NOT NULL").fetchone()[0],
-    }
-
     return render_template(
-        'ecc_analise.html',
-        records=records[:80],
-        farms=farms,
-        animals=animals,
-        farm_filter=farm_filter,
-        animal_filter=animal_filter,
-        q_filter=q,
-        selected_farm=selected_farm,
-        selected_animal=selected_animal,
-        farm_series=farm_series,
-        animal_points=animal_points,
-        stats=stats,
+        'ecc_analise_individual.html',
+        records=records[:120], farms=farms, animals=animals,
+        farm_filter=farm_filter, animal_filter=animal_filter, q_filter=q,
+        selected_farm=selected_farm, selected_animal=selected_animal,
+        animal_points=animal_points, stats=stats,
     )
 
 
