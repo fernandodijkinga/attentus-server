@@ -50,14 +50,16 @@ def pick_ecc_trait(traits: dict) -> tuple[str | None, float | None]:
 def rescale_ecc_1_to_5_quarter(raw_score: float | None) -> float | None:
     """
     Reescala para [1, 5] em incrementos de 0.25.
-    - Se já estiver em 1..5, mantém.
-    - Senão, assume 0..1 e mapeia para 1..5.
+    Faixa esperada do modelo bruto: -4 .. +4
+      -4 -> 1.00
+       0 -> 3.00
+      +4 -> 5.00
     """
     if raw_score is None:
         return None
     x = float(raw_score)
-    if x < 1.0 or x > 5.0:
-        x = 1.0 + max(0.0, min(1.0, x)) * 4.0
+    # Normaliza -4..+4 para 1..5 de forma linear: 1 + (x + 4) / 2
+    x = 1.0 + (max(-4.0, min(4.0, x)) + 4.0) / 2.0
     x = max(1.0, min(5.0, x))
     return round(x * 4.0) / 4.0
 
