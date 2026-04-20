@@ -309,6 +309,8 @@ select { cursor: pointer; }
     <a href="{{ url_for('calf_monitor') }}"  class="nav-link {% if request.endpoint in ['calf_monitor', 'cameras'] %}active{% endif %}">
       <span class="icon">🐄</span> Calf Monitor
     </a>
+
+    <div class="nav-section">Perspicuus</div>
     <a href="{{ url_for('perspicuus') }}"  class="nav-link {% if request.endpoint == 'perspicuus' %}active{% endif %}">
       <span class="icon">🧠</span> Perspicuus
     </a>
@@ -320,6 +322,9 @@ select { cursor: pointer; }
     </a>
     <a href="{{ url_for('perspicuus_modelos') }}" class="nav-link {% if request.endpoint == 'perspicuus_modelos' %}active{% endif %}">
       <span class="icon">📦</span> Modelos MK1
+    </a>
+    <a href="{{ url_for('ecc_analise') }}" class="nav-link {% if request.endpoint == 'ecc_analise' %}active{% endif %}">
+      <span class="icon">📈</span> Análise ECC
     </a>
 
     <div class="nav-section">Dados</div>

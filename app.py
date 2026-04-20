@@ -29,6 +29,7 @@ import re
 import sqlite3
 import json
 import threading
+import math
 import zipfile
 import io
 import csv
@@ -43,6 +44,7 @@ from flask import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+import cv2
 
 from thi_calculator import calculate_thi, thi_holstein_zones_for_chart, thi_thresholds_json
 
@@ -119,6 +121,9 @@ PERSPICUUS_MULTIPART_FIELD = re.compile(
     re.IGNORECASE,
 )
 PERSPICUUS_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
+ECC_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
+ECC_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'ecc')
+os.makedirs(ECC_UPLOADS_DIR, exist_ok=True)
 
 
 def _perspicuus_media_url_from_path(path):
@@ -248,6 +253,130 @@ def _temp_humidity_for_thi(row_dict):
         h = _float_or_none(_ingest_humidity(j))
     return t, h
 
+
+def _safe_slug(v: str, fallback: str = 'x') -> str:
+    s = secure_filename(str(v or '').strip())
+    return s or fallback
+
+
+def _parse_iso_day(v: str) -> str | None:
+    s = str(v or '').strip()
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s).date().isoformat()
+    except ValueError:
+        return None
+
+
+def _pick_ecc_trait(traits: dict) -> tuple[str | None, float | None]:
+    """
+    Escolhe a trait ECC:
+    1) nome contendo ecc/bcs/body_condition
+    2) fallback para primeira trait
+    """
+    if not isinstance(traits, dict) or not traits:
+        return None, None
+    keys = list(traits.keys())
+    preferred = []
+    for k in keys:
+        lk = str(k).lower()
+        if 'ecc' in lk or 'bcs' in lk or 'body' in lk or 'condition' in lk:
+            preferred.append(k)
+    use = preferred[0] if preferred else keys[0]
+    try:
+        return str(use), float(traits.get(use))
+    except (TypeError, ValueError):
+        return str(use), None
+
+
+def _rescale_ecc_1_to_5_quarter(raw_score: float | None) -> float | None:
+    """
+    Reescala para [1, 5] em passos de 0.25.
+    - Se score já parece estar na escala 1..5, mantém.
+    - Caso contrário (ex.: 0..1), mapeia linearmente para 1..5.
+    """
+    if raw_score is None:
+        return None
+    x = float(raw_score)
+    if x < 1.0 or x > 5.0:
+        x = 1.0 + max(0.0, min(1.0, x)) * 4.0
+    x = max(1.0, min(5.0, x))
+    return round(x * 4.0) / 4.0
+
+
+def _ecc_infer_image(abs_path: str, view: str) -> dict:
+    """
+    Roda inferência Perspicuus numa imagem para extrair ECC.
+    """
+    if view not in ('lateral', 'posterior'):
+        return {'error': 'view inválida; use lateral ou posterior'}
+    try:
+        from perspicuus_inference import get_engine
+    except ImportError as e:
+        return {'error': f'Módulo de inferência indisponível: {e}'}
+    eng = get_engine()
+    if not eng.is_ready():
+        return {'error': 'Motor Perspicuus não está pronto (configure YOLO + pelo menos um ONNX).'}
+    if not eng.onnx_path_for(view):
+        return {'error': f'Modelo ONNX da vista {view} não está configurado.'}
+    img = cv2.imread(abs_path)
+    if img is None:
+        return {'error': 'Falha ao abrir imagem.'}
+    try:
+        out = eng.infer_bgr(img, view)
+    except Exception as e:  # noqa: BLE001
+        log.exception('ECC inferência falhou em %s', abs_path)
+        return {'error': str(e)}
+    traits = out.get('traits') or {}
+    tname, raw = _pick_ecc_trait(traits)
+    ecc = _rescale_ecc_1_to_5_quarter(raw)
+    return {
+        'trait_name': tname or '',
+        'raw_score': raw,
+        'ecc_score': ecc,
+        'traits': traits,
+        'meta': {
+            'yolo_conf': out.get('yolo_conf'),
+            'bbox': out.get('bbox'),
+            'infer_ms': out.get('infer_ms'),
+            'view': view,
+        },
+        'error': None if ecc is not None else 'trait_ecc_ausente_ou_invalida',
+    }
+
+
+def _ecc_farm_time_series(rows):
+    by_key: dict[tuple[str, str], dict] = {}
+    for r in rows:
+        if r.get('ecc_score') is None:
+            continue
+        farm = str(r.get('farm_id') or '')
+        d = str(r.get('inference_date') or '')
+        if not farm or not d:
+            continue
+        key = (farm, d)
+        cell = by_key.setdefault(key, {'vals': [], 'animals': set()})
+        cell['vals'].append(float(r['ecc_score']))
+        cell['animals'].add(str(r.get('animal_tag') or ''))
+    out = []
+    for (farm, d), cell in by_key.items():
+        vals = cell['vals']
+        n = len(vals)
+        if not n:
+            continue
+        mean = sum(vals) / n
+        var = sum((v - mean) ** 2 for v in vals) / n
+        out.append({
+            'farm_id': farm,
+            'date': d,
+            'mean': round(mean, 3),
+            'std': round(math.sqrt(var), 3),
+            'n_records': n,
+            'n_animals': len([a for a in cell['animals'] if a]),
+        })
+    out.sort(key=lambda x: (x['farm_id'], x['date']))
+    return out
 
 def _sanitize_perspicuus_frames(items):
     """Normaliza lista de frames: [{'frame_index': int, 'path': str}, ...]."""
@@ -464,6 +593,23 @@ def init_db():
         inference_at      TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS ecc_bcs_records (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at     TEXT    NOT NULL,
+        farm_id        TEXT    NOT NULL,
+        inference_date TEXT    NOT NULL,   -- YYYY-MM-DD (data funcional da inferência)
+        animal_tag     TEXT    NOT NULL,   -- brinco
+        view           TEXT    NOT NULL DEFAULT 'lateral',
+        filename       TEXT    NOT NULL,
+        image_path     TEXT    NOT NULL,   -- /api/ecc/media/...
+        trait_name     TEXT    DEFAULT '',
+        raw_score      REAL,
+        ecc_score      REAL,
+        traits_json    TEXT    NOT NULL DEFAULT '{}',
+        meta_json      TEXT    NOT NULL DEFAULT '{}',
+        error_text     TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_weather_received ON weather(received_at);
     CREATE INDEX IF NOT EXISTS idx_weather_device   ON weather(device_name);
     CREATE INDEX IF NOT EXISTS idx_images_received  ON images(received_at);
@@ -471,6 +617,8 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_persp_ts         ON perspicuus_events(timestamp_utc);
     CREATE INDEX IF NOT EXISTS idx_persp_station    ON perspicuus_events(station_id);
     CREATE INDEX IF NOT EXISTS idx_persp_rfid       ON perspicuus_events(animal_rfid);
+    CREATE INDEX IF NOT EXISTS idx_ecc_farm_date    ON ecc_bcs_records(farm_id, inference_date);
+    CREATE INDEX IF NOT EXISTS idx_ecc_animal_date  ON ecc_bcs_records(farm_id, animal_tag, inference_date);
     """)
     db.commit()
     try:
@@ -1250,6 +1398,227 @@ def perspicuus_modelos():
         ml_models_dir=ML_MODELS_DIR,
         inference_engine_ready=get_engine().is_ready(),
         role_ext=PERSPICUUS_MODEL_ROLE_EXT,
+    )
+
+
+@app.route('/api/ecc/media/<farm>/<day>/<filename>')
+@login_required
+def serve_ecc_media(farm, day, filename):
+    base = os.path.abspath(os.path.join(ECC_UPLOADS_DIR, _safe_slug(farm), _safe_slug(day)))
+    filepath = os.path.abspath(os.path.join(base, secure_filename(filename)))
+    if not filepath.startswith(base + os.sep) or not os.path.isfile(filepath):
+        abort(404)
+    return send_file(filepath)
+
+
+@app.route('/ecc/analise', methods=['GET', 'POST'])
+@login_required
+def ecc_analise():
+    """
+    Sistema de análise ECC (dataset separado de Perspicuus events).
+    Upload único/lote, inferência e gráficos de fazenda/animal.
+    """
+    db = get_db()
+
+    if request.method == 'POST':
+        mode = request.form.get('mode', 'single').strip().lower()
+        now_iso = datetime.utcnow().isoformat() + 'Z'
+
+        def _save_one(
+            farm_id: str,
+            inference_date: str,
+            animal_tag: str,
+            view: str,
+            fs,
+        ) -> tuple[bool, str]:
+            if view not in ('lateral', 'posterior'):
+                return False, 'Vista inválida (use lateral ou posterior).'
+            ext = os.path.splitext(fs.filename or '')[1].lower()
+            if ext not in ECC_IMAGE_EXTS:
+                return False, f'Extensão não permitida: {ext or "sem extensão"}'
+            safe_farm = _safe_slug(farm_id, 'fazenda')
+            safe_day = _safe_slug(inference_date.replace('-', ''), 'day')
+            safe_tag = _safe_slug(animal_tag, 'animal')
+            folder = os.path.join(ECC_UPLOADS_DIR, safe_farm, safe_day)
+            os.makedirs(folder, exist_ok=True)
+            fname = secure_filename(fs.filename or f'{safe_tag}.jpg')
+            if not fname:
+                fname = f'{safe_tag}.jpg'
+            final_name = f"{safe_tag}_{int(datetime.utcnow().timestamp() * 1000)}_{fname}"
+            dest = os.path.join(folder, final_name)
+            try:
+                fs.save(dest)
+            except OSError as e:
+                return False, f'Falha ao gravar arquivo: {e}'
+
+            web_path = f"/api/ecc/media/{safe_farm}/{safe_day}/{final_name}"
+            inf = _ecc_infer_image(dest, view)
+            db.execute(
+                """
+                INSERT INTO ecc_bcs_records (
+                    created_at, farm_id, inference_date, animal_tag, view, filename, image_path,
+                    trait_name, raw_score, ecc_score, traits_json, meta_json, error_text
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    now_iso,
+                    farm_id,
+                    inference_date,
+                    animal_tag,
+                    view,
+                    final_name,
+                    web_path,
+                    inf.get('trait_name') or '',
+                    inf.get('raw_score'),
+                    inf.get('ecc_score'),
+                    json.dumps(inf.get('traits') or {}, ensure_ascii=False),
+                    json.dumps(inf.get('meta') or {}, ensure_ascii=False),
+                    inf.get('error'),
+                ),
+            )
+            return True, 'ok'
+
+        if mode == 'single':
+            farm_id = str(request.form.get('farm_id', '')).strip()
+            date_iso = _parse_iso_day(request.form.get('inference_date', ''))
+            animal_tag = str(request.form.get('animal_tag', '')).strip()
+            view = str(request.form.get('view', 'lateral')).strip().lower()
+            fs = request.files.get('image')
+            if not farm_id or not date_iso or not animal_tag or not fs or not fs.filename:
+                flash('Preencha fazenda, data, brinco e selecione uma imagem.', 'error')
+                return redirect(url_for('ecc_analise'))
+            ok, msg = _save_one(farm_id, date_iso, animal_tag, view, fs)
+            if ok:
+                db.commit()
+                flash('Imagem enviada e inferida com sucesso.', 'success')
+            else:
+                db.rollback()
+                flash(msg, 'error')
+            return redirect(url_for('ecc_analise'))
+
+        if mode == 'batch':
+            farm_id = str(request.form.get('farm_id_batch', '')).strip()
+            date_iso = _parse_iso_day(request.form.get('inference_date_batch', ''))
+            view = str(request.form.get('view_batch', 'lateral')).strip().lower()
+            files = request.files.getlist('images_batch')
+            if not farm_id or not date_iso or not files:
+                flash('Lote: informe fazenda, data e selecione ficheiros.', 'error')
+                return redirect(url_for('ecc_analise'))
+            n_ok, n_err = 0, 0
+            errs = []
+            for fs in files:
+                if not fs or not fs.filename:
+                    continue
+                animal_tag = os.path.splitext(os.path.basename(fs.filename))[0].strip()
+                if not animal_tag:
+                    n_err += 1
+                    errs.append(f'Arquivo sem brinco no nome: {fs.filename}')
+                    continue
+                ok, msg = _save_one(farm_id, date_iso, animal_tag, view, fs)
+                if ok:
+                    n_ok += 1
+                else:
+                    n_err += 1
+                    errs.append(f'{fs.filename}: {msg}')
+            db.commit()
+            if n_ok:
+                flash(f'Lote processado: {n_ok} arquivo(s) inferido(s).', 'success')
+            if n_err:
+                flash(f'Lote com {n_err} erro(s): ' + '; '.join(errs[:3]), 'error')
+            return redirect(url_for('ecc_analise'))
+
+        flash('Modo de upload inválido.', 'error')
+        return redirect(url_for('ecc_analise'))
+
+    # GET: listagens e gráficos
+    farm_filter = str(request.args.get('farm', '')).strip()
+    animal_filter = str(request.args.get('animal', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+
+    cond = ['1=1']
+    params = []
+    if farm_filter:
+        cond.append('farm_id = ?')
+        params.append(farm_filter)
+    if animal_filter:
+        cond.append('animal_tag = ?')
+        params.append(animal_filter)
+    if q:
+        like = f'%{q}%'
+        cond.append('(farm_id LIKE ? OR animal_tag LIKE ?)')
+        params.extend([like, like])
+    where = ' AND '.join(cond)
+
+    rows = db.execute(
+        f"""
+        SELECT *
+        FROM ecc_bcs_records
+        WHERE {where}
+        ORDER BY inference_date DESC, id DESC
+        LIMIT 3000
+        """,
+        params,
+    ).fetchall()
+    records = [dict(r) for r in rows]
+
+    farms = [r[0] for r in db.execute(
+        "SELECT DISTINCT farm_id FROM ecc_bcs_records ORDER BY farm_id"
+    ).fetchall()]
+    animals = [r[0] for r in db.execute(
+        "SELECT DISTINCT animal_tag FROM ecc_bcs_records ORDER BY animal_tag"
+    ).fetchall()]
+
+    farm_series = _ecc_farm_time_series(records)
+
+    selected_farm = farm_filter or (farms[0] if farms else '')
+    selected_animal = animal_filter
+    if selected_farm and not selected_animal:
+        rr = db.execute(
+            """
+            SELECT animal_tag, MAX(inference_date) AS d
+            FROM ecc_bcs_records
+            WHERE farm_id = ?
+            GROUP BY animal_tag
+            ORDER BY d DESC
+            LIMIT 1
+            """,
+            (selected_farm,),
+        ).fetchone()
+        selected_animal = rr[0] if rr else ''
+
+    animal_points = []
+    if selected_farm and selected_animal:
+        ar = db.execute(
+            """
+            SELECT inference_date, ecc_score, raw_score, trait_name
+            FROM ecc_bcs_records
+            WHERE farm_id = ? AND animal_tag = ? AND ecc_score IS NOT NULL
+            ORDER BY inference_date ASC, id ASC
+            """,
+            (selected_farm, selected_animal),
+        ).fetchall()
+        animal_points = [dict(x) for x in ar]
+
+    stats = {
+        'total_records': db.execute("SELECT COUNT(*) FROM ecc_bcs_records").fetchone()[0],
+        'farms': db.execute("SELECT COUNT(DISTINCT farm_id) FROM ecc_bcs_records").fetchone()[0],
+        'animals': db.execute("SELECT COUNT(DISTINCT farm_id || '::' || animal_tag) FROM ecc_bcs_records").fetchone()[0],
+        'with_score': db.execute("SELECT COUNT(*) FROM ecc_bcs_records WHERE ecc_score IS NOT NULL").fetchone()[0],
+    }
+
+    return render_template(
+        'ecc_analise.html',
+        records=records[:80],
+        farms=farms,
+        animals=animals,
+        farm_filter=farm_filter,
+        animal_filter=animal_filter,
+        q_filter=q,
+        selected_farm=selected_farm,
+        selected_animal=selected_animal,
+        farm_series=farm_series,
+        animal_points=animal_points,
+        stats=stats,
     )
 
 

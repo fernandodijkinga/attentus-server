@@ -1,0 +1,349 @@
+{% extends "base.html" %}
+{% block title %}Análise ECC{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+.grid-forms { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+@media (max-width: 980px) { .grid-forms { grid-template-columns: 1fr; } }
+.form-card { background: var(--surf); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.form-sub { font-size: 12px; color: var(--text2); margin-top: 4px; margin-bottom: 10px; line-height: 1.4; }
+.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 680px) { .row-2 { grid-template-columns: 1fr; } }
+.flash-bar { padding: 10px 12px; border-radius: 8px; margin-bottom: 10px; font-size: 12px; }
+.flash-bar.success { background: rgba(0,229,160,.12); border: 1px solid rgba(0,229,160,.3); color: var(--accent); }
+.flash-bar.error { background: rgba(255,77,106,.12); border: 1px solid rgba(255,77,106,.28); color: var(--err); }
+.chart-grid-ecc { display: grid; grid-template-columns: 1fr; gap: 16px; margin-bottom: 16px; }
+.chart-card-ecc { background: var(--surf); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.chart-title { font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
+.chart-sub { font-size: 11px; color: var(--text2); font-family: var(--mono); }
+.chart-card-ecc canvas { width: 100% !important; height: 260px !important; }
+.table-wrap { overflow: auto; }
+.thumb { width: 72px; height: 54px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">📈 <span>Sistema de</span> <span style="color:var(--accent)">Análise ECC</span></div>
+    <div class="page-sub">Dataset separado do Perspicuus para escore de condição corporal (1.00–5.00, passo 0.25)</div>
+  </div>
+  <div class="flex gap-8">
+    <span class="pill pill-blue">{{ stats.total_records }} registros</span>
+    <span class="pill pill-orange">{{ stats.farms }} fazenda(s)</span>
+    <span class="pill pill-green">{{ stats.animals }} animal(is)</span>
+  </div>
+</div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+      <div class="flash-bar {{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
+
+<div class="grid-forms">
+  <div class="form-card">
+    <div class="card-title">Upload único / Mobile</div>
+    <p class="form-sub">Suba um arquivo ou capture na hora em dispositivo móvel. Informe fazenda, data da inferência e brinco.</p>
+    <form method="post" enctype="multipart/form-data">
+      <input type="hidden" name="mode" value="single">
+      <div class="row-2">
+        <div class="field">
+          <label>Fazenda</label>
+          <input name="farm_id" required placeholder="fazenda-001">
+        </div>
+        <div class="field">
+          <label>Data da inferência</label>
+          <input type="date" name="inference_date" required>
+        </div>
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <label>Brinco do animal</label>
+          <input name="animal_tag" required placeholder="001">
+        </div>
+        <div class="field">
+          <label>Vista</label>
+          <select name="view">
+            <option value="lateral" selected>Lateral</option>
+            <option value="posterior">Posterior</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label>Imagem</label>
+        <input type="file" name="image" accept="image/*" capture="environment" required>
+      </div>
+      <button class="btn btn-accent btn-sm" type="submit">Inferir e guardar</button>
+    </form>
+  </div>
+
+  <div class="form-card">
+    <div class="card-title">Upload em lote</div>
+    <p class="form-sub">Use o brinco como nome do arquivo (ex.: <span class="mono">1323.png</span>). Data única para todo o lote.</p>
+    <form method="post" enctype="multipart/form-data">
+      <input type="hidden" name="mode" value="batch">
+      <div class="row-2">
+        <div class="field">
+          <label>Fazenda</label>
+          <input name="farm_id_batch" required placeholder="fazenda-001">
+        </div>
+        <div class="field">
+          <label>Data da inferência (lote)</label>
+          <input type="date" name="inference_date_batch" required>
+        </div>
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <label>Vista</label>
+          <select name="view_batch">
+            <option value="lateral" selected>Lateral</option>
+            <option value="posterior">Posterior</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Arquivos</label>
+          <input type="file" name="images_batch" multiple accept=".jpg,.jpeg,.png,.webp" required>
+        </div>
+      </div>
+      <button class="btn btn-accent btn-sm" type="submit">Processar lote</button>
+    </form>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <form method="get" class="filters-row">
+    <div class="field" style="margin:0">
+      <label>Fazenda (filtro)</label>
+      <select name="farm">
+        <option value="">Todas</option>
+        {% for f in farms %}
+        <option value="{{ f }}" {% if farm_filter == f %}selected{% endif %}>{{ f }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field" style="margin:0">
+      <label>Brinco (filtro)</label>
+      <select name="animal">
+        <option value="">Todos</option>
+        {% for a in animals %}
+        <option value="{{ a }}" {% if animal_filter == a %}selected{% endif %}>{{ a }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field" style="margin:0; min-width:220px">
+      <label>Busca livre</label>
+      <input name="q" value="{{ q_filter }}" placeholder="fazenda ou brinco">
+    </div>
+    <div class="flex gap-8">
+      <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
+      <a href="{{ url_for('ecc_analise') }}" class="btn btn-ghost btn-sm">Limpar</a>
+    </div>
+  </form>
+</div>
+
+<div class="chart-grid-ecc">
+  <div class="chart-card-ecc">
+    <div class="chart-head">
+      <div class="chart-title">Média + desvio padrão por fazenda</div>
+      <div class="chart-sub">ao longo do tempo (nº de animais em barras)</div>
+    </div>
+    <canvas id="ch-farm"></canvas>
+  </div>
+
+  <div class="chart-card-ecc">
+    <div class="chart-head">
+      <div class="chart-title">Evolução do escore por animal</div>
+      <div class="chart-sub">{{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
+    </div>
+    <canvas id="ch-animal"></canvas>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Últimos registros (dataset ECC)</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Data inf.</th><th>Fazenda</th><th>Brinco</th><th>Vista</th><th>ECC</th><th>Raw</th><th>Trait</th><th>Imagem</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in records %}
+        <tr>
+          <td class="mono">{{ r.inference_date }}</td>
+          <td>{{ r.farm_id }}</td>
+          <td class="mono">{{ r.animal_tag }}</td>
+          <td class="mono">{{ r.view }}</td>
+          <td class="mono">{{ '%.2f' % r.ecc_score if r.ecc_score is not none else '—' }}</td>
+          <td class="mono">{{ '%.4f' % r.raw_score if r.raw_score is not none else '—' }}</td>
+          <td class="mono">{{ r.trait_name or '—' }}</td>
+          <td>
+            {% if r.image_path %}
+            <img class="thumb" src="{{ r.image_path }}" alt="ecc" onclick="window.open(this.src)">
+            {% else %}
+            —
+            {% endif %}
+          </td>
+          <td class="mono" style="color:{% if r.error_text %}var(--err){% else %}var(--accent){% endif %}">
+            {{ r.error_text or 'ok' }}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9"><div class="empty-state"><div class="icon">📈</div>Sem dados ECC ainda.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const FARM_SERIES = {{ farm_series | tojson }};
+const ANIMAL_POINTS = {{ animal_points | tojson }};
+
+const ECC_COLORS = ['#00e5a0', '#0099ff', '#ff9f40', '#cc66ff', '#ff4d6a', '#7dd3fc', '#a3e635'];
+const TZ_BR = 'America/Sao_Paulo';
+
+function groupedFarmSeries(rows) {
+  const out = {};
+  (rows || []).forEach((r) => {
+    const farm = r.farm_id || '—';
+    if (!out[farm]) out[farm] = [];
+    out[farm].push(r);
+  });
+  Object.keys(out).forEach((k) => out[k].sort((a, b) => String(a.date).localeCompare(String(b.date))));
+  return out;
+}
+
+function buildFarmChart() {
+  const c = document.getElementById('ch-farm');
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  const byFarm = groupedFarmSeries(FARM_SERIES);
+  const datasets = [];
+  let i = 0;
+  Object.entries(byFarm).forEach(([farm, rows]) => {
+    const color = ECC_COLORS[i % ECC_COLORS.length];
+    i += 1;
+    datasets.push({
+      type: 'line',
+      label: `${farm} · média`,
+      data: rows.map((r) => ({ x: r.date, y: r.mean, n: r.n_animals, std: r.std })),
+      parsing: false,
+      borderColor: color,
+      backgroundColor: color,
+      tension: 0.3,
+      borderWidth: 2.2,
+      pointRadius: 2.5,
+      yAxisID: 'y',
+    });
+    datasets.push({
+      type: 'line',
+      label: `${farm} · desvio padrão`,
+      data: rows.map((r) => ({ x: r.date, y: r.std, n: r.n_animals })),
+      parsing: false,
+      borderColor: color + 'AA',
+      borderDash: [5, 4],
+      pointRadius: 0,
+      borderWidth: 1.4,
+      yAxisID: 'y1',
+    });
+    datasets.push({
+      type: 'bar',
+      label: `${farm} · # animais`,
+      data: rows.map((r) => ({ x: r.date, y: r.n_animals })),
+      parsing: false,
+      backgroundColor: color + '33',
+      borderColor: color + '66',
+      borderWidth: 1,
+      yAxisID: 'y2',
+      barPercentage: 0.65,
+      categoryPercentage: 0.8,
+    });
+  });
+  new Chart(ctx, {
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'nearest', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#7a9aae', font: { family: 'JetBrains Mono', size: 10 } } },
+        tooltip: {
+          backgroundColor: '#0c1820',
+          borderColor: '#1c3040',
+          borderWidth: 1,
+          callbacks: {
+            title: (items) => items?.[0]?.raw?.x || '',
+            label: (ctx) => {
+              const y = ctx.raw?.y;
+              const n = ctx.raw?.n;
+              if (ctx.dataset.label.includes('média')) return `${ctx.dataset.label}: ${Number(y).toFixed(2)} (n=${n ?? '—'})`;
+              if (ctx.dataset.label.includes('desvio')) return `${ctx.dataset.label}: ${Number(y).toFixed(2)}`;
+              return `${ctx.dataset.label}: ${y}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#5a7a8c' }, grid: { color: '#1c3040' } },
+        y: { min: 1, max: 5, ticks: { color: '#7a9aae' }, grid: { color: '#1c3040' }, title: { display: true, text: 'ECC médio' } },
+        y1: { position: 'right', min: 0, ticks: { color: '#7a9aae' }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Desvio padrão' } },
+        y2: { position: 'right', min: 0, ticks: { color: '#5a7a8c', display: false }, grid: { drawOnChartArea: false }, display: false },
+      },
+    },
+  });
+}
+
+function buildAnimalChart() {
+  const c = document.getElementById('ch-animal');
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  const ds = (ANIMAL_POINTS || []).map((r) => ({ x: r.inference_date, y: r.ecc_score, raw: r.raw_score }));
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: [{
+        label: 'ECC (1-5, passo 0.25)',
+        data: ds,
+        parsing: false,
+        borderColor: '#00e5a0',
+        backgroundColor: 'rgba(0,229,160,.18)',
+        borderWidth: 2.4,
+        pointRadius: 3,
+        tension: 0.25,
+        fill: true,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#7a9aae', font: { family: 'JetBrains Mono', size: 10 } } },
+        tooltip: {
+          callbacks: {
+            title: (items) => items?.[0]?.raw?.x || '',
+            label: (ctx) => `ECC: ${Number(ctx.raw?.y).toFixed(2)} · raw: ${ctx.raw?.raw != null ? Number(ctx.raw.raw).toFixed(4) : '—'}`,
+          },
+        },
+      },
+      scales: {
+        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#5a7a8c' }, grid: { color: '#1c3040' } },
+        y: { min: 1, max: 5, ticks: { color: '#7a9aae', stepSize: 0.25 }, grid: { color: '#1c3040' } },
+      },
+    },
+  });
+}
+
+buildFarmChart();
+buildAnimalChart();
+</script>
+{% endblock %}
