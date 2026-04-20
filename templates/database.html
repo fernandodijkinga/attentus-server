@@ -11,7 +11,7 @@
   text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
 }
 .tab-btn:hover { border-color: var(--border2); color: var(--text); }
-.tab-btn.active { background: rgba(0,229,160,.1); border-color: rgba(0,229,160,.2); color: var(--accent); }
+.tab-btn.active { background: rgba(26, 111, 212, 0.1); border-color: rgba(26, 111, 212, 0.25); color: var(--accent2); }
 
 .filters {
   display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
@@ -26,9 +26,9 @@
 
 /* Editable cells */
 .edit-cell { cursor: pointer; }
-.edit-cell:hover { background: rgba(0,229,160,.08) !important; color: var(--accent) !important; }
+.edit-cell:hover { background: rgba(26, 111, 212, 0.08) !important; color: var(--accent2) !important; }
 .edit-input {
-  width: 100%; background: var(--bg); border: 1px solid var(--accent);
+  width: 100%; background: var(--surf2); border: 1px solid var(--accent2);
   border-radius: 4px; color: var(--text); font-family: var(--mono);
   font-size: 12px; padding: 2px 6px; outline: 0;
 }
@@ -46,13 +46,13 @@
 
 .persp-modal-overlay {
   display: none; position: fixed; inset: 0; z-index: 2000;
-  background: rgba(0,0,0,.55); align-items: center; justify-content: center; padding: 24px;
+  background: rgba(26, 47, 69, 0.45); align-items: center; justify-content: center; padding: 24px;
 }
 .persp-modal-overlay.open { display: flex; }
 .persp-modal {
   width: min(900px, 96vw); max-height: 85vh; overflow: auto;
   background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-  padding: 16px 18px; box-shadow: 0 16px 48px rgba(0,0,0,.35);
+  padding: 16px 18px; box-shadow: 0 16px 48px rgba(22, 55, 96, 0.18);
 }
 .persp-modal pre {
   margin: 0; font-size: 11px; line-height: 1.45; white-space: pre-wrap; word-break: break-word;

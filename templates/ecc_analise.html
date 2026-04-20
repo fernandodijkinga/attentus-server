@@ -258,10 +258,10 @@ function buildFarmChart() {
       maintainAspectRatio: false,
       interaction: { mode: 'nearest', intersect: false },
       plugins: {
-        legend: { labels: { color: '#7a9aae', font: { family: 'JetBrains Mono', size: 10 } } },
+        legend: { labels: { color: '#5a6f82', font: { family: 'JetBrains Mono', size: 10 } } },
         tooltip: {
           backgroundColor: '#0c1820',
-          borderColor: '#1c3040',
+          borderColor: '#dde4ed',
           borderWidth: 1,
           callbacks: {
             title: (items) => items?.[0]?.raw?.x || '',
@@ -276,10 +276,10 @@ function buildFarmChart() {
         },
       },
       scales: {
-        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#5a7a8c' }, grid: { color: '#1c3040' } },
-        y: { min: 1, max: 5, ticks: { color: '#7a9aae' }, grid: { color: '#1c3040' }, title: { display: true, text: 'ECC médio' } },
-        y1: { position: 'right', min: 0, ticks: { color: '#7a9aae' }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Desvio padrão' } },
-        y2: { position: 'right', min: 0, ticks: { color: '#5a7a8c', display: false }, grid: { drawOnChartArea: false }, display: false },
+        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#5a6f82' }, grid: { color: '#dde4ed' } },
+        y: { min: 1, max: 5, ticks: { color: '#5a6f82' }, grid: { color: '#dde4ed' }, title: { display: true, text: 'ECC médio' } },
+        y1: { position: 'right', min: 0, ticks: { color: '#5a6f82' }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Desvio padrão' } },
+        y2: { position: 'right', min: 0, ticks: { color: '#5a6f82', display: false }, grid: { drawOnChartArea: false }, display: false },
       },
     },
   });
@@ -309,7 +309,7 @@ function buildAnimalChart() {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { labels: { color: '#7a9aae', font: { family: 'JetBrains Mono', size: 10 } } },
+        legend: { labels: { color: '#5a6f82', font: { family: 'JetBrains Mono', size: 10 } } },
         tooltip: {
           callbacks: {
             title: (items) => items?.[0]?.raw?.x || '',
@@ -318,8 +318,8 @@ function buildAnimalChart() {
         },
       },
       scales: {
-        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#5a7a8c' }, grid: { color: '#1c3040' } },
-        y: { min: 1, max: 5, ticks: { color: '#7a9aae', stepSize: 0.25 }, grid: { color: '#1c3040' } },
+        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#5a6f82' }, grid: { color: '#dde4ed' } },
+        y: { min: 1, max: 5, ticks: { color: '#5a6f82', stepSize: 0.25 }, grid: { color: '#dde4ed' } },
       },
     },
   });

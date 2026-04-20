@@ -5,7 +5,8 @@
 <style>
 .role-grid { display: grid; gap: 14px; }
 .role-card {
-  background: var(--surf2);
+  background: var(--surf);
+  box-shadow: var(--shadow-sm);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px 18px;
@@ -15,7 +16,7 @@
   align-items: start;
 }
 @media (max-width: 720px) { .role-card { grid-template-columns: 1fr; } }
-.role-title { font-weight: 700; font-size: 14px; color: #fff; margin-bottom: 4px; }
+.role-title { font-weight: 700; font-size: 14px; color: var(--primary); margin-bottom: 4px; }
 .role-meta { font-size: 11px; font-family: var(--mono); color: var(--text2); line-height: 1.45; word-break: break-all; }
 .badge-src {
   font-size: 9px; font-weight: 700; padding: 3px 8px; border-radius: 6px; font-family: var(--mono);

@@ -4,18 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Login — Attentus</title>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #070d14; --surf: #0c1820; --border: #1c3040;
-  --accent: #00e5a0; --accent2: #0099ff;
-  --text: #cce4f0; --muted: #3d5f72;
-  --err: #ff4d6a;
+  --bg: #eef2f7; --surf: #ffffff; --border: #d8e0eb;
+  --primary: #1a4a8c; --accent2: #1a6fd4; --accent: #0d7a5e;
+  --text: #1a2f45; --muted: #7a8fa0;
+  --err: #c62841;
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   background: var(--bg); color: var(--text);
-  font-family: 'Syne', sans-serif;
+  font-family: 'Inter', 'Syne', system-ui, sans-serif;
   min-height: 100vh; display: flex;
   align-items: center; justify-content: center;
   padding: 20px;
@@ -23,8 +23,8 @@ body {
 body::before {
   content: ''; position: fixed; inset: 0; pointer-events: none;
   background:
-    radial-gradient(ellipse 80% 60% at 50% 0%, rgba(0,229,160,.06) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 50% at 90% 100%, rgba(0,153,255,.05) 0%, transparent 60%);
+    radial-gradient(ellipse 80% 60% at 50% 0%, rgba(26, 111, 212, 0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 90% 100%, rgba(13, 122, 94, 0.06) 0%, transparent 60%);
 }
 .container {
   position: relative; z-index: 1;
@@ -33,12 +33,13 @@ body::before {
   border-radius: 16px;
   padding: 40px 36px;
   width: 100%; max-width: 380px;
+  box-shadow: 0 2px 14px rgba(22, 55, 96, 0.08);
 }
 .logo { text-align: center; margin-bottom: 32px; }
 .logo-word {
-  font-weight: 800; font-size: 28px; letter-spacing: -1px; color: #fff;
+  font-weight: 800; font-size: 28px; letter-spacing: -1px; color: var(--primary);
 }
-.logo-word em { color: var(--accent); font-style: normal; }
+.logo-word em { color: var(--accent2); font-style: normal; }
 .logo-sub {
   font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
   color: var(--muted); margin-top: 4px;
@@ -46,7 +47,7 @@ body::before {
 }
 .divider {
   width: 40px; height: 2px;
-  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  background: linear-gradient(90deg, var(--accent2), var(--accent));
   border-radius: 2px; margin: 0 auto 28px;
 }
 .field { margin-bottom: 16px; }
@@ -59,11 +60,11 @@ body::before {
 .field input {
   width: 100%; padding: 12px 14px;
   border-radius: 9px; border: 1px solid var(--border);
-  background: #060c12; color: var(--text);
+  background: #fafbfc; color: var(--text);
   font-family: 'JetBrains Mono', monospace; font-size: 14px;
-  outline: 0; transition: border-color .2s;
+  outline: 0; transition: border-color .2s, box-shadow .2s;
 }
-.field input:focus { border-color: var(--accent); }
+.field input:focus { border-color: var(--accent2); box-shadow: 0 0 0 3px rgba(26, 111, 212, 0.12); }
 .error-msg {
   background: rgba(255,77,106,.12);
   border: 1px solid rgba(255,77,106,.3);
@@ -74,9 +75,9 @@ body::before {
 button[type=submit] {
   width: 100%; padding: 14px;
   border-radius: 10px; border: 0;
-  background: linear-gradient(135deg, var(--accent), #00b380);
-  color: #060c12; font-family: 'Syne', sans-serif;
-  font-size: 15px; font-weight: 800; cursor: pointer;
+  background: linear-gradient(135deg, var(--accent2), #1558a8);
+  color: #fff; font-family: 'Inter', 'Syne', sans-serif;
+  font-size: 15px; font-weight: 700; cursor: pointer;
   margin-top: 8px; letter-spacing: .5px;
   transition: filter .2s;
 }

@@ -1454,6 +1454,7 @@ def ecc_importar():
         records=records, farms=farms, animals=animals,
         farm_filter=farm_filter, animal_filter=animal_filter, q_filter=q,
         stats=stats,
+        ecc_today_iso=datetime.now(TZ_BR).date().isoformat(),
     )
 
 

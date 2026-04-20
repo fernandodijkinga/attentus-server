@@ -13,7 +13,7 @@
 .chart-empty-ecc { min-height: 300px; display: flex; align-items: center; justify-content: center; color: var(--text2); font-family: var(--mono); font-size: 12px; border: 1px dashed var(--border); border-radius: 10px; }
 .ecc-animal-viewer { display:grid; grid-template-columns: 1.35fr .9fr; gap:16px; margin-bottom:16px; }
 .ecc-photo-card,.ecc-score-card { background:var(--surf); border:1px solid var(--border); border-radius:var(--radius); padding:14px; }
-.ecc-photo-wrap { width:100%; height:min(56vh,520px); border:1px solid var(--border); border-radius:12px; background:#09161f; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+.ecc-photo-wrap { width:100%; height:min(56vh,520px); border:1px solid var(--border); border-radius:12px; background:var(--surf2); display:flex; align-items:center; justify-content:center; overflow:hidden; }
 .ecc-photo-wrap img { width:100%; height:100%; object-fit:contain; cursor:zoom-in; }
 .ecc-photo-empty { color:var(--text2); font-family:var(--mono); font-size:12px; }
 .ecc-carousel-controls { margin-top:10px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
@@ -239,7 +239,7 @@ function buildAnimalChart() {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { labels: { color: '#7a9aae', font: { family: 'JetBrains Mono', size: 10 } } },
+        legend: { labels: { color: '#5a6f82', font: { family: 'JetBrains Mono', size: 10 } } },
         tooltip: {
           callbacks: {
             title: (items) => items[0]?.label || '',
@@ -256,14 +256,14 @@ function buildAnimalChart() {
       scales: {
         x: {
           type: 'category',
-          ticks: { color: '#5a7a8c', maxRotation: 40, minRotation: 0, maxTicksLimit: 24 },
-          grid: { color: '#1c3040' },
+          ticks: { color: '#5a6f82', maxRotation: 40, minRotation: 0, maxTicksLimit: 24 },
+          grid: { color: '#dde4ed' },
         },
         y: {
           min: 1,
           max: 5,
-          ticks: { color: '#7a9aae', stepSize: 0.25 },
-          grid: { color: '#1c3040' },
+          ticks: { color: '#5a6f82', stepSize: 0.25 },
+          grid: { color: '#dde4ed' },
         },
       },
     },

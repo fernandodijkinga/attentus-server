@@ -20,7 +20,7 @@
 }
 .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media(max-width:900px) { .chart-grid { grid-template-columns: 1fr; } }
-.chart-card { background: var(--surf); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+.chart-card { background: var(--surf); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow-sm); }
 .chart-card canvas { display: block; width: 100% !important; height: 200px !important; }
 .chart-heading {
   font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
@@ -36,7 +36,7 @@
   grid-column: 1/-1;
 }
 .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--border);
-           border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite;
+           border-top-color: var(--accent2); border-radius: 50%; animation: spin .6s linear infinite;
            margin-right: 10px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .full-chart { grid-column: 1 / -1; }
@@ -44,9 +44,9 @@
 .thi-card {
   padding: 0;
   overflow: hidden;
-  border: 1px solid rgba(0, 229, 160, 0.22);
-  background: linear-gradient(165deg, rgba(0, 229, 160, 0.06) 0%, var(--surf) 42%);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--border);
+  background: linear-gradient(165deg, rgba(26, 111, 212, 0.06) 0%, var(--surf) 48%);
+  box-shadow: var(--shadow-sm);
 }
 .thi-shell { display: flex; flex-direction: column; gap: 0; }
 .thi-header {
@@ -61,7 +61,7 @@
   filter: drop-shadow(0 2px 8px rgba(0, 229, 160, 0.25));
 }
 .thi-title {
-  margin: 0; font-size: 17px; font-weight: 800; letter-spacing: -0.3px; color: #fff;
+  margin: 0; font-size: 17px; font-weight: 800; letter-spacing: -0.3px; color: var(--primary);
   font-family: var(--sans);
 }
 .thi-caption {
@@ -83,8 +83,8 @@
   cursor: pointer;
 }
 .thi-select:focus {
-  outline: none; border-color: rgba(0, 229, 160, 0.45);
-  box-shadow: 0 0 0 2px rgba(0, 229, 160, 0.12);
+  outline: none; border-color: rgba(26, 111, 212, 0.45);
+  box-shadow: 0 0 0 2px rgba(26, 111, 212, 0.12);
 }
 .thi-chart-wrap {
   position: relative;
@@ -118,7 +118,7 @@
   display: flex; flex-wrap: wrap; align-items: stretch; gap: 14px;
   padding: 14px 20px 18px;
   border-top: 1px solid var(--border);
-  background: rgba(7, 13, 20, 0.35);
+  background: var(--surf2);
 }
 .thi-kpi-grid {
   display: flex; flex-wrap: wrap; gap: 10px; flex: 1; min-width: 200px;
@@ -134,19 +134,19 @@
   color: var(--muted); font-family: var(--mono); margin-bottom: 4px;
 }
 .thi-kpi .v {
-  font-family: var(--mono); font-size: 18px; font-weight: 700; color: var(--accent);
+  font-family: var(--mono); font-size: 18px; font-weight: 700; color: var(--accent2);
 }
 .thi-last {
   flex: 1; min-width: 220px; max-width: 420px;
   padding: 12px 14px; border-radius: 8px;
-  border: 1px solid rgba(0, 229, 160, 0.2);
-  background: rgba(0, 229, 160, 0.05);
+  border: 1px solid rgba(26, 111, 212, 0.2);
+  background: rgba(26, 111, 212, 0.06);
   font-size: 12px; color: var(--text2); line-height: 1.5;
   align-self: center;
 }
-.thi-last b { color: #fff; font-family: var(--mono); }
+.thi-last b { color: var(--primary); font-family: var(--mono); }
 .badge-thi { font-weight: 700; padding: 3px 10px; border-radius: 6px; font-size: 11px; font-family: var(--mono); margin-left: 6px; }
-.badge-thi.normal { background: rgba(0, 229, 160, 0.15); color: var(--accent); border: 1px solid rgba(0, 229, 160, 0.25); }
+.badge-thi.normal { background: rgba(13, 122, 94, 0.12); color: var(--accent); border: 1px solid rgba(13, 122, 94, 0.22); }
 .badge-thi.alert { background: rgba(255, 224, 102, 0.12); color: var(--warn); border: 1px solid rgba(255, 224, 102, 0.22); }
 .badge-thi.stress { background: rgba(255, 77, 106, 0.12); color: var(--err); border: 1px solid rgba(255, 77, 106, 0.22); }
 .thi-last-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -157,7 +157,7 @@
   gap: 14px;
   padding: 0 16px 18px;
   border-top: 1px solid var(--border);
-  background: rgba(7, 13, 20, 0.25);
+  background: var(--surf2);
 }
 @media (max-width: 960px) { .thi-heatmaps { grid-template-columns: 1fr; } }
 .thi-heatmap-card {
@@ -178,7 +178,7 @@
   overflow-x: auto;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: #070d14;
+  background: #f0f4f9;
 }
 .thi-hm-canvas-wrap canvas { display: block; max-width: 100%; height: auto !important; }
 .thi-hm-scale {
@@ -359,20 +359,20 @@ const CHART_DEFAULTS = {
   interaction: { mode: 'index', intersect: false },
   plugins: {
     legend: { display: false },
-    tooltip: { backgroundColor:'#0c1820', borderColor:'#1c3040', borderWidth:1,
-               titleColor:'#7a9aae', bodyColor:'#cce4f0',
+    tooltip: { backgroundColor:'#ffffff', borderColor:'#d8e0eb', borderWidth:1,
+               titleColor:'#5a6f82', bodyColor:'#1a2f45',
                titleFont:{family:'JetBrains Mono',size:10}, bodyFont:{family:'JetBrains Mono',size:11} }
   },
   scales: {
     x: {
       type: 'time',
       time: { tooltipFormat: 'dd/MM HH:mm', displayFormats:{hour:'HH:mm',day:'dd/MM'} },
-      ticks: { color:'#3d5f72', font:{family:'JetBrains Mono',size:9}, maxTicksLimit:8 },
-      grid: { color:'#1c3040' }
+      ticks: { color:'#5a6f82', font:{family:'JetBrains Mono',size:9}, maxTicksLimit:8 },
+      grid: { color:'#dde4ed' }
     },
     y: {
-      ticks: { color:'#7a9aae', font:{family:'JetBrains Mono',size:10} },
-      grid: { color:'#1c3040' }
+      ticks: { color:'#5a6f82', font:{family:'JetBrains Mono',size:10} },
+      grid: { color:'#dde4ed' }
     }
   }
 };
@@ -517,7 +517,7 @@ function drawThiTrendHeatmap(thiWeek) {
   canvas.height = Math.floor(H * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  ctx.fillStyle = '#070d14';
+  ctx.fillStyle = '#f0f4f9';
   ctx.fillRect(0, 0, W, H);
 
   for (let r = 0; r < rows; r++) {
@@ -531,7 +531,7 @@ function drawThiTrendHeatmap(thiWeek) {
   }
 
   ctx.font = '10px JetBrains Mono, ui-monospace, monospace';
-  ctx.fillStyle = '#7a9aae';
+  ctx.fillStyle = '#5a6f82';
   for (let r = 0; r < rows; r++) {
     ctx.fillText(days[r].slice(5), 4, padT + r * ch + Math.floor(ch / 2) + 4);
   }
@@ -636,12 +636,12 @@ function buildThiChart(data) {
     if (row.humidity != null) t += ` · ${row.humidity}% UR`;
     return t;
   };
-  cfg.scales.y.grid = { color: 'rgba(28, 48, 64, 0.55)' };
-  cfg.scales.x.grid = { color: 'rgba(28, 48, 64, 0.45)' };
+  cfg.scales.y.grid = { color: '#dde4ed' };
+  cfg.scales.x.grid = { color: '#dde4ed' };
   cfg.scales.y.title = {
     display: true,
     text: 'Índice THI',
-    color: '#5a7a8c',
+    color: '#5a6f82',
     font: { family: 'JetBrains Mono', size: 10 },
   };
   cfg.animation = { duration: 450 };
@@ -667,7 +667,7 @@ function buildThiChart(data) {
         pointRadius: data.length < 120 ? 3 : 0,
         pointHoverRadius: 5,
         pointBackgroundColor: COLORS.thi.line,
-        pointBorderColor: '#070d14',
+        pointBorderColor: '#ffffff',
         pointBorderWidth: 1,
         tension: 0.35,
         fill: false,

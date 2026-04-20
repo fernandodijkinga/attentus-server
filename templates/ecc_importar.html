@@ -14,7 +14,7 @@
 .flash-bar.error { background: rgba(255,77,106,.12); border: 1px solid rgba(255,77,106,.28); color: var(--err); }
 .thumb { width: 72px; height: 54px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; }
 .batch-progress { margin-top: 10px; border:1px solid var(--border); border-radius:8px; padding:10px; display:none; }
-.batch-progress-bar { width:100%; height:10px; border-radius:999px; background:#122535; border:1px solid #1e3950; overflow:hidden; margin:6px 0; }
+.batch-progress-bar { width:100%; height:10px; border-radius:999px; background:var(--surf3); border:1px solid var(--border); overflow:hidden; margin:6px 0; }
 .batch-progress-fill { height:100%; width:0%; background:linear-gradient(90deg,#00e5a0,#00b9ff); transition:width .2s ease; }
 .batch-progress-meta { display:flex; justify-content:space-between; gap:10px; font-family:var(--mono); font-size:11px; color:var(--text2); }
 </style>
@@ -45,16 +45,16 @@
   <div class="form-card">
     <div class="card-title">Upload único / Mobile</div>
     <p class="form-sub">Pipeline fixo ECC posterior. Informe fazenda, data da inferência e brinco.</p>
-    <form method="post" enctype="multipart/form-data" action="{{ url_for('ecc_importar') }}">
+    <form id="ecc-form-single" method="post" enctype="multipart/form-data" action="{{ url_for('ecc_importar') }}">
       <input type="hidden" name="mode" value="single">
       <div class="row-2">
         <div class="field">
           <label>Fazenda</label>
-          <input name="farm_id" required placeholder="fazenda-001">
+          <input id="ecc-farm-single" name="farm_id" required placeholder="fazenda-001" autocomplete="organization">
         </div>
         <div class="field">
           <label>Data da inferência</label>
-          <input type="date" name="inference_date" required>
+          <input id="ecc-date-single" type="date" name="inference_date" required value="{{ ecc_today_iso }}">
         </div>
       </div>
       <div class="field">
@@ -77,7 +77,7 @@
       <div class="row-2">
         <div class="field">
           <label>Fazenda</label>
-          <input name="farm_id_batch" required placeholder="fazenda-001">
+          <input id="ecc-farm-batch" name="farm_id_batch" required placeholder="fazenda-001" autocomplete="organization">
         </div>
         <div class="field">
           <label>Data da inferência (lote)</label>
@@ -194,11 +194,47 @@ async function runSequentialBatchUpload() {
 
     status.textContent = 'Lote concluído';
     result.textContent = `Sucesso: ${ok} · Erros: ${err}${errors.length ? ' · ' + errors.slice(0, 3).join(' | ') : ''}`;
+    try {
+      if (farmId) localStorage.setItem('ecc_last_farm_id', farmId);
+    } catch (e) { /* ignore */ }
     submitBtn.disabled = false;
     filesInput.disabled = false;
     setTimeout(() => { window.location.reload(); }, 900);
   });
 }
 runSequentialBatchUpload();
+
+(function initEccImportPrefs() {
+  const LS_FARM = 'ecc_last_farm_id';
+  const farmSingle = document.getElementById('ecc-farm-single');
+  const farmBatch = document.getElementById('ecc-farm-batch');
+  const dateSingle = document.getElementById('ecc-date-single');
+  const saved = (localStorage.getItem(LS_FARM) || '').trim();
+  if (saved) {
+    if (farmSingle && !farmSingle.value.trim()) farmSingle.value = saved;
+    if (farmBatch && !farmBatch.value.trim()) farmBatch.value = saved;
+  }
+  function persistFarm(el) {
+    const t = (el && el.value) ? el.value.trim() : '';
+    if (t) localStorage.setItem(LS_FARM, t);
+  }
+  [farmSingle, farmBatch].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('change', () => persistFarm(el));
+    el.addEventListener('blur', () => persistFarm(el));
+  });
+  document.getElementById('ecc-form-single')?.addEventListener('submit', () => {
+    persistFarm(farmSingle);
+  });
+  const batchForm = document.getElementById('ecc-batch-form');
+  batchForm?.addEventListener('submit', () => {
+    persistFarm(farmBatch);
+  });
+  if (dateSingle && !dateSingle.value) {
+    const d = new Date();
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    dateSingle.value = iso;
+  }
+})();
 </script>
 {% endblock %}
