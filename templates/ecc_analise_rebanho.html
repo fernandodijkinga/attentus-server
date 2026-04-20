@@ -3,7 +3,6 @@
 
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <style>
 .chart-card-ecc { background: var(--surf); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
 .chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -104,13 +103,21 @@ const FARM_SERIES = {{ farm_series | tojson }};
 const FARM_RECORDS = {{ farm_records | tojson }};
 const ECC_COLORS = ['#00e5a0', '#0099ff', '#ff9f40', '#cc66ff', '#ff4d6a', '#7dd3fc', '#a3e635'];
 
-function parseEccDay(d) {
-  if (d == null || d === '') return null;
+/** Eixo X = datas YYYY-MM-DD (ordem lexicográfica = ordem temporal). */
+function normDay(d) {
+  if (d == null || d === '') return '';
   const s = String(d).trim();
-  if (!s) return null;
-  if (s.length <= 10 && /^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(`${s}T12:00:00`);
-  const t = Date.parse(s);
-  return Number.isFinite(t) ? new Date(t) : null;
+  if (s.length >= 10) return s.slice(0, 10);
+  return s;
+}
+
+function uniqueSortedLabelsFromSeries(rows) {
+  const s = new Set();
+  (rows || []).forEach((r) => {
+    const d = normDay(r.date);
+    if (d) s.add(d);
+  });
+  return [...s].sort();
 }
 
 function groupedFarmSeries(rows) {
@@ -123,11 +130,22 @@ function groupedFarmSeries(rows) {
   Object.keys(out).forEach((k) => out[k].sort((a, b) => String(a.date).localeCompare(String(b.date))));
   return out;
 }
+
+function rowMapByDay(rows) {
+  const m = {};
+  (rows || []).forEach((r) => {
+    const d = normDay(r.date);
+    if (d) m[d] = r;
+  });
+  return m;
+}
+
 function buildFarmChart() {
   const c = document.getElementById('ch-farm'); if (!c) return;
   const ctx = c.getContext('2d');
+  const labels = uniqueSortedLabelsFromSeries(FARM_SERIES);
   const byFarm = groupedFarmSeries(FARM_SERIES);
-  if (!Object.keys(byFarm).length) {
+  if (!labels.length || !Object.keys(byFarm).length) {
     const p = document.createElement('div');
     p.className = 'chart-empty-ecc';
     p.textContent = 'Sem dados para o período/filtro selecionado.';
@@ -135,32 +153,71 @@ function buildFarmChart() {
     return;
   }
   const hasMean = (FARM_SERIES || []).some((r) => r && r.mean != null && Number.isFinite(Number(r.mean)));
-  const datasets = [];
+  const dsFirst = [];
+  const dsLine = [];
   let i = 0;
   Object.entries(byFarm).forEach(([farm, rows]) => {
     const color = ECC_COLORS[i % ECC_COLORS.length]; i += 1;
-    const meanPts = rows
-      .filter((r) => r.mean != null && Number.isFinite(Number(r.mean)))
-      .map((r) => ({ x: parseEccDay(r.date), y: Number(r.mean), n: r.n_animals, nrec: r.n_records }))
-      .filter((p) => p.x);
-    const stdPts = rows
-      .filter((r) => r.std != null && Number.isFinite(Number(r.std)))
-      .map((r) => ({ x: parseEccDay(r.date), y: Number(r.std), n: r.n_animals, nrec: r.n_records }))
-      .filter((p) => p.x);
-    const barPts = rows.map((r) => {
-      const vol = (r.n_animals > 0 ? r.n_animals : r.n_records) || 0;
-      return { x: parseEccDay(r.date), y: Number(vol) };
-    }).filter((p) => p.x);
-    if (meanPts.length) {
-      datasets.push({ type: 'line', label: `${farm} · média`, data: meanPts, parsing: false, borderColor: color, backgroundColor: color, tension: 0.3, borderWidth: 2.2, pointRadius: 2.5, yAxisID: 'y' });
+    const m = rowMapByDay(rows);
+    const meanData = labels.map((d) => {
+      const r = m[d];
+      if (!r || r.mean == null || !Number.isFinite(Number(r.mean))) return null;
+      return Number(r.mean);
+    });
+    const stdData = labels.map((d) => {
+      const r = m[d];
+      if (!r || r.std == null || !Number.isFinite(Number(r.std))) return null;
+      return Number(r.std);
+    });
+    const barData = labels.map((d) => {
+      const r = m[d];
+      if (!r) return null;
+      return Number((r.n_animals > 0 ? r.n_animals : r.n_records) || 0);
+    });
+    if (barData.some((v) => v != null && v > 0)) {
+      dsFirst.push({
+        type: 'bar',
+        label: `${farm} · volume (anim./reg.)`,
+        data: barData,
+        backgroundColor: color + '33',
+        borderColor: color + '99',
+        borderWidth: 1,
+        yAxisID: 'y2',
+        maxBarThickness: 12,
+        order: 0,
+      });
     }
-    if (stdPts.length) {
-      datasets.push({ type: 'line', label: `${farm} · desvio padrão`, data: stdPts, parsing: false, borderColor: color + 'AA', borderDash: [5, 4], pointRadius: 0, borderWidth: 1.4, yAxisID: 'y1' });
+    if (meanData.some((v) => v != null)) {
+      dsLine.push({
+        type: 'line',
+        label: `${farm} · média ECC`,
+        data: meanData,
+        borderColor: color,
+        backgroundColor: color,
+        tension: 0.25,
+        borderWidth: 2.2,
+        pointRadius: 3,
+        spanGaps: true,
+        yAxisID: 'y',
+        order: 1,
+      });
     }
-    if (barPts.length) {
-      datasets.push({ type: 'bar', label: `${farm} · volume (animais ou registros)`, data: barPts, parsing: false, backgroundColor: color + '33', borderColor: color + '66', borderWidth: 1, yAxisID: 'y2', maxBarThickness: 14 });
+    if (stdData.some((v) => v != null)) {
+      dsLine.push({
+        type: 'line',
+        label: `${farm} · desv. padrão`,
+        data: stdData,
+        borderColor: color + 'CC',
+        borderDash: [5, 4],
+        pointRadius: 0,
+        borderWidth: 1.5,
+        spanGaps: true,
+        yAxisID: 'y1',
+        order: 2,
+      });
     }
   });
+  const datasets = [...dsFirst, ...dsLine];
   if (!datasets.length) {
     const p = document.createElement('div');
     p.className = 'chart-empty-ecc';
@@ -170,27 +227,40 @@ function buildFarmChart() {
   }
   new Chart(ctx, {
     type: 'bar',
-    data: { datasets },
+    data: { labels, datasets },
     options: {
-      responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: false },
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
       plugins: { legend: { labels: { color: '#7a9aae', font: { family: 'JetBrains Mono', size: 10 } } } },
       scales: {
-        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#5a7a8c' }, grid: { color: '#1c3040' } },
+        x: {
+          type: 'category',
+          ticks: { color: '#5a7a8c', maxRotation: 40, minRotation: 0, autoSkip: true, maxTicksLimit: 20 },
+          grid: { color: '#1c3040' },
+        },
         y: {
           display: hasMean,
-          min: 1, max: 5, ticks: { color: '#7a9aae' }, grid: { color: '#1c3040' },
+          min: 1,
+          max: 5,
+          ticks: { color: '#7a9aae' },
+          grid: { color: '#1c3040' },
           title: { display: true, text: 'ECC médio' },
         },
         y1: {
           display: hasMean,
-          position: 'right', min: 0, ticks: { color: '#7a9aae' }, grid: { drawOnChartArea: false },
+          position: 'right',
+          min: 0,
+          suggestedMax: 1.2,
+          ticks: { color: '#7a9aae' },
+          grid: { drawOnChartArea: false },
           title: { display: true, text: 'Desvio padrão' },
         },
         y2: {
           position: 'right',
           min: 0,
           suggestedMax: 8,
-          ticks: { color: '#7a9aae', display: true },
+          ticks: { color: '#7a9aae' },
           grid: { drawOnChartArea: false },
           title: { display: true, text: hasMean ? '# animais / registros' : '# por dia' },
         },
@@ -203,39 +273,54 @@ buildFarmChart();
 function buildFarmVolumeChart() {
   const c = document.getElementById('ch-farm-volume'); if (!c) return;
   const ctx = c.getContext('2d');
+  const labels = uniqueSortedLabelsFromSeries(FARM_SERIES);
   const byFarm = groupedFarmSeries(FARM_SERIES);
   const farms = Object.keys(byFarm);
-  if (!farms.length) {
+  if (!labels.length || !farms.length) {
     const p = document.createElement('div');
     p.className = 'chart-empty-ecc';
     p.textContent = 'Sem dados para volume diário.';
     c.replaceWith(p);
     return;
   }
-  const datasets = farms.map((farm, i) => ({
-    type: 'bar',
-    label: farm,
-    data: (byFarm[farm] || [])
-      .map((r) => {
-        const vol = (r.n_animals > 0 ? r.n_animals : r.n_records) || 0;
-        return { x: parseEccDay(r.date), y: Number(vol) };
-      })
-      .filter((p) => p.x),
-    parsing: false,
-    backgroundColor: (ECC_COLORS[i % ECC_COLORS.length] + '66'),
-    borderColor: (ECC_COLORS[i % ECC_COLORS.length] + 'cc'),
-    borderWidth: 1.2,
-    maxBarThickness: 16,
-  }));
+  const datasets = farms.map((farm, j) => {
+    const m = rowMapByDay(byFarm[farm]);
+    const data = labels.map((d) => {
+      const r = m[d];
+      if (!r) return null;
+      return Number((r.n_animals > 0 ? r.n_animals : r.n_records) || 0);
+    });
+    const color = ECC_COLORS[j % ECC_COLORS.length];
+    return {
+      type: 'bar',
+      label: farm,
+      data,
+      backgroundColor: color + '66',
+      borderColor: color + 'cc',
+      borderWidth: 1.2,
+      maxBarThickness: 18,
+    };
+  });
   new Chart(ctx, {
     type: 'bar',
-    data: { datasets },
+    data: { labels, datasets },
     options: {
-      responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: false },
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
       plugins: { legend: { labels: { color: '#7a9aae', font: { family: 'JetBrains Mono', size: 10 } } } },
       scales: {
-        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#5a7a8c' }, grid: { color: '#1c3040' }, stacked: false },
-        y: { min: 0, ticks: { color: '#7a9aae' }, grid: { color: '#1c3040' }, stacked: false, title: { display: true, text: '# animais ou registros / dia' } },
+        x: {
+          type: 'category',
+          ticks: { color: '#5a7a8c', maxRotation: 40, minRotation: 0, maxTicksLimit: 20 },
+          grid: { color: '#1c3040' },
+        },
+        y: {
+          min: 0,
+          ticks: { color: '#7a9aae' },
+          grid: { color: '#1c3040' },
+          title: { display: true, text: '# animais ou registros / dia' },
+        },
       },
     },
   });

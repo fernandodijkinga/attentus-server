@@ -3,13 +3,14 @@
 
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <style>
 .chart-card-ecc { background: var(--surf); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
 .chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .chart-title { font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
 .chart-sub { font-size: 11px; color: var(--text2); font-family: var(--mono); }
-.chart-card-ecc canvas { width: 100% !important; height: 300px !important; }
+.chart-canvas-wrap { position: relative; height: 300px; width: 100%; }
+.chart-canvas-wrap canvas { display: block; width: 100% !important; height: 100% !important; }
+.chart-empty-ecc { min-height: 300px; display: flex; align-items: center; justify-content: center; color: var(--text2); font-family: var(--mono); font-size: 12px; border: 1px dashed var(--border); border-radius: 10px; }
 .ecc-animal-viewer { display:grid; grid-template-columns: 1.35fr .9fr; gap:16px; margin-bottom:16px; }
 .ecc-photo-card,.ecc-score-card { background:var(--surf); border:1px solid var(--border); border-radius:var(--radius); padding:14px; }
 .ecc-photo-wrap { width:100%; height:min(56vh,520px); border:1px solid var(--border); border-radius:12px; background:#09161f; display:flex; align-items:center; justify-content:center; overflow:hidden; }
@@ -83,7 +84,7 @@
     <div class="chart-title">Evolução do escore por animal</div>
     <div class="chart-sub">{{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
   </div>
-  <canvas id="ch-animal"></canvas>
+  <div class="chart-canvas-wrap" id="ch-animal-wrap"><canvas id="ch-animal"></canvas></div>
 </div>
 
 <div class="ecc-animal-viewer">
@@ -159,6 +160,30 @@
 <script>
 const ANIMAL_POINTS = {{ animal_points | tojson }};
 const ANIMAL_IMAGES = {{ animal_images | tojson }};
+function normInfDay(d) {
+  if (d == null || d === '') return '';
+  const s = String(d).trim();
+  if (s.length >= 10) return s.slice(0, 10);
+  return s;
+}
+
+/** Uma curva por dia: em várias fotos no mesmo dia, fica a de maior `id` (mais recente). */
+function buildIndividualTimeSeries(points) {
+  const arr = [...(points || [])].sort((a, b) => {
+    const da = String(a.inference_date || '').localeCompare(String(b.inference_date || ''));
+    if (da !== 0) return da;
+    return (Number(a.id) || 0) - (Number(b.id) || 0);
+  });
+  const byDay = new Map();
+  arr.forEach((p) => {
+    const d = normInfDay(p.inference_date);
+    if (d) byDay.set(d, p);
+  });
+  const labels = [...byDay.keys()].sort();
+  const rowAt = labels.map((d) => byDay.get(d));
+  return { labels, rowAt };
+}
+
 const ECC_LABELS = {
   '1.00': 'Caquética',
   '1.25': 'Muito magra crítica',
@@ -179,26 +204,67 @@ const ECC_LABELS = {
   '5.00': 'Obesa severa',
 };
 function buildAnimalChart() {
-  const c = document.getElementById('ch-animal'); if (!c) return;
+  const wrap = document.getElementById('ch-animal-wrap');
+  const c = document.getElementById('ch-animal');
+  if (!c) return;
+  const { labels, rowAt } = buildIndividualTimeSeries(ANIMAL_POINTS);
+  if (!labels.length) {
+    if (wrap) {
+      wrap.innerHTML = '<div class="chart-empty-ecc">Sem evolução ECC: selecione fazenda e brinco com registo, ou ainda sem pontos com escore.</div>';
+    }
+    return;
+  }
   const ctx = c.getContext('2d');
-  const ds = (ANIMAL_POINTS || []).map((r) => ({ x:r.inference_date, y:r.ecc_score, raw:r.raw_score }));
+  const data = rowAt.map((p) => (p && p.ecc_score != null && Number.isFinite(Number(p.ecc_score)) ? Number(p.ecc_score) : null));
   new Chart(ctx, {
-    type:'line',
-    data:{datasets:[{
-      label:'ECC (1-5, passo 0.25)', data:ds, parsing:false,
-      borderColor:'#00e5a0', backgroundColor:'rgba(0,229,160,.18)', borderWidth:2.4, pointRadius:3, tension:.25, fill:true,
-    }]},
-    options:{
-      responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{labels:{color:'#7a9aae',font:{family:'JetBrains Mono',size:10}}},
-        tooltip:{callbacks:{
-          title:(items)=>items?.[0]?.raw?.x || '',
-          label:(ctx)=>`ECC: ${Number(ctx.raw?.y).toFixed(2)} · raw: ${ctx.raw?.raw != null ? Number(ctx.raw.raw).toFixed(4) : '—'}`,
-        }},
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'ECC (1-5, passo 0.25)',
+          data,
+          borderColor: '#00e5a0',
+          backgroundColor: 'rgba(0,229,160,.18)',
+          borderWidth: 2.4,
+          pointRadius: 4,
+          tension: 0.2,
+          fill: true,
+          spanGaps: true,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#7a9aae', font: { family: 'JetBrains Mono', size: 10 } } },
+        tooltip: {
+          callbacks: {
+            title: (items) => items[0]?.label || '',
+            label: (ctx) => {
+              const p = rowAt[ctx.dataIndex];
+              if (!p) return '—';
+              const e = p.ecc_score != null && Number.isFinite(Number(p.ecc_score)) ? Number(p.ecc_score) : null;
+              const r = p.raw_score != null && Number.isFinite(Number(p.raw_score)) ? Number(p.raw_score) : null;
+              return `ECC: ${e != null ? e.toFixed(2) : '—'} · raw: ${r != null ? r.toFixed(4) : '—'}`;
+            },
+          },
+        },
       },
-      scales:{
-        x:{type:'time',time:{unit:'day'},ticks:{color:'#5a7a8c'},grid:{color:'#1c3040'}},
-        y:{min:1,max:5,ticks:{color:'#7a9aae',stepSize:0.25},grid:{color:'#1c3040'}},
+      scales: {
+        x: {
+          type: 'category',
+          ticks: { color: '#5a7a8c', maxRotation: 40, minRotation: 0, maxTicksLimit: 24 },
+          grid: { color: '#1c3040' },
+        },
+        y: {
+          min: 1,
+          max: 5,
+          ticks: { color: '#7a9aae', stepSize: 0.25 },
+          grid: { color: '#1c3040' },
+        },
       },
     },
   });

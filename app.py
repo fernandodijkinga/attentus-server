@@ -1523,7 +1523,7 @@ def ecc_analise_individual():
     if selected_farm and selected_animal:
         ar = db.execute(
             """
-            SELECT inference_date, ecc_score, raw_score, trait_name
+            SELECT id, inference_date, ecc_score, raw_score, trait_name
             FROM ecc_bcs_records
             WHERE farm_id = ? AND animal_tag = ? AND ecc_score IS NOT NULL
             ORDER BY inference_date ASC, id ASC
