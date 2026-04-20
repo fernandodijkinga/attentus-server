@@ -10,6 +10,22 @@
 .chart-title { font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
 .chart-sub { font-size: 11px; color: var(--text2); font-family: var(--mono); }
 .chart-card-ecc canvas { width: 100% !important; height: 300px !important; }
+.ecc-animal-viewer { display:grid; grid-template-columns: 1.35fr .9fr; gap:16px; margin-bottom:16px; }
+.ecc-photo-card,.ecc-score-card { background:var(--surf); border:1px solid var(--border); border-radius:var(--radius); padding:14px; }
+.ecc-photo-wrap { width:100%; height:min(56vh,520px); border:1px solid var(--border); border-radius:12px; background:#09161f; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+.ecc-photo-wrap img { width:100%; height:100%; object-fit:contain; cursor:zoom-in; }
+.ecc-photo-empty { color:var(--text2); font-family:var(--mono); font-size:12px; }
+.ecc-carousel-controls { margin-top:10px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.ecc-carousel-counter { font-family:var(--mono); font-size:11px; color:var(--text2); }
+.ecc-metric-grid { display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:8px; }
+.ecc-metric { border:1px solid var(--border); border-radius:10px; padding:10px; background:rgba(255,255,255,0.02); }
+.ecc-metric .k { font-family:var(--mono); font-size:10px; letter-spacing:1.1px; text-transform:uppercase; color:var(--muted); margin-bottom:4px; }
+.ecc-metric .v { font-family:var(--mono); font-size:22px; color:var(--text); }
+.ecc-score-extra { margin-top:10px; display:grid; gap:6px; font-family:var(--mono); font-size:12px; color:var(--text2); }
+@media (max-width: 1020px) {
+  .ecc-animal-viewer { grid-template-columns: 1fr; }
+  .ecc-photo-wrap { height:min(52vh,420px); }
+}
 </style>
 {% endblock %}
 
@@ -65,6 +81,45 @@
   <canvas id="ch-animal"></canvas>
 </div>
 
+<div class="ecc-animal-viewer">
+  <div class="ecc-photo-card">
+    <div class="chart-head">
+      <div class="chart-title">Imagens do animal</div>
+      <div class="chart-sub">Preferência: bbox YOLO</div>
+    </div>
+    <div class="ecc-photo-wrap">
+      <img id="ecc-carousel-image" alt="Imagem ECC do animal" style="display:none">
+      <div id="ecc-carousel-empty" class="ecc-photo-empty">Sem imagens para este animal.</div>
+    </div>
+    <div class="ecc-carousel-controls">
+      <button id="ecc-prev" class="btn btn-ghost btn-sm" type="button">Anterior</button>
+      <div id="ecc-counter" class="ecc-carousel-counter">0 / 0</div>
+      <button id="ecc-next" class="btn btn-ghost btn-sm" type="button">Próxima</button>
+    </div>
+  </div>
+  <div class="ecc-score-card">
+    <div class="chart-head">
+      <div class="chart-title">Escores da imagem</div>
+      <div id="ecc-score-date" class="chart-sub">—</div>
+    </div>
+    <div class="ecc-metric-grid">
+      <div class="ecc-metric">
+        <div class="k">Raw</div>
+        <div id="ecc-raw-value" class="v">—</div>
+      </div>
+      <div class="ecc-metric">
+        <div class="k">ECC (1..5)</div>
+        <div id="ecc-score-value" class="v">—</div>
+      </div>
+    </div>
+    <div class="ecc-score-extra">
+      <div><strong>ID:</strong> <span id="ecc-record-id">—</span></div>
+      <div><strong>Arquivo:</strong> <span id="ecc-filename">—</span></div>
+      <div><strong>Status:</strong> <span id="ecc-status">—</span></div>
+    </div>
+  </div>
+</div>
+
 <div class="card">
   <div class="card-title">Registros recentes filtrados</div>
   <div class="table-wrap">
@@ -91,6 +146,7 @@
 {% block scripts %}
 <script>
 const ANIMAL_POINTS = {{ animal_points | tojson }};
+const ANIMAL_IMAGES = {{ animal_images | tojson }};
 function buildAnimalChart() {
   const c = document.getElementById('ch-animal'); if (!c) return;
   const ctx = c.getContext('2d');
@@ -117,5 +173,77 @@ function buildAnimalChart() {
   });
 }
 buildAnimalChart();
+
+function fmtNum(v, d) {
+  if (v === null || v === undefined || v === '') return '—';
+  const n = Number(v);
+  return Number.isFinite(n) ? n.toFixed(d) : '—';
+}
+
+function initAnimalCarousel() {
+  const imgEl = document.getElementById('ecc-carousel-image');
+  const emptyEl = document.getElementById('ecc-carousel-empty');
+  const prevBtn = document.getElementById('ecc-prev');
+  const nextBtn = document.getElementById('ecc-next');
+  const counter = document.getElementById('ecc-counter');
+  const rawEl = document.getElementById('ecc-raw-value');
+  const scoreEl = document.getElementById('ecc-score-value');
+  const dateEl = document.getElementById('ecc-score-date');
+  const idEl = document.getElementById('ecc-record-id');
+  const fileEl = document.getElementById('ecc-filename');
+  const statusEl = document.getElementById('ecc-status');
+  if (!imgEl || !prevBtn || !nextBtn) return;
+
+  const rows = Array.isArray(ANIMAL_IMAGES) ? ANIMAL_IMAGES : [];
+  let idx = 0;
+
+  function render() {
+    const n = rows.length;
+    counter.textContent = `${n ? idx + 1 : 0} / ${n}`;
+    prevBtn.disabled = n <= 1;
+    nextBtn.disabled = n <= 1;
+    if (!n) {
+      imgEl.style.display = 'none';
+      emptyEl.style.display = 'block';
+      rawEl.textContent = '—';
+      scoreEl.textContent = '—';
+      dateEl.textContent = '—';
+      idEl.textContent = '—';
+      fileEl.textContent = '—';
+      statusEl.textContent = '—';
+      return;
+    }
+    const r = rows[idx];
+    const src = r.bbox_path || r.image_path || r.thumb_path || '';
+    if (src) {
+      imgEl.src = src;
+      imgEl.style.display = 'block';
+      emptyEl.style.display = 'none';
+      imgEl.onclick = () => window.open(src, '_blank');
+    } else {
+      imgEl.style.display = 'none';
+      emptyEl.style.display = 'block';
+    }
+    rawEl.textContent = fmtNum(r.raw_score, 4);
+    scoreEl.textContent = fmtNum(r.ecc_score, 2);
+    dateEl.textContent = r.inference_date || '—';
+    idEl.textContent = r.id != null ? String(r.id) : '—';
+    fileEl.textContent = r.filename || '—';
+    statusEl.textContent = r.error_text || 'ok';
+  }
+
+  prevBtn.addEventListener('click', () => {
+    if (!rows.length) return;
+    idx = (idx - 1 + rows.length) % rows.length;
+    render();
+  });
+  nextBtn.addEventListener('click', () => {
+    if (!rows.length) return;
+    idx = (idx + 1) % rows.length;
+    render();
+  });
+  render();
+}
+initAnimalCarousel();
 </script>
 {% endblock %}

@@ -1492,6 +1492,7 @@ def ecc_analise_individual():
         ).fetchone()
         selected_animal = rr[0] if rr else ''
     animal_points = []
+    animal_images = []
     if selected_farm and selected_animal:
         ar = db.execute(
             """
@@ -1503,12 +1504,22 @@ def ecc_analise_individual():
             (selected_farm, selected_animal),
         ).fetchall()
         animal_points = [dict(x) for x in ar]
+        ai = db.execute(
+            """
+            SELECT id, inference_date, filename, image_path, thumb_path, bbox_path, raw_score, ecc_score, error_text
+            FROM ecc_bcs_records
+            WHERE farm_id = ? AND animal_tag = ?
+            ORDER BY inference_date DESC, id DESC
+            """,
+            (selected_farm, selected_animal),
+        ).fetchall()
+        animal_images = [dict(x) for x in ai]
     return render_template(
         'ecc_analise_individual.html',
         records=records[:120], farms=farms, animals=animals,
         farm_filter=farm_filter, animal_filter=animal_filter, q_filter=q,
         selected_farm=selected_farm, selected_animal=selected_animal,
-        animal_points=animal_points, stats=stats,
+        animal_points=animal_points, animal_images=animal_images, stats=stats,
     )
 
 
