@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}ECC - pontos de atenção{% endblock %}
+
+{% block head %}
+<style>
+.ecc-pa-legend { font-size: 12px; color: var(--text2); line-height: 1.5; max-width: 720px; margin-bottom: 12px; }
+.ecc-pa-badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.ecc-pa-badge { font-family: var(--mono); font-size: 10px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); color: var(--muted); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">⚠ <span>ECC</span> <span style="color:var(--accent)">pontos de atenção</span></div>
+    <div class="page-sub">Brincos com maior variação de ECC na fazenda selecionada</div>
+  </div>
+  <div class="flex gap-8">
+    <span class="pill pill-blue">{{ stats.total_records }} registros</span>
+    <span class="pill pill-orange">{{ stats.farms }} fazenda(s)</span>
+  </div>
+</div>
+
+<p class="ecc-pa-legend">
+  Apenas animais com <strong>duas ou mais</strong> medições com ECC válido. <em>Amplitude</em> é
+  a diferença entre o maior e o menor escore; <em>maior salto</em> é a maior alteração entre duas
+  visitas consecutivas (ordem por data e registo).
+</p>
+
+<div class="card mb-16">
+  <form method="get" class="filters-row">
+    <div class="field" style="margin:0">
+      <label>Fazenda</label>
+      <select name="farm" onchange="this.form.submit()">
+        <option value="">—</option>
+        {% for f in farms %}
+        <option value="{{ f }}" {% if farm_filter == f %}selected{% endif %}>{{ f }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field" style="margin:0">
+      <label>Ordenar por</label>
+      <select name="sort" onchange="this.form.submit()">
+        <option value="spread" {% if sort_by == 'spread' %}selected{% endif %}>Amplitude (máx − mín)</option>
+        <option value="step" {% if sort_by == 'step' %}selected{% endif %}>Maior salto entre visitas</option>
+      </select>
+    </div>
+    <div class="flex gap-8" style="align-items:flex-end">
+      <a href="{{ url_for('ecc_pontos_atencao') }}" class="btn btn-ghost btn-sm">Limpar</a>
+    </div>
+  </form>
+  <div class="ecc-pa-badges">
+    <span class="ecc-pa-badge">classificação atual: {% if sort_by == 'step' %}maior salto{% else %}amplitude{% endif %}</span>
+    <span class="ecc-pa-badge">até 60 brincos</span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Animais a monitorar — {{ farm_filter or 'nenhuma fazenda' }}</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Brinco</th>
+          <th>Medições</th>
+          <th>ECC mín</th>
+          <th>ECC máx</th>
+          <th>Amplitude</th>
+          <th>Maior salto</th>
+          <th>1ª data</th>
+          <th>Última</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in attention_rows %}
+        <tr>
+          <td class="mono">{{ loop.index }}</td>
+          <td class="mono"><strong>{{ r.animal_tag }}</strong></td>
+          <td class="mono">{{ r.n_records }}</td>
+          <td class="mono">{{ '%.2f' % r.min_ecc }}</td>
+          <td class="mono">{{ '%.2f' % r.max_ecc }}</td>
+          <td class="mono" style="color:var(--warn)">{{ '%.2f' % r.spread }}</td>
+          <td class="mono">{{ '%.2f' % r.max_step }}</td>
+          <td class="mono">{{ r.first_date or '—' }}</td>
+          <td class="mono">{{ r.last_date or '—' }}</td>
+          <td>
+            <a class="btn btn-ghost btn-sm" href="{{ url_for('ecc_analise_individual', farm=farm_filter, animal=r.animal_tag) }}">Ver análise</a>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="10">
+            <div class="empty-state">
+              <div class="icon">📈</div>
+              {% if not farm_filter %}
+                Selecione uma fazenda com dados ECC.
+              {% else %}
+                Nenhum animal com duas ou mais medições com ECC nesta fazenda, ou ainda sem variação.
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

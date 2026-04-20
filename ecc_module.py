@@ -247,3 +247,71 @@ def ecc_farm_time_series(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out.sort(key=lambda x: (x["farm_id"], x["date"]))
     return out
 
+
+def ecc_attention_ranking(
+    rows: list[dict[str, Any]],
+    farm_id: str,
+    *,
+    min_records: int = 2,
+    top_n: int = 50,
+    sort_by: str = "spread",
+) -> list[dict[str, Any]]:
+    """
+    Animais de uma fazenda com maior variação de ECC ao longo do tempo.
+
+    - spread: max(ecc) - min(ecc) (amplitude)
+    - max_step: maior |ΔECC| entre duas medições consecutivas (por data/ordem)
+    """
+    farm_id = str(farm_id or "").strip()
+    if not farm_id:
+        return []
+
+    by_tag: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        if str(r.get("farm_id") or "") != farm_id:
+            continue
+        if r.get("ecc_score") is None:
+            continue
+        try:
+            sc = float(r["ecc_score"])
+        except (TypeError, ValueError):
+            continue
+        tag = str(r.get("animal_tag") or "").strip()
+        if not tag:
+            continue
+        by_tag.setdefault(tag, []).append({**r, "_ecc": sc})
+
+    out: list[dict[str, Any]] = []
+    for tag, recs in by_tag.items():
+        recs.sort(
+            key=lambda x: (str(x.get("inference_date") or ""), int(x.get("id") or 0))
+        )
+        if len(recs) < min_records:
+            continue
+        scores = [float(x["_ecc"]) for x in recs]
+        lo, hi = min(scores), max(scores)
+        spread = hi - lo
+        max_step = 0.0
+        for i in range(1, len(scores)):
+            max_step = max(max_step, abs(scores[i] - scores[i - 1]))
+        if spread < 1e-9 and max_step < 1e-9:
+            continue
+        d0 = str(recs[0].get("inference_date") or "")
+        d1 = str(recs[-1].get("inference_date") or "")
+        out.append(
+            {
+                "animal_tag": tag,
+                "n_records": len(recs),
+                "min_ecc": round(lo, 2),
+                "max_ecc": round(hi, 2),
+                "spread": round(spread, 2),
+                "max_step": round(max_step, 2),
+                "first_date": d0,
+                "last_date": d1,
+            }
+        )
+
+    key = "max_step" if sort_by == "step" else "spread"
+    out.sort(key=lambda x: -x[key])
+    return out[:top_n]
+

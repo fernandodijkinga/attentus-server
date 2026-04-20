@@ -52,6 +52,7 @@ from ecc_module import (
     save_ecc_crop_thumbnail,
     save_ecc_bbox_overlay,
     ecc_farm_time_series,
+    ecc_attention_ranking,
 )
 
 TZ_BR = ZoneInfo('America/Sao_Paulo')
@@ -1547,6 +1548,31 @@ def ecc_analise_individual():
         farm_filter=farm_filter, animal_filter=animal_filter, q_filter=q,
         selected_farm=selected_farm, selected_animal=selected_animal,
         animal_points=animal_points, animal_images=animal_images, stats=stats,
+    )
+
+
+@app.route('/ecc/pontos-atencao')
+@login_required
+def ecc_pontos_atencao():
+    db = get_db()
+    sort_param = str(request.args.get('sort', 'spread') or 'spread').strip().lower()
+    sort_by = 'step' if sort_param == 'step' else 'spread'
+    farm_filter = str(request.args.get('farm', '')).strip()
+    farms, _, stats = _ecc_base_lists(db)
+    selected_farm = farm_filter or (farms[0] if farms else '')
+    attention_rows = []
+    if selected_farm:
+        recs = _ecc_load_rows(db, selected_farm, '', '', limit=20000)
+        attention_rows = ecc_attention_ranking(
+            recs, selected_farm, min_records=2, top_n=60, sort_by=sort_by
+        )
+    return render_template(
+        'ecc_pontos_atencao.html',
+        farms=farms,
+        farm_filter=selected_farm,
+        sort_by=sort_by,
+        attention_rows=attention_rows,
+        stats=stats,
     )
 
 
