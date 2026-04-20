@@ -49,7 +49,7 @@
 <div class="grid-forms">
   <div class="form-card">
     <div class="card-title">Upload único / Mobile</div>
-    <p class="form-sub">Suba um arquivo ou capture na hora em dispositivo móvel. Informe fazenda, data da inferência e brinco.</p>
+    <p class="form-sub">Pipeline fixo ECC: <span class="mono">YOLO + ONNX posterior</span>. Suba um arquivo ou capture na hora em dispositivo móvel.</p>
     <form method="post" enctype="multipart/form-data">
       <input type="hidden" name="mode" value="single">
       <div class="row-2">
@@ -62,18 +62,9 @@
           <input type="date" name="inference_date" required>
         </div>
       </div>
-      <div class="row-2">
-        <div class="field">
-          <label>Brinco do animal</label>
-          <input name="animal_tag" required placeholder="001">
-        </div>
-        <div class="field">
-          <label>Vista</label>
-          <select name="view">
-            <option value="lateral" selected>Lateral</option>
-            <option value="posterior">Posterior</option>
-          </select>
-        </div>
+      <div class="field">
+        <label>Brinco do animal</label>
+        <input name="animal_tag" required placeholder="001">
       </div>
       <div class="field">
         <label>Imagem</label>
@@ -85,7 +76,7 @@
 
   <div class="form-card">
     <div class="card-title">Upload em lote</div>
-    <p class="form-sub">Use o brinco como nome do arquivo (ex.: <span class="mono">1323.png</span>). Data única para todo o lote.</p>
+    <p class="form-sub">Use o brinco como nome do arquivo (ex.: <span class="mono">1323.png</span>). Data única para todo o lote. Inferência sempre na vista posterior.</p>
     <form method="post" enctype="multipart/form-data">
       <input type="hidden" name="mode" value="batch">
       <div class="row-2">
@@ -98,18 +89,9 @@
           <input type="date" name="inference_date_batch" required>
         </div>
       </div>
-      <div class="row-2">
-        <div class="field">
-          <label>Vista</label>
-          <select name="view_batch">
-            <option value="lateral" selected>Lateral</option>
-            <option value="posterior">Posterior</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Arquivos</label>
-          <input type="file" name="images_batch" multiple accept=".jpg,.jpeg,.png,.webp" required>
-        </div>
+      <div class="field">
+        <label>Arquivos</label>
+        <input type="file" name="images_batch" multiple accept=".jpg,.jpeg,.png,.webp" required>
       </div>
       <button class="btn btn-accent btn-sm" type="submit">Processar lote</button>
     </form>

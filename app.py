@@ -29,7 +29,6 @@ import re
 import sqlite3
 import json
 import threading
-import math
 import zipfile
 import io
 import csv
@@ -44,9 +43,14 @@ from flask import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-import cv2
 
 from thi_calculator import calculate_thi, thi_holstein_zones_for_chart, thi_thresholds_json
+from ecc_module import (
+    safe_slug as ecc_safe_slug,
+    parse_iso_day as ecc_parse_iso_day,
+    infer_ecc_posterior,
+    ecc_farm_time_series,
+)
 
 TZ_BR = ZoneInfo('America/Sao_Paulo')
 
@@ -253,130 +257,6 @@ def _temp_humidity_for_thi(row_dict):
         h = _float_or_none(_ingest_humidity(j))
     return t, h
 
-
-def _safe_slug(v: str, fallback: str = 'x') -> str:
-    s = secure_filename(str(v or '').strip())
-    return s or fallback
-
-
-def _parse_iso_day(v: str) -> str | None:
-    s = str(v or '').strip()
-    if not s:
-        return None
-    try:
-        return datetime.fromisoformat(s).date().isoformat()
-    except ValueError:
-        return None
-
-
-def _pick_ecc_trait(traits: dict) -> tuple[str | None, float | None]:
-    """
-    Escolhe a trait ECC:
-    1) nome contendo ecc/bcs/body_condition
-    2) fallback para primeira trait
-    """
-    if not isinstance(traits, dict) or not traits:
-        return None, None
-    keys = list(traits.keys())
-    preferred = []
-    for k in keys:
-        lk = str(k).lower()
-        if 'ecc' in lk or 'bcs' in lk or 'body' in lk or 'condition' in lk:
-            preferred.append(k)
-    use = preferred[0] if preferred else keys[0]
-    try:
-        return str(use), float(traits.get(use))
-    except (TypeError, ValueError):
-        return str(use), None
-
-
-def _rescale_ecc_1_to_5_quarter(raw_score: float | None) -> float | None:
-    """
-    Reescala para [1, 5] em passos de 0.25.
-    - Se score já parece estar na escala 1..5, mantém.
-    - Caso contrário (ex.: 0..1), mapeia linearmente para 1..5.
-    """
-    if raw_score is None:
-        return None
-    x = float(raw_score)
-    if x < 1.0 or x > 5.0:
-        x = 1.0 + max(0.0, min(1.0, x)) * 4.0
-    x = max(1.0, min(5.0, x))
-    return round(x * 4.0) / 4.0
-
-
-def _ecc_infer_image(abs_path: str, view: str) -> dict:
-    """
-    Roda inferência Perspicuus numa imagem para extrair ECC.
-    """
-    if view not in ('lateral', 'posterior'):
-        return {'error': 'view inválida; use lateral ou posterior'}
-    try:
-        from perspicuus_inference import get_engine
-    except ImportError as e:
-        return {'error': f'Módulo de inferência indisponível: {e}'}
-    eng = get_engine()
-    if not eng.is_ready():
-        return {'error': 'Motor Perspicuus não está pronto (configure YOLO + pelo menos um ONNX).'}
-    if not eng.onnx_path_for(view):
-        return {'error': f'Modelo ONNX da vista {view} não está configurado.'}
-    img = cv2.imread(abs_path)
-    if img is None:
-        return {'error': 'Falha ao abrir imagem.'}
-    try:
-        out = eng.infer_bgr(img, view)
-    except Exception as e:  # noqa: BLE001
-        log.exception('ECC inferência falhou em %s', abs_path)
-        return {'error': str(e)}
-    traits = out.get('traits') or {}
-    tname, raw = _pick_ecc_trait(traits)
-    ecc = _rescale_ecc_1_to_5_quarter(raw)
-    return {
-        'trait_name': tname or '',
-        'raw_score': raw,
-        'ecc_score': ecc,
-        'traits': traits,
-        'meta': {
-            'yolo_conf': out.get('yolo_conf'),
-            'bbox': out.get('bbox'),
-            'infer_ms': out.get('infer_ms'),
-            'view': view,
-        },
-        'error': None if ecc is not None else 'trait_ecc_ausente_ou_invalida',
-    }
-
-
-def _ecc_farm_time_series(rows):
-    by_key: dict[tuple[str, str], dict] = {}
-    for r in rows:
-        if r.get('ecc_score') is None:
-            continue
-        farm = str(r.get('farm_id') or '')
-        d = str(r.get('inference_date') or '')
-        if not farm or not d:
-            continue
-        key = (farm, d)
-        cell = by_key.setdefault(key, {'vals': [], 'animals': set()})
-        cell['vals'].append(float(r['ecc_score']))
-        cell['animals'].add(str(r.get('animal_tag') or ''))
-    out = []
-    for (farm, d), cell in by_key.items():
-        vals = cell['vals']
-        n = len(vals)
-        if not n:
-            continue
-        mean = sum(vals) / n
-        var = sum((v - mean) ** 2 for v in vals) / n
-        out.append({
-            'farm_id': farm,
-            'date': d,
-            'mean': round(mean, 3),
-            'std': round(math.sqrt(var), 3),
-            'n_records': n,
-            'n_animals': len([a for a in cell['animals'] if a]),
-        })
-    out.sort(key=lambda x: (x['farm_id'], x['date']))
-    return out
 
 def _sanitize_perspicuus_frames(items):
     """Normaliza lista de frames: [{'frame_index': int, 'path': str}, ...]."""
@@ -1404,7 +1284,7 @@ def perspicuus_modelos():
 @app.route('/api/ecc/media/<farm>/<day>/<filename>')
 @login_required
 def serve_ecc_media(farm, day, filename):
-    base = os.path.abspath(os.path.join(ECC_UPLOADS_DIR, _safe_slug(farm), _safe_slug(day)))
+    base = os.path.abspath(os.path.join(ECC_UPLOADS_DIR, ecc_safe_slug(farm), ecc_safe_slug(day)))
     filepath = os.path.abspath(os.path.join(base, secure_filename(filename)))
     if not filepath.startswith(base + os.sep) or not os.path.isfile(filepath):
         abort(404)
@@ -1428,17 +1308,14 @@ def ecc_analise():
             farm_id: str,
             inference_date: str,
             animal_tag: str,
-            view: str,
             fs,
         ) -> tuple[bool, str]:
-            if view not in ('lateral', 'posterior'):
-                return False, 'Vista inválida (use lateral ou posterior).'
             ext = os.path.splitext(fs.filename or '')[1].lower()
             if ext not in ECC_IMAGE_EXTS:
                 return False, f'Extensão não permitida: {ext or "sem extensão"}'
-            safe_farm = _safe_slug(farm_id, 'fazenda')
-            safe_day = _safe_slug(inference_date.replace('-', ''), 'day')
-            safe_tag = _safe_slug(animal_tag, 'animal')
+            safe_farm = ecc_safe_slug(farm_id, 'fazenda')
+            safe_day = ecc_safe_slug(inference_date.replace('-', ''), 'day')
+            safe_tag = ecc_safe_slug(animal_tag, 'animal')
             folder = os.path.join(ECC_UPLOADS_DIR, safe_farm, safe_day)
             os.makedirs(folder, exist_ok=True)
             fname = secure_filename(fs.filename or f'{safe_tag}.jpg')
@@ -1452,7 +1329,7 @@ def ecc_analise():
                 return False, f'Falha ao gravar arquivo: {e}'
 
             web_path = f"/api/ecc/media/{safe_farm}/{safe_day}/{final_name}"
-            inf = _ecc_infer_image(dest, view)
+            inf = infer_ecc_posterior(dest)
             db.execute(
                 """
                 INSERT INTO ecc_bcs_records (
@@ -1465,7 +1342,7 @@ def ecc_analise():
                     farm_id,
                     inference_date,
                     animal_tag,
-                    view,
+                    'posterior',
                     final_name,
                     web_path,
                     inf.get('trait_name') or '',
@@ -1480,14 +1357,13 @@ def ecc_analise():
 
         if mode == 'single':
             farm_id = str(request.form.get('farm_id', '')).strip()
-            date_iso = _parse_iso_day(request.form.get('inference_date', ''))
+            date_iso = ecc_parse_iso_day(request.form.get('inference_date', ''))
             animal_tag = str(request.form.get('animal_tag', '')).strip()
-            view = str(request.form.get('view', 'lateral')).strip().lower()
             fs = request.files.get('image')
             if not farm_id or not date_iso or not animal_tag or not fs or not fs.filename:
                 flash('Preencha fazenda, data, brinco e selecione uma imagem.', 'error')
                 return redirect(url_for('ecc_analise'))
-            ok, msg = _save_one(farm_id, date_iso, animal_tag, view, fs)
+            ok, msg = _save_one(farm_id, date_iso, animal_tag, fs)
             if ok:
                 db.commit()
                 flash('Imagem enviada e inferida com sucesso.', 'success')
@@ -1498,8 +1374,7 @@ def ecc_analise():
 
         if mode == 'batch':
             farm_id = str(request.form.get('farm_id_batch', '')).strip()
-            date_iso = _parse_iso_day(request.form.get('inference_date_batch', ''))
-            view = str(request.form.get('view_batch', 'lateral')).strip().lower()
+            date_iso = ecc_parse_iso_day(request.form.get('inference_date_batch', ''))
             files = request.files.getlist('images_batch')
             if not farm_id or not date_iso or not files:
                 flash('Lote: informe fazenda, data e selecione ficheiros.', 'error')
@@ -1514,7 +1389,7 @@ def ecc_analise():
                     n_err += 1
                     errs.append(f'Arquivo sem brinco no nome: {fs.filename}')
                     continue
-                ok, msg = _save_one(farm_id, date_iso, animal_tag, view, fs)
+                ok, msg = _save_one(farm_id, date_iso, animal_tag, fs)
                 if ok:
                     n_ok += 1
                 else:
@@ -1568,7 +1443,7 @@ def ecc_analise():
         "SELECT DISTINCT animal_tag FROM ecc_bcs_records ORDER BY animal_tag"
     ).fetchall()]
 
-    farm_series = _ecc_farm_time_series(records)
+    farm_series = ecc_farm_time_series(records)
 
     selected_farm = farm_filter or (farms[0] if farms else '')
     selected_animal = animal_filter
