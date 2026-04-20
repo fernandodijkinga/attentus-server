@@ -13,6 +13,10 @@
 .flash-bar.success { background: rgba(0,229,160,.12); border: 1px solid rgba(0,229,160,.3); color: var(--accent); }
 .flash-bar.error { background: rgba(255,77,106,.12); border: 1px solid rgba(255,77,106,.28); color: var(--err); }
 .thumb { width: 72px; height: 54px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; }
+.batch-progress { margin-top: 10px; border:1px solid var(--border); border-radius:8px; padding:10px; display:none; }
+.batch-progress-bar { width:100%; height:10px; border-radius:999px; background:#122535; border:1px solid #1e3950; overflow:hidden; margin:6px 0; }
+.batch-progress-fill { height:100%; width:0%; background:linear-gradient(90deg,#00e5a0,#00b9ff); transition:width .2s ease; }
+.batch-progress-meta { display:flex; justify-content:space-between; gap:10px; font-family:var(--mono); font-size:11px; color:var(--text2); }
 </style>
 {% endblock %}
 
@@ -68,7 +72,7 @@
   <div class="form-card">
     <div class="card-title">Upload em lote</div>
     <p class="form-sub">Use o brinco no nome do arquivo (ex.: <span class="mono">1323.png</span>). Data única para o lote.</p>
-    <form method="post" enctype="multipart/form-data" action="{{ url_for('ecc_importar') }}">
+    <form id="ecc-batch-form" method="post" enctype="multipart/form-data" action="{{ url_for('ecc_importar') }}" data-upload-url="{{ url_for('api_ecc_upload_one') }}">
       <input type="hidden" name="mode" value="batch">
       <div class="row-2">
         <div class="field">
@@ -84,7 +88,15 @@
         <label>Arquivos</label>
         <input type="file" name="images_batch" multiple accept=".jpg,.jpeg,.png,.webp" required>
       </div>
-      <button class="btn btn-accent btn-sm" type="submit">Processar lote</button>
+      <button id="ecc-batch-submit" class="btn btn-accent btn-sm" type="submit">Processar lote (1 por vez)</button>
+      <div id="ecc-batch-progress" class="batch-progress">
+        <div class="batch-progress-meta">
+          <span id="ecc-batch-status">Preparando...</span>
+          <span id="ecc-batch-count">0 / 0</span>
+        </div>
+        <div class="batch-progress-bar"><div id="ecc-batch-fill" class="batch-progress-fill"></div></div>
+        <div id="ecc-batch-result" class="mono" style="font-size:11px;color:var(--text2)"></div>
+      </div>
     </form>
   </div>
 </div>
@@ -123,4 +135,70 @@
     </table>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function runSequentialBatchUpload() {
+  const form = document.getElementById('ecc-batch-form');
+  if (!form) return;
+  const submitBtn = document.getElementById('ecc-batch-submit');
+  const box = document.getElementById('ecc-batch-progress');
+  const fill = document.getElementById('ecc-batch-fill');
+  const count = document.getElementById('ecc-batch-count');
+  const status = document.getElementById('ecc-batch-status');
+  const result = document.getElementById('ecc-batch-result');
+  const uploadUrl = form.dataset.uploadUrl || '';
+
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const farmId = (form.querySelector('input[name="farm_id_batch"]')?.value || '').trim();
+    const infDate = (form.querySelector('input[name="inference_date_batch"]')?.value || '').trim();
+    const filesInput = form.querySelector('input[name="images_batch"]');
+    const files = Array.from(filesInput?.files || []);
+    if (!farmId || !infDate || !files.length || !uploadUrl) {
+      alert('Preencha fazenda, data e selecione arquivos.');
+      return;
+    }
+
+    box.style.display = 'block';
+    submitBtn.disabled = true;
+    filesInput.disabled = true;
+    let ok = 0;
+    let err = 0;
+    const errors = [];
+
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
+      status.textContent = `Processando ${file.name}...`;
+      count.textContent = `${i + 1} / ${files.length}`;
+      fill.style.width = `${Math.round(((i + 1) / files.length) * 100)}%`;
+      const fd = new FormData();
+      fd.append('farm_id', farmId);
+      fd.append('inference_date', infDate);
+      fd.append('image', file, file.name);
+      try {
+        const resp = await fetch(uploadUrl, { method: 'POST', body: fd, credentials: 'same-origin' });
+        const payload = await resp.json().catch(() => ({}));
+        if (resp.ok && payload?.status === 'ok') {
+          ok += 1;
+        } else {
+          err += 1;
+          errors.push(`${file.name}: ${payload?.error || 'erro desconhecido'}`);
+        }
+      } catch (e) {
+        err += 1;
+        errors.push(`${file.name}: falha de rede`);
+      }
+    }
+
+    status.textContent = 'Lote concluído';
+    result.textContent = `Sucesso: ${ok} · Erros: ${err}${errors.length ? ' · ' + errors.slice(0, 3).join(' | ') : ''}`;
+    submitBtn.disabled = false;
+    filesInput.disabled = false;
+    setTimeout(() => { window.location.reload(); }, 900);
+  });
+}
+runSequentialBatchUpload();
+</script>
 {% endblock %}

@@ -1430,9 +1430,13 @@ def ecc_importar():
                 if not animal_tag:
                     n_err += 1; errs.append(f'Arquivo sem brinco no nome: {fs.filename}'); continue
                 ok, msg = _ecc_save_one(db, now_iso, farm_id, date_iso, animal_tag, fs)
-                if ok: n_ok += 1
-                else: n_err += 1; errs.append(f'{fs.filename}: {msg}')
-            db.commit()
+                if ok:
+                    n_ok += 1
+                    db.commit()
+                else:
+                    n_err += 1
+                    errs.append(f'{fs.filename}: {msg}')
+                    db.rollback()
             if n_ok: flash(f'Lote processado: {n_ok} arquivo(s) inferido(s).', 'success')
             if n_err: flash(f'Lote com {n_err} erro(s): ' + '; '.join(errs[:3]), 'error')
             return redirect(url_for('ecc_importar'))
@@ -1450,6 +1454,29 @@ def ecc_importar():
         farm_filter=farm_filter, animal_filter=animal_filter, q_filter=q,
         stats=stats,
     )
+
+
+@app.route('/api/ecc/upload-one', methods=['POST'])
+@login_required
+def api_ecc_upload_one():
+    db = get_db()
+    farm_id = str(request.form.get('farm_id', '')).strip()
+    date_iso = ecc_parse_iso_day(request.form.get('inference_date', ''))
+    fs = request.files.get('image')
+    if not farm_id or not date_iso or not fs or not fs.filename:
+        return jsonify({'error': 'Campos obrigatórios: farm_id, inference_date, image'}), 400
+    animal_tag = str(request.form.get('animal_tag', '')).strip()
+    if not animal_tag:
+        animal_tag = os.path.splitext(os.path.basename(fs.filename))[0].strip()
+    if not animal_tag:
+        return jsonify({'error': 'Não foi possível identificar o brinco pelo nome do arquivo'}), 400
+    now_iso = datetime.utcnow().isoformat() + 'Z'
+    ok, msg = _ecc_save_one(db, now_iso, farm_id, date_iso, animal_tag, fs)
+    if ok:
+        db.commit()
+        return jsonify({'status': 'ok', 'animal_tag': animal_tag}), 201
+    db.rollback()
+    return jsonify({'error': msg, 'animal_tag': animal_tag}), 400
 
 
 @app.route('/ecc/analise-rebanho')
