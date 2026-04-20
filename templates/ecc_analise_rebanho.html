@@ -9,7 +9,8 @@
 .chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .chart-title { font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
 .chart-sub { font-size: 11px; color: var(--text2); font-family: var(--mono); }
-.chart-card-ecc canvas { width: 100% !important; height: 300px !important; }
+.chart-canvas-wrap { position: relative; height: 300px; width: 100%; }
+.chart-canvas-wrap canvas { display: block; width: 100% !important; height: 100% !important; }
 .chart-grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
 .chart-empty-ecc { min-height:300px; display:flex; align-items:center; justify-content:center; color:var(--text2); font-family:var(--mono); font-size:12px; border:1px dashed var(--border); border-radius:10px; }
 @media (max-width: 1080px) { .chart-grid-2 { grid-template-columns:1fr; } }
@@ -54,25 +55,25 @@
 <div class="chart-card-ecc">
   <div class="chart-head">
     <div class="chart-title">Média + desvio padrão por fazenda</div>
-    <div class="chart-sub">barras = nº de animais por data</div>
+    <div class="chart-sub">barras = volume por dia (brincos distintos ou nº de registros); linhas = média e desvio (com ECC)</div>
   </div>
-  <canvas id="ch-farm"></canvas>
+  <div class="chart-canvas-wrap"><canvas id="ch-farm"></canvas></div>
 </div>
 
 <div class="chart-grid-2">
   <div class="chart-card-ecc">
     <div class="chart-head">
       <div class="chart-title">Volume diário de animais avaliados</div>
-      <div class="chart-sub">soma diária por fazenda</div>
+      <div class="chart-sub">por fazenda: brincos distintos no dia, ou nº de registros se não houver brinco</div>
     </div>
-    <canvas id="ch-farm-volume"></canvas>
+    <div class="chart-canvas-wrap"><canvas id="ch-farm-volume"></canvas></div>
   </div>
   <div class="chart-card-ecc">
     <div class="chart-head">
       <div class="chart-title">Distribuição por faixas ECC</div>
       <div class="chart-sub">Magra / Ideal / Acima do ideal</div>
     </div>
-    <canvas id="ch-farm-bands"></canvas>
+    <div class="chart-canvas-wrap"><canvas id="ch-farm-bands"></canvas></div>
   </div>
 </div>
 
@@ -102,6 +103,16 @@
 const FARM_SERIES = {{ farm_series | tojson }};
 const FARM_RECORDS = {{ farm_records | tojson }};
 const ECC_COLORS = ['#00e5a0', '#0099ff', '#ff9f40', '#cc66ff', '#ff4d6a', '#7dd3fc', '#a3e635'];
+
+function parseEccDay(d) {
+  if (d == null || d === '') return null;
+  const s = String(d).trim();
+  if (!s) return null;
+  if (s.length <= 10 && /^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(`${s}T12:00:00`);
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? new Date(t) : null;
+}
+
 function groupedFarmSeries(rows) {
   const out = {};
   (rows || []).forEach((r) => {
@@ -123,24 +134,66 @@ function buildFarmChart() {
     c.replaceWith(p);
     return;
   }
+  const hasMean = (FARM_SERIES || []).some((r) => r && r.mean != null && Number.isFinite(Number(r.mean)));
   const datasets = [];
   let i = 0;
   Object.entries(byFarm).forEach(([farm, rows]) => {
     const color = ECC_COLORS[i % ECC_COLORS.length]; i += 1;
-    datasets.push({ type:'line', label:`${farm} · média`, data:rows.map((r)=>({x:r.date,y:r.mean,n:r.n_animals})), parsing:false, borderColor:color, backgroundColor:color, tension:.3, borderWidth:2.2, pointRadius:2.5, yAxisID:'y' });
-    datasets.push({ type:'line', label:`${farm} · desvio padrão`, data:rows.map((r)=>({x:r.date,y:r.std,n:r.n_animals})), parsing:false, borderColor:color+'AA', borderDash:[5,4], pointRadius:0, borderWidth:1.4, yAxisID:'y1' });
-    datasets.push({ type:'bar', label:`${farm} · # animais`, data:rows.map((r)=>({x:r.date,y:r.n_animals})), parsing:false, backgroundColor:color+'33', borderColor:color+'66', borderWidth:1, yAxisID:'y2', barPercentage:.65, categoryPercentage:.8 });
+    const meanPts = rows
+      .filter((r) => r.mean != null && Number.isFinite(Number(r.mean)))
+      .map((r) => ({ x: parseEccDay(r.date), y: Number(r.mean), n: r.n_animals, nrec: r.n_records }))
+      .filter((p) => p.x);
+    const stdPts = rows
+      .filter((r) => r.std != null && Number.isFinite(Number(r.std)))
+      .map((r) => ({ x: parseEccDay(r.date), y: Number(r.std), n: r.n_animals, nrec: r.n_records }))
+      .filter((p) => p.x);
+    const barPts = rows.map((r) => {
+      const vol = (r.n_animals > 0 ? r.n_animals : r.n_records) || 0;
+      return { x: parseEccDay(r.date), y: Number(vol) };
+    }).filter((p) => p.x);
+    if (meanPts.length) {
+      datasets.push({ type: 'line', label: `${farm} · média`, data: meanPts, parsing: false, borderColor: color, backgroundColor: color, tension: 0.3, borderWidth: 2.2, pointRadius: 2.5, yAxisID: 'y' });
+    }
+    if (stdPts.length) {
+      datasets.push({ type: 'line', label: `${farm} · desvio padrão`, data: stdPts, parsing: false, borderColor: color + 'AA', borderDash: [5, 4], pointRadius: 0, borderWidth: 1.4, yAxisID: 'y1' });
+    }
+    if (barPts.length) {
+      datasets.push({ type: 'bar', label: `${farm} · volume (animais ou registros)`, data: barPts, parsing: false, backgroundColor: color + '33', borderColor: color + '66', borderWidth: 1, yAxisID: 'y2', maxBarThickness: 14 });
+    }
   });
+  if (!datasets.length) {
+    const p = document.createElement('div');
+    p.className = 'chart-empty-ecc';
+    p.textContent = 'Não foi possível montar o gráfico (sem pontos válidos).';
+    c.replaceWith(p);
+    return;
+  }
   new Chart(ctx, {
-    data:{datasets},
-    options:{
-      responsive:true, maintainAspectRatio:false, interaction:{mode:'nearest', intersect:false},
-      plugins:{ legend:{labels:{color:'#7a9aae', font:{family:'JetBrains Mono', size:10}}} },
-      scales:{
-        x:{type:'time', time:{unit:'day'}, ticks:{color:'#5a7a8c'}, grid:{color:'#1c3040'}},
-        y:{min:1,max:5,ticks:{color:'#7a9aae'},grid:{color:'#1c3040'},title:{display:true,text:'ECC médio'}},
-        y1:{position:'right',min:0,ticks:{color:'#7a9aae'},grid:{drawOnChartArea:false},title:{display:true,text:'Desvio padrão'}},
-        y2:{position:'right',min:0,ticks:{display:false},grid:{drawOnChartArea:false},display:false},
+    type: 'bar',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: false },
+      plugins: { legend: { labels: { color: '#7a9aae', font: { family: 'JetBrains Mono', size: 10 } } } },
+      scales: {
+        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#5a7a8c' }, grid: { color: '#1c3040' } },
+        y: {
+          display: hasMean,
+          min: 1, max: 5, ticks: { color: '#7a9aae' }, grid: { color: '#1c3040' },
+          title: { display: true, text: 'ECC médio' },
+        },
+        y1: {
+          display: hasMean,
+          position: 'right', min: 0, ticks: { color: '#7a9aae' }, grid: { drawOnChartArea: false },
+          title: { display: true, text: 'Desvio padrão' },
+        },
+        y2: {
+          position: 'right',
+          min: 0,
+          suggestedMax: 8,
+          ticks: { color: '#7a9aae', display: true },
+          grid: { drawOnChartArea: false },
+          title: { display: true, text: hasMean ? '# animais / registros' : '# por dia' },
+        },
       },
     },
   });
@@ -162,21 +215,27 @@ function buildFarmVolumeChart() {
   const datasets = farms.map((farm, i) => ({
     type: 'bar',
     label: farm,
-    data: (byFarm[farm] || []).map((r) => ({ x: r.date, y: Number(r.n_animals || 0) })),
+    data: (byFarm[farm] || [])
+      .map((r) => {
+        const vol = (r.n_animals > 0 ? r.n_animals : r.n_records) || 0;
+        return { x: parseEccDay(r.date), y: Number(vol) };
+      })
+      .filter((p) => p.x),
     parsing: false,
     backgroundColor: (ECC_COLORS[i % ECC_COLORS.length] + '66'),
     borderColor: (ECC_COLORS[i % ECC_COLORS.length] + 'cc'),
     borderWidth: 1.2,
-    stack: 'animals',
+    maxBarThickness: 16,
   }));
   new Chart(ctx, {
+    type: 'bar',
     data: { datasets },
     options: {
       responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: false },
       plugins: { legend: { labels: { color: '#7a9aae', font: { family: 'JetBrains Mono', size: 10 } } } },
       scales: {
-        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#5a7a8c' }, grid: { color: '#1c3040' }, stacked: true },
-        y: { min: 0, ticks: { color: '#7a9aae' }, grid: { color: '#1c3040' }, stacked: true, title: { display: true, text: '# animais' } },
+        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#5a7a8c' }, grid: { color: '#1c3040' }, stacked: false },
+        y: { min: 0, ticks: { color: '#7a9aae' }, grid: { color: '#1c3040' }, stacked: false, title: { display: true, text: '# animais ou registros / dia' } },
       },
     },
   });

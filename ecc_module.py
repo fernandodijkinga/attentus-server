@@ -193,35 +193,54 @@ def save_ecc_bbox_overlay(
 
 
 def ecc_farm_time_series(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Agrega por (fazenda, data de inferência).
+
+    - n_records: todos os registros naquele dia (uploads), mesmo sem ecc_score.
+    - n_animals: brincos distintos não vazios.
+    - mean / std: apenas a partir de registros com ecc_score numérico; se não houver,
+      vêm como None (útil para manter o dia na série de volume).
+    """
     by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for r in rows:
-        if r.get("ecc_score") is None:
-            continue
         farm = str(r.get("farm_id") or "")
         d = str(r.get("inference_date") or "")
         if not farm or not d:
             continue
         key = (farm, d)
-        cell = by_key.setdefault(key, {"vals": [], "animals": set()})
-        cell["vals"].append(float(r["ecc_score"]))
-        cell["animals"].add(str(r.get("animal_tag") or ""))
+        cell = by_key.setdefault(key, {"vals": [], "animals": set(), "n_records": 0})
+        cell["n_records"] = int(cell["n_records"]) + 1
+        tag = str(r.get("animal_tag") or "").strip()
+        if tag:
+            cell["animals"].add(tag)
+        if r.get("ecc_score") is not None:
+            try:
+                cell["vals"].append(float(r["ecc_score"]))
+            except (TypeError, ValueError):
+                pass
 
     out: list[dict[str, Any]] = []
     for (farm, d), cell in by_key.items():
         vals = cell["vals"]
-        if not vals:
-            continue
-        n = len(vals)
-        mean = sum(vals) / n
-        var = sum((v - mean) ** 2 for v in vals) / n
+        n_animals = len([a for a in cell["animals"] if a])
+        n_records = int(cell["n_records"])
+        if vals:
+            n = len(vals)
+            mean = sum(vals) / n
+            var = sum((v - mean) ** 2 for v in vals) / n
+            mean_r = round(mean, 3)
+            std_r = round(math.sqrt(var), 3)
+        else:
+            mean_r, std_r = None, None
         out.append(
             {
                 "farm_id": farm,
                 "date": d,
-                "mean": round(mean, 3),
-                "std": round(math.sqrt(var), 3),
-                "n_records": n,
-                "n_animals": len([a for a in cell["animals"] if a]),
+                "mean": mean_r,
+                "std": std_r,
+                "n_records": n_records,
+                "n_animals": n_animals,
+                "n_scored": len(vals),
             }
         )
 
