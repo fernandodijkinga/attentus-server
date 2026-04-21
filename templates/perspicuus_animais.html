@@ -2,6 +2,7 @@
 {% block title %}Animais Perspicuus{% endblock %}
 
 {% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 .animals-grid { display: grid; gap: 16px; }
 .animal-card {
@@ -134,6 +135,39 @@
 .filters-row {
   display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 16px;
 }
+.animal-charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+@media (max-width: 900px) {
+  .animal-charts-grid { grid-template-columns: 1fr; }
+}
+.animal-chart-cell .traits-title { margin-bottom: 4px; }
+.chart-canvas-wrap-animal {
+  position: relative;
+  height: 260px;
+  width: 100%;
+}
+.chart-canvas-wrap-animal canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+.chart-empty-mini {
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
 </style>
 {% endblock %}
 
@@ -141,7 +175,7 @@
 <div class="page-header">
   <div>
     <div class="page-title">🐂 <span>Animais</span> <span style="color:var(--accent)">Perspicuus</span></div>
-    <div class="page-sub">Última inferência por RFID — traits em sequência (detalhe, uma linha cada) e últimas fotos lateral/posterior</div>
+    <div class="page-sub">Última inferência por RFID — tabela de traits, <strong>gráficos de barras</strong> por dia (raw e escala 1–9) e últimas fotos lateral/posterior</div>
   </div>
   <div class="flex gap-8">
     <span class="pill pill-blue">{{ stats.animals_total }} animais totais</span>
@@ -250,6 +284,21 @@
         {% endif %}
       </div>
     </div>
+
+    {% if card.trait_keys_chart %}
+    <div class="animal-charts-grid">
+      <div class="animal-chart-cell">
+        <div class="traits-title">Evolução por dia — raw (−4…+4)</div>
+        <p class="traits-hint" style="margin-top:0;margin-bottom:8px">Barras agrupadas por data (UTC); um valor por dia (última passagem).</p>
+        <div class="chart-canvas-wrap-animal" id="wrap-persp-raw-{{ loop.index0 }}"><canvas id="persp-raw-{{ loop.index0 }}"></canvas></div>
+      </div>
+      <div class="animal-chart-cell">
+        <div class="traits-title">Evolução por dia — escala 1–9 (Δ0,5)</div>
+        <p class="traits-hint" style="margin-top:0;margin-bottom:8px">Mesmas datas e legenda de cores.</p>
+        <div class="chart-canvas-wrap-animal" id="wrap-persp-rs-{{ loop.index0 }}"><canvas id="persp-rs-{{ loop.index0 }}"></canvas></div>
+      </div>
+    </div>
+    {% endif %}
   </div>
   {% else %}
   <div class="empty-state">
@@ -273,4 +322,100 @@
   <span class="page-info">{{ total_animals }} animal(is) · página {{ page }} / {{ total_pages }}</span>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PERSP_ANIMAL_CHARTS = {{ animal_chart_payloads | tojson }};
+const PERSP_COLORS = ['#1b6fd4', '#00b894', '#ff9f40', '#cc66ff', '#ff4d6a', '#7dd3fc', '#0d7a5e'];
+const TICK_COLOR = '#5a6f82';
+const GRID_COLOR = '#dde4ed';
+
+function timelineMap(timeline) {
+  const m = new Map();
+  (timeline || []).forEach((t) => { if (t && t.date) m.set(t.date, t); });
+  return m;
+}
+
+function buildGroupedBarCanvas(wrapId, canvasId, timeline, traitKeys, field, yMin, yMax, yLabel) {
+  const wrap = document.getElementById(wrapId);
+  const c = document.getElementById(canvasId);
+  if (!wrap || !c) return null;
+  const labels = (timeline || []).map((t) => t.date).filter(Boolean);
+  const m = timelineMap(timeline);
+  if (!labels.length || !traitKeys.length) {
+    wrap.innerHTML = '<div class="chart-empty-mini">Sem pontos para o gráfico.</div>';
+    return null;
+  }
+  const datasets = traitKeys.map((name, i) => {
+    const color = PERSP_COLORS[i % PERSP_COLORS.length];
+    const data = labels.map((d) => {
+      const row = m.get(d);
+      if (!row || !row[field]) return null;
+      const v = row[field][name];
+      return v != null && Number.isFinite(Number(v)) ? Number(v) : null;
+    });
+    return {
+      label: name,
+      data,
+      backgroundColor: color + 'aa',
+      borderColor: color,
+      borderWidth: 1,
+      maxBarThickness: 14,
+    };
+  });
+  const ctx = c.getContext('2d');
+  return new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: TICK_COLOR, font: { family: 'JetBrains Mono', size: 9 } } },
+      },
+      scales: {
+        x: {
+          ticks: { color: TICK_COLOR, maxRotation: 45, maxTicksLimit: 16 },
+          grid: { color: GRID_COLOR },
+        },
+        y: {
+          min: yMin,
+          max: yMax,
+          ticks: { color: TICK_COLOR },
+          grid: { color: GRID_COLOR },
+          title: { display: true, text: yLabel, color: TICK_COLOR, font: { size: 10 } },
+        },
+      },
+    },
+  });
+}
+
+(PERSP_ANIMAL_CHARTS || []).forEach((payload, i) => {
+  const tl = payload.timeline || [];
+  const tk = payload.trait_keys || [];
+  if (!tl.length || !tk.length) return;
+  buildGroupedBarCanvas(
+    'wrap-persp-raw-' + i,
+    'persp-raw-' + i,
+    tl,
+    tk,
+    'traits',
+    -4,
+    4,
+    'Raw',
+  );
+  buildGroupedBarCanvas(
+    'wrap-persp-rs-' + i,
+    'persp-rs-' + i,
+    tl,
+    tk,
+    'traits_rs',
+    1,
+    9,
+    '1–9',
+  );
+});
+</script>
 {% endblock %}
