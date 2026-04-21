@@ -25,6 +25,12 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from perspicuus_scoring import (
+    TRAIT_SCORE_SCALE_META,
+    traits_mean_rescaled_from_mean,
+    traits_rescaled_from_traits,
+)
+
 import cv2
 import numpy as np
 import onnxruntime as ort
@@ -442,9 +448,11 @@ class PerspicuusInferenceEngine:
         if len(names) < len(raw):
             names.extend(f"T{i+1}" for i in range(len(names), len(raw)))
         traits = {names[i]: float(raw[i]) for i in range(len(raw))}
+        traits_rescaled = traits_rescaled_from_traits(traits)
 
         return {
             "traits": traits,
+            "traits_rescaled": traits_rescaled,
             "trait_names": names[: len(raw)],
             "scores_raw": [float(x) for x in raw],
             "yolo_conf": yconf,
@@ -516,6 +524,7 @@ def run_inference_for_event(event: Dict[str, Any], uploads_root: str) -> Dict[st
     out: Dict[str, Any] = {
         "schema_version": 2,
         "event_id": event.get("event_id"),
+        "trait_score_scale": dict(TRAIT_SCORE_SCALE_META),
         "views": {},
         "skipped": {},
         "config_ok": eng.is_ready(),
@@ -554,6 +563,7 @@ def run_inference_for_event(event: Dict[str, Any], uploads_root: str) -> Dict[st
                 "frame_index": idx,
                 "path": p,
                 "traits": {},
+                "traits_rescaled": {},
                 "trait_names": [],
                 "yolo_conf": None,
                 "bbox": None,
@@ -573,6 +583,9 @@ def run_inference_for_event(event: Dict[str, Any], uploads_root: str) -> Dict[st
             try:
                 r = eng.infer_bgr(img, view)
                 row["traits"] = r["traits"]
+                row["traits_rescaled"] = r.get("traits_rescaled") or traits_rescaled_from_traits(
+                    r.get("traits") or {}
+                )
                 row["trait_names"] = r["trait_names"]
                 row["yolo_conf"] = r["yolo_conf"]
                 row["bbox"] = r["bbox"]
@@ -583,6 +596,7 @@ def run_inference_for_event(event: Dict[str, Any], uploads_root: str) -> Dict[st
             view_rows.append(row)
 
         traits_mean = traits_mean_from_frames(view_rows)
+        traits_mean_rescaled = traits_mean_rescaled_from_mean(traits_mean)
         n_ok = sum(
             1
             for r in view_rows
@@ -591,6 +605,7 @@ def run_inference_for_event(event: Dict[str, Any], uploads_root: str) -> Dict[st
         out["views"][view] = {
             "frames": view_rows,
             "traits_mean": traits_mean,
+            "traits_mean_rescaled": traits_mean_rescaled,
             "n_frames_inferred": n_ok,
         }
 

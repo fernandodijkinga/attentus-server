@@ -54,6 +54,7 @@ from ecc_module import (
     ecc_farm_time_series,
     ecc_attention_ranking,
 )
+from perspicuus_scoring import rescale_perspicuus_trait_score
 
 TZ_BR = ZoneInfo('America/Sao_Paulo')
 
@@ -170,6 +171,15 @@ def template_perspicuus_first_preview(row):
             if u:
                 return u
     return ''
+
+
+@app.template_filter('perspicuus_rescaled')
+def template_perspicuus_rescaled(value):
+    """Escala 1…9 (passo 0,5) a partir do raw −4…+4; útil para JSON antigo sem traits_*_rescaled."""
+    try:
+        return rescale_perspicuus_trait_score(float(value))
+    except (TypeError, ValueError):
+        return None
 
 
 # Temperatura/umidade: DHT22 (dht22_*) ou chaves legadas bmp280/bme280 no JSON do firmware
@@ -808,8 +818,22 @@ def _traits_mean_summary(inf: dict, view: str, max_traits: int = 5) -> str:
     tm = v.get('traits_mean') or {}
     if not tm:
         return '—'
+    tm_rs = v.get('traits_mean_rescaled') or {}
     items = list(tm.items())[:max_traits]
-    s = ', '.join(f'{k}:{float(val):.2f}' for k, val in items)
+    parts = []
+    for k, val in items:
+        try:
+            raw_f = float(val)
+        except (TypeError, ValueError):
+            parts.append(f'{k}:?')
+            continue
+        try:
+            rs = tm_rs.get(k)
+            rs_f = float(rs) if rs is not None else rescale_perspicuus_trait_score(raw_f)
+        except (TypeError, ValueError):
+            rs_f = rescale_perspicuus_trait_score(raw_f)
+        parts.append(f'{k}:{raw_f:.2f}/{rs_f:.1f}')
+    s = ', '.join(parts)
     if len(tm) > max_traits:
         s += '…'
     return s
@@ -895,9 +919,12 @@ def _traits_detail_rows(
     def _row(name: str) -> dict:
         cur = latest.get(name)
         vals = hist_points.get(name, [])
+        cur_f = float(cur) if cur is not None else None
+        cur_rs = rescale_perspicuus_trait_score(cur_f) if cur_f is not None else None
         return {
             'name': name,
-            'current': float(cur) if cur is not None else None,
+            'current': cur_f,
+            'current_rescaled': cur_rs,
             'n': len(vals),
         }
 
@@ -1305,6 +1332,95 @@ def serve_ecc_media(farm, day, filename):
     return send_file(filepath)
 
 
+def _ecc_parse_media_url(web_path: str) -> tuple[str, str, str] | None:
+    """Extrai (farm_slug, day_slug, filename) de /api/ecc/media/... ou None."""
+    p = str(web_path or '').strip()
+    prefix = '/api/ecc/media/'
+    if not p.startswith(prefix):
+        return None
+    rest = p[len(prefix) :].lstrip('/')
+    parts = rest.split('/', 2)
+    if len(parts) < 3:
+        return None
+    return parts[0], parts[1], parts[2]
+
+
+def _ecc_abs_path_from_web_path(web_path: str) -> str | None:
+    parsed = _ecc_parse_media_url(web_path)
+    if not parsed:
+        return None
+    farm_s, day_s, fname = parsed
+    fname = secure_filename(fname) or ''
+    if not fname:
+        return None
+    base = os.path.abspath(os.path.join(ECC_UPLOADS_DIR, ecc_safe_slug(farm_s), ecc_safe_slug(day_s)))
+    filepath = os.path.abspath(os.path.join(base, fname))
+    if not filepath.startswith(base + os.sep) or not os.path.isfile(filepath):
+        return None
+    return filepath
+
+
+def _ecc_reinfer_record_by_id(db, rid: int) -> dict:
+    """
+    Reexecuta infer_ecc_posterior na imagem original do registro e atualiza
+    trait_name, raw_score, ecc_score, traits_json, meta_json, error_text, thumb_path, bbox_path.
+    """
+    row = db.execute('SELECT * FROM ecc_bcs_records WHERE id = ?', (rid,)).fetchone()
+    if not row:
+        return {'id': rid, 'ok': False, 'error': 'not_found'}
+    d = dict(row)
+    dest = _ecc_abs_path_from_web_path(d.get('image_path') or '')
+    if not dest:
+        msg = 'arquivo_imagem_nao_encontrado'
+        db.execute(
+            'UPDATE ecc_bcs_records SET error_text = ? WHERE id = ?',
+            (msg, rid),
+        )
+        db.commit()
+        return {'id': rid, 'ok': False, 'error': msg}
+
+    inf = infer_ecc_posterior(dest)
+    parsed = _ecc_parse_media_url(d.get('image_path') or '')
+    thumb_web, bbox_web = '', ''
+    if parsed:
+        farm_seg, day_seg, final_name = parsed[0], parsed[1], os.path.basename(dest)
+        bbox = (inf.get('meta') or {}).get('bbox')
+        yconf = (inf.get('meta') or {}).get('yolo_conf')
+        folder = os.path.dirname(dest)
+        if bbox:
+            thumb_name = f'thumb_{final_name}'
+            thumb_abs = os.path.join(folder, thumb_name)
+            if save_ecc_crop_thumbnail(dest, bbox, thumb_abs):
+                thumb_web = f'/api/ecc/media/{farm_seg}/{day_seg}/{thumb_name}'
+            box_name = f'bbox_{final_name}'
+            box_abs = os.path.join(folder, box_name)
+            if save_ecc_bbox_overlay(dest, bbox, box_abs, yolo_conf=yconf):
+                bbox_web = f'/api/ecc/media/{farm_seg}/{day_seg}/{box_name}'
+
+    db.execute(
+        """
+        UPDATE ecc_bcs_records SET
+            trait_name = ?, raw_score = ?, ecc_score = ?, traits_json = ?, meta_json = ?, error_text = ?,
+            thumb_path = ?, bbox_path = ?
+        WHERE id = ?
+        """,
+        (
+            inf.get('trait_name') or '',
+            inf.get('raw_score'),
+            inf.get('ecc_score'),
+            json.dumps(inf.get('traits') or {}, ensure_ascii=False),
+            json.dumps(inf.get('meta') or {}, ensure_ascii=False),
+            inf.get('error'),
+            thumb_web,
+            bbox_web,
+            rid,
+        ),
+    )
+    db.commit()
+    err = inf.get('error')
+    return {'id': rid, 'ok': not err, 'error': err or None}
+
+
 def _ecc_save_one(db, now_iso: str, farm_id: str, inference_date: str, animal_tag: str, fs) -> tuple[bool, str]:
     ext = os.path.splitext(fs.filename or '')[1].lower()
     if ext not in ECC_IMAGE_EXTS:
@@ -1479,6 +1595,62 @@ def api_ecc_upload_one():
         return jsonify({'status': 'ok', 'animal_tag': animal_tag}), 201
     db.rollback()
     return jsonify({'error': msg, 'animal_tag': animal_tag}), 400
+
+
+@app.route('/api/ecc/recalculate-all', methods=['POST'])
+@login_required
+def api_ecc_recalculate_all():
+    """
+    Reexecuta o pipeline ECC (posterior) em todas as imagens guardadas e atualiza
+    raw_score, ecc_score, traits_json, meta_json, error_text, thumb_path e bbox_path.
+    Corpo JSON opcional: {\"farm_id\": \"...\"} para limitar a uma fazenda.
+    Limite de registros: variável de ambiente ECC_RECALC_MAX (padrão 5000).
+    """
+    try:
+        from perspicuus_inference import get_engine
+        eng = get_engine()
+    except ImportError as e:
+        return jsonify({'error': f'Módulo de inferência indisponível: {e}'}), 503
+    if not eng.is_ready() or not eng.onnx_path_for('posterior'):
+        return jsonify({'error': 'Motor ONNX (YOLO + posterior) não está configurado.'}), 400
+
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    farm = str(data.get('farm_id') or request.args.get('farm_id', '') or '').strip()
+    cond = ['1=1']
+    params: list[str] = []
+    if farm:
+        cond.append('farm_id = ?')
+        params.append(farm)
+    where = ' AND '.join(cond)
+    max_n = max(1, min(10000, int(os.environ.get('ECC_RECALC_MAX', '5000'))))
+    ids = [
+        r[0]
+        for r in db.execute(
+            f'SELECT id FROM ecc_bcs_records WHERE {where} ORDER BY id ASC',
+            params,
+        ).fetchall()[:max_n]
+    ]
+
+    ok_n = 0
+    err_n = 0
+    sample_errs: list[dict] = []
+    for rid in ids:
+        r = _ecc_reinfer_record_by_id(db, rid)
+        if r.get('ok'):
+            ok_n += 1
+        else:
+            err_n += 1
+            if len(sample_errs) < 25:
+                sample_errs.append(r)
+    return jsonify({
+        'status': 'done',
+        'total': len(ids),
+        'ok': ok_n,
+        'errors': err_n,
+        'farm_id_filter': farm or None,
+        'sample_errors': sample_errs,
+    })
 
 
 @app.route('/ecc/analise-rebanho')

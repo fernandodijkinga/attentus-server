@@ -90,6 +90,8 @@
 }
 .trait-scores li span { color: var(--muted); margin-right: 4px; }
 .trait-scores li strong { color: var(--accent2); }
+.trait-scores li .trait-rescaled { color: var(--primary); font-weight: 700; }
+.trait-scores li .trait-scale-sep { color: var(--muted); margin: 0 2px; }
 .infer-meta-line { font-size: 10px; color: var(--muted); margin-top: 6px; font-family: var(--mono); }
 .infer-err { color: #f07178; font-size: 12px; margin-bottom: 8px; }
 .infer-skip { font-size: 11px; color: var(--text2); margin-bottom: 4px; }
@@ -98,6 +100,7 @@
   background: rgba(0,229,160,.12); border: 1px solid rgba(0,229,160,.25);
 }
 .traits-mean-box .mean-label { font-size: 10px; color: var(--accent); margin-bottom: 6px; font-family: var(--mono); text-transform: uppercase; letter-spacing: 1px; }
+.scale-legend { font-size: 9px; color: var(--text2); font-weight: 400; text-transform: none; letter-spacing: 0; margin-top: 4px; line-height: 1.35; }
 </style>
 {% endblock %}
 
@@ -245,9 +248,17 @@
             {% if tmean %}
             <div class="traits-mean-box">
               <div class="mean-label">Média dos scores ({% if vd is mapping %}{{ vd.get('n_frames_inferred', vrows|length) }}{% else %}{{ vrows|length }}{% endif %} frame(s) com sucesso)</div>
+              <div class="scale-legend">Cada trait: <b>raw</b> (−4…+4) · <b>escala</b> 1–9 (passo 0,5)</div>
               <ul class="trait-scores">
+                {% set tmean_rs = (vd.get('traits_mean_rescaled') if vd is mapping else {}) or {} %}
                 {% for name, val in tmean.items() %}
-                <li><span>{{ name }}</span><strong>{{ '%.4f'|format(val) }}</strong></li>
+                <li>
+                  <span>{{ name }}</span>
+                  <strong title="raw">{{ '%.4f'|format(val) }}</strong>
+                  <span class="trait-scale-sep">·</span>
+                  {% set rs = tmean_rs.get(name) %}
+                  <strong class="trait-rescaled" title="escala 1–9 (Δ0,5)">{% if rs is not none and rs != '' %}{{ '%g'|format(rs|float) }}{% else %}{{ '%g'|format(val|perspicuus_rescaled) }}{% endif %}</strong>
+                </li>
                 {% endfor %}
               </ul>
             </div>
@@ -257,8 +268,15 @@
               <div class="mono text-muted" style="font-size:10px;margin-bottom:6px">Por imagem · frame #{{ row.frame_index }}</div>
               {% if row.traits %}
               <ul class="trait-scores">
+                {% set row_rs = row.get('traits_rescaled', {}) or {} %}
                 {% for name, val in row.traits.items() %}
-                <li><span>{{ name }}</span><strong>{{ '%.4f'|format(val) }}</strong></li>
+                <li>
+                  <span>{{ name }}</span>
+                  <strong title="raw">{{ '%.4f'|format(val) }}</strong>
+                  <span class="trait-scale-sep">·</span>
+                  {% set rsv = row_rs.get(name) %}
+                  <strong class="trait-rescaled" title="escala 1–9 (Δ0,5)">{% if rsv is not none and rsv != '' %}{{ '%g'|format(rsv|float) }}{% else %}{{ '%g'|format(val|perspicuus_rescaled) }}{% endif %}</strong>
+                </li>
                 {% endfor %}
               </ul>
               {% elif row.error %}

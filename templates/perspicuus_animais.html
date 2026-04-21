@@ -76,7 +76,7 @@
 }
 .trait-head {
   display: grid;
-  grid-template-columns: 1.75rem 1fr 4.5rem 6rem;
+  grid-template-columns: 1.75rem 1fr 4.25rem 4.25rem 5.5rem;
   gap: 10px;
   align-items: baseline;
   padding: 0 0 6px;
@@ -92,7 +92,7 @@
 }
 .trait-row {
   display: grid;
-  grid-template-columns: 1.75rem 1fr 4.5rem 6rem;
+  grid-template-columns: 1.75rem 1fr 4.25rem 4.25rem 5.5rem;
   align-items: baseline;
   gap: 10px;
   padding: 7px 0;
@@ -115,7 +115,14 @@
   font-family: var(--mono);
   font-size: 13px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent2);
+  text-align: right;
+}
+.trait-val-rs {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
   text-align: right;
 }
 .trait-hist {
@@ -213,15 +220,16 @@
         {% if card.trait_cards %}
         <div class="traits-title">Traits (última inferência)</div>
         {% if trait_order_defined %}
-        <p class="traits-hint">Ordem fixa via <span class="mono" style="color:var(--accent2)">PERSPICUUS_TRAIT_ORDER</span> (traits extra no fim).</p>
+        <p class="traits-hint">Ordem fixa via <span class="mono" style="color:var(--accent2)">PERSPICUUS_TRAIT_ORDER</span> (traits extra no fim). <b>Raw</b> −4…+4; <b>1–9</b> em passos de 0,5.</p>
         {% else %}
-        <p class="traits-hint">Ordem automática: <span class="mono">T1</span>, <span class="mono">T2</span>, … e restantes alfabeticamente.</p>
+        <p class="traits-hint">Ordem automática: <span class="mono">T1</span>, <span class="mono">T2</span>, … e restantes alfabeticamente. <b>Raw</b> −4…+4; <b>1–9</b> em passos de 0,5.</p>
         {% endif %}
         <div class="trait-list">
           <div class="trait-head" aria-hidden="true">
             <span>#</span>
             <span>Trait</span>
-            <span style="text-align:right">Valor</span>
+            <span style="text-align:right">Raw</span>
+            <span style="text-align:right">1–9</span>
             <span style="text-align:right">Histórico</span>
           </div>
           {% for t in card.trait_cards %}
@@ -229,6 +237,7 @@
             <span class="trait-idx">{{ loop.index }}</span>
             <span class="trait-name">{{ t.name }}</span>
             <span class="trait-val">{% if t.current is not none %}{{ '%.2f'|format(t.current) }}{% else %}—{% endif %}</span>
+            <span class="trait-val-rs">{% if t.current_rescaled is not none %}{{ '%g'|format(t.current_rescaled) }}{% else %}—{% endif %}</span>
             <span class="trait-hist">{% if t.n %}{{ t.n }} inf.{% else %}—{% endif %}</span>
           </div>
           {% endfor %}

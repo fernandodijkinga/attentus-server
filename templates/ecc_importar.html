@@ -26,10 +26,11 @@
     <div class="page-title">📥 <span>ECC</span> <span style="color:var(--accent)">importar</span></div>
     <div class="page-sub">Upload único/lote para pipeline ECC posterior (YOLO + ONNX)</div>
   </div>
-  <div class="flex gap-8">
+  <div class="flex gap-8" style="flex-wrap:wrap;align-items:center">
     <span class="pill pill-blue">{{ stats.total_records }} registros</span>
     <span class="pill pill-orange">{{ stats.farms }} fazenda(s)</span>
     <span class="pill pill-green">{{ stats.animals }} animal(is)</span>
+    <button type="button" class="btn btn-ghost btn-sm" id="ecc-recalc-header-btn" title="Reaplica inferência em todas as imagens ECC guardadas">↻ Recalcular todos os ECC</button>
   </div>
 </div>
 
@@ -101,6 +102,25 @@
   </div>
 </div>
 
+<div class="form-card" style="margin-bottom:16px">
+  <div class="card-title">Recalcular condição corporal (ECC)</div>
+  <p class="form-sub">Reexecuta o pipeline posterior (YOLO + ONNX) em <strong>cada imagem já guardada</strong>, atualizando escore ECC (1–5), raw, traits, miniatura, imagem com bbox e mensagem de erro. Pode demorar se existirem muitos registros (limite configurável no servidor via <span class="mono">ECC_RECALC_MAX</span>).</p>
+  <div class="row-2">
+    <div class="field">
+      <label>Limitar por fazenda (opcional)</label>
+      <input type="text" id="ecc-recalc-farm" placeholder="vazio = todas as fazendas" list="ecc-farm-datalist" autocomplete="off">
+      <datalist id="ecc-farm-datalist">
+        {% for f in farms %}
+        <option value="{{ f }}"></option>
+        {% endfor %}
+      </datalist>
+    </div>
+    <div class="field" style="align-self:flex-end">
+      <button type="button" class="btn btn-accent btn-sm" id="ecc-recalc-btn">Recalcular todos os registros</button>
+    </div>
+  </div>
+</div>
+
 <div class="card">
   <div class="card-title">Últimos registros ECC</div>
   <div class="table-wrap">
@@ -139,6 +159,39 @@
 
 {% block scripts %}
 <script>
+const ECC_RECALC_URL = {{ url_for('api_ecc_recalculate_all') | tojson }};
+
+async function eccRecalculateAll() {
+  const farmEl = document.getElementById('ecc-recalc-farm');
+  const farm = (farmEl && farmEl.value) ? farmEl.value.trim() : '';
+  const scope = farm ? `fazenda «${farm}»` : 'todas as fazendas';
+  if (!confirm(`Recalcular todos os escores ECC em disco para ${scope}?`)) return;
+  const btn = document.getElementById('ecc-recalc-btn');
+  const hbtn = document.getElementById('ecc-recalc-header-btn');
+  [btn, hbtn].forEach((b) => { if (b) b.disabled = true; });
+  try {
+    const r = await fetch(ECC_RECALC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ farm_id: farm }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      toast(j.error || ('HTTP ' + r.status), false);
+      return;
+    }
+    toast(`ECC: ${j.ok} inferências OK · ${j.errors} com erro · ${j.total} registo(s).`);
+    setTimeout(() => { window.location.reload(); }, 900);
+  } catch (e) {
+    toast('Falha de rede ao recalcular ECC.', false);
+  } finally {
+    [btn, hbtn].forEach((b) => { if (b) b.disabled = false; });
+  }
+}
+document.getElementById('ecc-recalc-btn')?.addEventListener('click', eccRecalculateAll);
+document.getElementById('ecc-recalc-header-btn')?.addEventListener('click', eccRecalculateAll);
+
 async function runSequentialBatchUpload() {
   const form = document.getElementById('ecc-batch-form');
   if (!form) return;
