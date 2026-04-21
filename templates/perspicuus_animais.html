@@ -2,7 +2,6 @@
 {% block title %}Animais Perspicuus{% endblock %}
 
 {% block head %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 .animals-grid { display: grid; gap: 16px; }
 .animal-card {
@@ -67,109 +66,26 @@
   font-size: 10px;
   color: var(--text2);
   font-family: var(--mono);
-  margin-bottom: 10px;
-  line-height: 1.4;
-}
-.trait-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-.trait-head {
-  display: grid;
-  grid-template-columns: 1.75rem 1fr 4.25rem 4.25rem 5.5rem;
-  gap: 10px;
-  align-items: baseline;
-  padding: 0 0 6px;
-  border-bottom: 1px solid var(--border2);
-  font-size: 9px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: var(--muted);
-  font-family: var(--mono);
-}
-@media (max-width: 640px) {
-  .trait-head { display: none; }
-}
-.trait-row {
-  display: grid;
-  grid-template-columns: 1.75rem 1fr 4.25rem 4.25rem 5.5rem;
-  align-items: baseline;
-  gap: 10px;
-  padding: 7px 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-}
-.trait-row:last-child { border-bottom: none; }
-.trait-idx {
-  font-size: 10px;
-  color: var(--muted);
-  font-family: var(--mono);
-  text-align: right;
+  margin-bottom: 8px;
+  line-height: 1.35;
 }
 .trait-name {
   color: var(--text);
   font-family: var(--mono);
   letter-spacing: .2px;
 }
-.trait-val {
-  font-family: var(--mono);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--accent2);
-  text-align: right;
-}
-.trait-val-rs {
-  font-family: var(--mono);
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--primary);
-  text-align: right;
-}
-.trait-hist {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--text2);
-  text-align: right;
-}
 .filters-row {
   display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 16px;
 }
-.chart-canvas-wrap-animal {
-  position: relative;
-  height: 260px;
-  width: 100%;
-}
-.chart-canvas-wrap-animal canvas {
-  display: block;
-  width: 100% !important;
-  height: 100% !important;
-}
-.chart-empty-mini {
-  min-height: 200px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  color: var(--muted);
-  font-family: var(--mono);
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-}
 /* Barra gradiente 1–9 (mesmo conceito que ECC 1–5; verde no centro = 5) */
-.persp-gauges-block {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-.persp-gauge-row { margin-bottom: 16px; }
+.persp-gauge-row { margin-bottom: 6px; }
 .persp-gauge-row:last-child { margin-bottom: 0; }
 .persp-gauge-label-row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 10px;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 .persp-gauge-val {
   font-family: var(--mono);
@@ -184,7 +100,7 @@
   color: var(--text2);
   font-size: 10px;
   letter-spacing: 0.5px;
-  margin-bottom: 6px;
+  margin-bottom: 3px;
 }
 .persp-gauge-bar {
   position: relative;
@@ -204,11 +120,6 @@
   box-shadow: 0 0 0 1px rgba(0,0,0,.35);
   transform: translateX(-50%);
 }
-.animal-chart-raw-only {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
 </style>
 {% endblock %}
 
@@ -216,7 +127,7 @@
 <div class="page-header">
   <div>
     <div class="page-title">🐂 <span>Animais</span> <span style="color:var(--accent)">Perspicuus</span></div>
-    <div class="page-sub">Última inferência por RFID — tabela de traits, <strong>gráficos de barras</strong> por dia (raw e escala 1–9) e últimas fotos lateral/posterior</div>
+    <div class="page-sub">Última inferência por RFID — escala <strong>1–9</strong> por trait e últimas fotos lateral/posterior</div>
   </div>
   <div class="flex gap-8">
     <span class="pill pill-blue">{{ stats.animals_total }} animais totais</span>
@@ -293,33 +204,8 @@
 
       <div class="traits-col">
         {% if card.trait_cards %}
-        <div class="traits-title">Traits (última inferência)</div>
-        {% if trait_order_defined %}
-        <p class="traits-hint">Ordem fixa via <span class="mono" style="color:var(--accent2)">PERSPICUUS_TRAIT_ORDER</span> (traits extra no fim). <b>Raw</b> −4…+4; <b>1–9</b> em passos de 0,5.</p>
-        {% else %}
-        <p class="traits-hint">Ordem automática: <span class="mono">T1</span>, <span class="mono">T2</span>, … e restantes alfabeticamente. <b>Raw</b> −4…+4; <b>1–9</b> em passos de 0,5.</p>
-        {% endif %}
-        <div class="trait-list">
-          <div class="trait-head" aria-hidden="true">
-            <span>#</span>
-            <span>Trait</span>
-            <span style="text-align:right">Raw</span>
-            <span style="text-align:right">1–9</span>
-            <span style="text-align:right">Histórico</span>
-          </div>
-          {% for t in card.trait_cards %}
-          <div class="trait-row">
-            <span class="trait-idx">{{ loop.index }}</span>
-            <span class="trait-name">{{ t.name }}</span>
-            <span class="trait-val">{% if t.current is not none %}{{ '%.2f'|format(t.current) }}{% else %}—{% endif %}</span>
-            <span class="trait-val-rs">{% if t.current_rescaled is not none %}{{ '%g'|format(t.current_rescaled) }}{% else %}—{% endif %}</span>
-            <span class="trait-hist">{% if t.n %}{{ t.n }} inf.{% else %}—{% endif %}</span>
-          </div>
-          {% endfor %}
-        </div>
-        <div class="persp-gauges-block">
-          <div class="traits-title">Escala 1–9 (última inferência)</div>
-          <p class="traits-hint" style="margin-top:4px;margin-bottom:10px">Gradiente tipo ECC: vermelho nas pontas, <strong>ideal ao centro (5)</strong>; marcador branco = valor reescalado.</p>
+        <div class="traits-title">Escala 1–9 (última inferência)</div>
+        <p class="traits-hint" style="margin-top:2px">Vermelho nas pontas, <strong>ideal ao centro (5)</strong>; marcador = valor reescalado.</p>
           {% for t in card.trait_cards %}
           <div class="persp-gauge-row">
             <div class="persp-gauge-label-row">
@@ -340,7 +226,6 @@
             </div>
           </div>
           {% endfor %}
-        </div>
         {% else %}
         <div class="empty-state" style="margin:0">
           <div class="icon">◇</div>
@@ -350,13 +235,6 @@
       </div>
     </div>
 
-    {% if card.trait_keys_chart %}
-    <div class="animal-chart-raw-only">
-      <div class="traits-title">Evolução por dia — raw (−4…+4)</div>
-      <p class="traits-hint" style="margin-top:4px;margin-bottom:8px">Barras agrupadas por data (UTC); um valor por dia (última passagem).</p>
-      <div class="chart-canvas-wrap-animal" id="wrap-persp-raw-{{ loop.index0 }}"><canvas id="persp-raw-{{ loop.index0 }}"></canvas></div>
-    </div>
-    {% endif %}
   </div>
   {% else %}
   <div class="empty-state">
@@ -380,90 +258,4 @@
   <span class="page-info">{{ total_animals }} animal(is) · página {{ page }} / {{ total_pages }}</span>
 </div>
 {% endif %}
-{% endblock %}
-
-{% block scripts %}
-<script>
-const PERSP_ANIMAL_CHARTS = {{ animal_chart_payloads | tojson }};
-const PERSP_COLORS = ['#1b6fd4', '#00b894', '#ff9f40', '#cc66ff', '#ff4d6a', '#7dd3fc', '#0d7a5e'];
-const TICK_COLOR = '#5a6f82';
-const GRID_COLOR = '#dde4ed';
-
-function timelineMap(timeline) {
-  const m = new Map();
-  (timeline || []).forEach((t) => { if (t && t.date) m.set(t.date, t); });
-  return m;
-}
-
-function buildGroupedBarCanvas(wrapId, canvasId, timeline, traitKeys, field, yMin, yMax, yLabel) {
-  const wrap = document.getElementById(wrapId);
-  const c = document.getElementById(canvasId);
-  if (!wrap || !c) return null;
-  const labels = (timeline || []).map((t) => t.date).filter(Boolean);
-  const m = timelineMap(timeline);
-  if (!labels.length || !traitKeys.length) {
-    wrap.innerHTML = '<div class="chart-empty-mini">Sem pontos para o gráfico.</div>';
-    return null;
-  }
-  const datasets = traitKeys.map((name, i) => {
-    const color = PERSP_COLORS[i % PERSP_COLORS.length];
-    const data = labels.map((d) => {
-      const row = m.get(d);
-      if (!row || !row[field]) return null;
-      const v = row[field][name];
-      return v != null && Number.isFinite(Number(v)) ? Number(v) : null;
-    });
-    return {
-      label: name,
-      data,
-      backgroundColor: color + 'aa',
-      borderColor: color,
-      borderWidth: 1,
-      maxBarThickness: 14,
-    };
-  });
-  const ctx = c.getContext('2d');
-  return new Chart(ctx, {
-    type: 'bar',
-    data: { labels, datasets },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { labels: { color: TICK_COLOR, font: { family: 'JetBrains Mono', size: 9 } } },
-      },
-      scales: {
-        x: {
-          ticks: { color: TICK_COLOR, maxRotation: 45, maxTicksLimit: 16 },
-          grid: { color: GRID_COLOR },
-        },
-        y: {
-          min: yMin,
-          max: yMax,
-          ticks: { color: TICK_COLOR },
-          grid: { color: GRID_COLOR },
-          title: { display: true, text: yLabel, color: TICK_COLOR, font: { size: 10 } },
-        },
-      },
-    },
-  });
-}
-
-(PERSP_ANIMAL_CHARTS || []).forEach((payload, i) => {
-  const tl = payload.timeline || [];
-  const tk = payload.trait_keys || [];
-  if (!tl.length || !tk.length) return;
-  buildGroupedBarCanvas(
-    'wrap-persp-raw-' + i,
-    'persp-raw-' + i,
-    tl,
-    tk,
-    'traits',
-    -4,
-    4,
-    'Raw',
-  );
-});
-</script>
 {% endblock %}

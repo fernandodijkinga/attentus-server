@@ -1116,57 +1116,10 @@ def _traits_detail_rows(
     return rows
 
 
-def _trait_timeline_for_animal(
-    db,
-    rfid: str,
-    max_rows: int = 120,
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """
-    Um ponto por dia (última inferência do dia): traits merged raw e reescala 1–9.
-    """
-    rows = db.execute(
-        """
-        SELECT timestamp_utc, inference_json FROM perspicuus_events
-        WHERE animal_rfid = ?
-          AND inference_at IS NOT NULL AND trim(inference_at) != ''
-        ORDER BY timestamp_utc ASC, id ASC
-        LIMIT ?
-        """,
-        (rfid, max(1, min(200, max_rows))),
-    ).fetchall()
-    by_day: dict[str, dict[str, float]] = {}
-    for row in rows:
-        inf = _safe_load_json(row['inference_json'] or '{}', {})
-        if not isinstance(inf, dict) or inf.get('error'):
-            continue
-        tm = _merged_traits_mean(inf)
-        if not tm:
-            continue
-        day = _persp_event_day_iso(row['timestamp_utc'])
-        if not day:
-            continue
-        by_day[day] = {str(k): float(v) for k, v in tm.items()}
-    timeline: list[dict[str, Any]] = []
-    for day in sorted(by_day.keys()):
-        traits = by_day[day]
-        timeline.append(
-            {
-                'date': day,
-                'traits': traits,
-                'traits_rs': {k: rescale_perspicuus_trait_score(v) for k, v in traits.items()},
-            }
-        )
-    all_keys: set[str] = set()
-    for t in timeline:
-        all_keys.update((t.get('traits') or {}).keys())
-    trait_keys = sorted(all_keys, key=_trait_sort_key)
-    return timeline, trait_keys
-
-
 @app.route('/perspicuus/animais')
 @login_required
 def perspicuus_animais():
-    """Visão por animal: última inferência, histórico de traits e últimas fotos."""
+    """Visão por animal: última inferência (escala 1–9) e últimas fotos."""
     db = get_db()
     page = max(1, int(request.args.get('page', 1)))
     per_page = 12
@@ -1227,27 +1180,7 @@ def perspicuus_animais():
         latest = dict(last_row)
         latest_inf = _safe_load_json(latest.get('inference_json') or '{}', {})
         latest_traits = _merged_traits_mean(latest_inf)
-
-        hist_rows = db.execute(
-            """
-            SELECT timestamp_utc, inference_json
-            FROM perspicuus_events
-            WHERE animal_rfid = ?
-              AND inference_at IS NOT NULL
-              AND trim(inference_at) != ''
-            ORDER BY timestamp_utc DESC
-            LIMIT 12
-            """,
-            (rfid,),
-        ).fetchall()
-        hist_points: dict[str, list[float]] = defaultdict(list)
-        for hr in reversed(hist_rows):
-            inf = _safe_load_json(hr['inference_json'] or '{}', {})
-            for trait, val in _merged_traits_mean(inf).items():
-                hist_points[trait].append(float(val))
-
-        trait_cards = _traits_detail_rows(latest_traits, hist_points)
-        trait_timeline, trait_keys_chart = _trait_timeline_for_animal(db, rfid)
+        trait_cards = _traits_detail_rows(latest_traits, {})
 
         cards.append({
             'rfid': rfid,
@@ -1261,8 +1194,6 @@ def perspicuus_animais():
             'last_lateral_path': _last_frame_path(latest.get('lateral_json') or '[]'),
             'last_posterior_path': _last_frame_path(latest.get('posterior_json') or '[]'),
             'trait_cards': trait_cards,
-            'trait_timeline': trait_timeline,
-            'trait_keys_chart': trait_keys_chart,
         })
 
     stations = [row[0] for row in db.execute(
@@ -1284,15 +1215,9 @@ def perspicuus_animais():
         ).fetchone()[0],
     }
 
-    animal_chart_payloads = [
-        {'timeline': c['trait_timeline'], 'trait_keys': c['trait_keys_chart']}
-        for c in cards
-    ]
-
     return render_template(
         'perspicuus_animais.html',
         cards=cards,
-        animal_chart_payloads=animal_chart_payloads,
         page=page,
         total_pages=total_pages,
         total_animals=total_animals,
@@ -1300,7 +1225,6 @@ def perspicuus_animais():
         q_filter=q,
         stations=stations,
         stats=stats,
-        trait_order_defined=bool(_parse_trait_order_env()),
     )
 
 
