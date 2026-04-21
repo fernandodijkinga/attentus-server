@@ -31,7 +31,7 @@
 }
 .photo-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 .photo-item img {
@@ -92,6 +92,17 @@
   font-size: 14px;
   font-weight: 700;
   color: var(--primary);
+}
+.persp-gauge-val-wrap {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.persp-gauge-val-raw {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text2);
 }
 .persp-gauge-scale-head {
   display: flex;
@@ -211,7 +222,12 @@
             <div class="persp-gauge-label-row">
               <span class="trait-name">{{ t.name }}</span>
               {% if t.current_rescaled is not none %}
-              <span class="persp-gauge-val">{{ '%g'|format(t.current_rescaled) }}</span>
+              <span class="persp-gauge-val-wrap">
+                <span class="persp-gauge-val">{{ '%g'|format(t.current_rescaled) }}</span>
+                {% if t.current is not none %}
+                <span class="persp-gauge-val-raw">raw {{ '%.2f'|format(t.current) }}</span>
+                {% endif %}
+              </span>
               {% else %}
               <span class="persp-gauge-val" style="color:var(--muted);font-weight:600">—</span>
               {% endif %}
