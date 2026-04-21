@@ -184,6 +184,17 @@ def template_perspicuus_rescaled(value):
         return None
 
 
+@app.template_filter('persp_gauge_left_pct')
+def template_persp_gauge_left_pct(value) -> float:
+    """Posição do marcador (0–100) na barra gradiente 1…9 (verde ao centro = 5)."""
+    try:
+        x = float(value)
+        x = max(1.0, min(9.0, x))
+        return (x - 1.0) / 8.0 * 100.0
+    except (TypeError, ValueError):
+        return 50.0
+
+
 # Temperatura/umidade: DHT22 (dht22_*) ou chaves legadas bmp280/bme280 no JSON do firmware
 def _ingest_temp_c(data):
     if not isinstance(data, dict):

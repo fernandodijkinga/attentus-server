@@ -135,18 +135,6 @@
 .filters-row {
   display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 16px;
 }
-.animal-charts-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-@media (max-width: 900px) {
-  .animal-charts-grid { grid-template-columns: 1fr; }
-}
-.animal-chart-cell .traits-title { margin-bottom: 4px; }
 .chart-canvas-wrap-animal {
   position: relative;
   height: 260px;
@@ -167,6 +155,59 @@
   font-family: var(--mono);
   border: 1px dashed var(--border);
   border-radius: 8px;
+}
+/* Barra gradiente 1–9 (mesmo conceito que ECC 1–5; verde no centro = 5) */
+.persp-gauges-block {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.persp-gauge-row { margin-bottom: 16px; }
+.persp-gauge-row:last-child { margin-bottom: 0; }
+.persp-gauge-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.persp-gauge-val {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--primary);
+}
+.persp-gauge-scale-head {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  color: var(--text2);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.persp-gauge-bar {
+  position: relative;
+  height: 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: linear-gradient(90deg, #ff4d6a 0%, #ff9f40 22%, #00e5a0 50%, #ff9f40 78%, #ff4d6a 100%);
+  overflow: visible;
+  box-shadow: inset 0 1px 2px rgba(255,255,255,0.35);
+}
+.persp-gauge-marker {
+  position: absolute;
+  top: -4px;
+  width: 3px;
+  height: 20px;
+  background: #eaf8ff;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.35);
+  transform: translateX(-50%);
+}
+.animal-chart-raw-only {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 </style>
 {% endblock %}
@@ -276,6 +317,30 @@
           </div>
           {% endfor %}
         </div>
+        <div class="persp-gauges-block">
+          <div class="traits-title">Escala 1–9 (última inferência)</div>
+          <p class="traits-hint" style="margin-top:4px;margin-bottom:10px">Gradiente tipo ECC: vermelho nas pontas, <strong>ideal ao centro (5)</strong>; marcador branco = valor reescalado.</p>
+          {% for t in card.trait_cards %}
+          <div class="persp-gauge-row">
+            <div class="persp-gauge-label-row">
+              <span class="trait-name">{{ t.name }}</span>
+              {% if t.current_rescaled is not none %}
+              <span class="persp-gauge-val">{{ '%g'|format(t.current_rescaled) }}</span>
+              {% else %}
+              <span class="persp-gauge-val" style="color:var(--muted);font-weight:600">—</span>
+              {% endif %}
+            </div>
+            <div class="persp-gauge-scale-head">
+              <span>1.00</span><span>5.00</span><span>9.00</span>
+            </div>
+            <div class="persp-gauge-bar">
+              {% if t.current_rescaled is not none %}
+              <div class="persp-gauge-marker" style="left: {{ t.current_rescaled|persp_gauge_left_pct }}%"></div>
+              {% endif %}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
         {% else %}
         <div class="empty-state" style="margin:0">
           <div class="icon">◇</div>
@@ -286,17 +351,10 @@
     </div>
 
     {% if card.trait_keys_chart %}
-    <div class="animal-charts-grid">
-      <div class="animal-chart-cell">
-        <div class="traits-title">Evolução por dia — raw (−4…+4)</div>
-        <p class="traits-hint" style="margin-top:0;margin-bottom:8px">Barras agrupadas por data (UTC); um valor por dia (última passagem).</p>
-        <div class="chart-canvas-wrap-animal" id="wrap-persp-raw-{{ loop.index0 }}"><canvas id="persp-raw-{{ loop.index0 }}"></canvas></div>
-      </div>
-      <div class="animal-chart-cell">
-        <div class="traits-title">Evolução por dia — escala 1–9 (Δ0,5)</div>
-        <p class="traits-hint" style="margin-top:0;margin-bottom:8px">Mesmas datas e legenda de cores.</p>
-        <div class="chart-canvas-wrap-animal" id="wrap-persp-rs-{{ loop.index0 }}"><canvas id="persp-rs-{{ loop.index0 }}"></canvas></div>
-      </div>
+    <div class="animal-chart-raw-only">
+      <div class="traits-title">Evolução por dia — raw (−4…+4)</div>
+      <p class="traits-hint" style="margin-top:4px;margin-bottom:8px">Barras agrupadas por data (UTC); um valor por dia (última passagem).</p>
+      <div class="chart-canvas-wrap-animal" id="wrap-persp-raw-{{ loop.index0 }}"><canvas id="persp-raw-{{ loop.index0 }}"></canvas></div>
     </div>
     {% endif %}
   </div>
@@ -405,16 +463,6 @@ function buildGroupedBarCanvas(wrapId, canvasId, timeline, traitKeys, field, yMi
     -4,
     4,
     'Raw',
-  );
-  buildGroupedBarCanvas(
-    'wrap-persp-rs-' + i,
-    'persp-rs-' + i,
-    tl,
-    tk,
-    'traits_rs',
-    1,
-    9,
-    '1–9',
   );
 });
 </script>
