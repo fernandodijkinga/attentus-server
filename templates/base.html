@@ -426,7 +426,7 @@ select { cursor: pointer; }
     </a>
 
     <div class="nav-section">Perspicuus</div>
-    <a href="{{ url_for('perspicuus') }}"  class="nav-link {% if request.endpoint in ['perspicuus', 'perspicuus_animais', 'perspicuus_inferencias', 'perspicuus_modelos'] %}active{% endif %}">
+    <a href="{{ url_for('perspicuus') }}"  class="nav-link {% if request.endpoint in ['perspicuus', 'perspicuus_animais', 'perspicuus_inferencias', 'perspicuus_modelos', 'perspicuus_analise_rebanho', 'perspicuus_analise_individual'] %}active{% endif %}">
       <span class="icon">🧠</span> Perspicuus
     </a>
     <a href="{{ url_for('perspicuus_animais') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_animais' %}active{% endif %}">
@@ -434,6 +434,12 @@ select { cursor: pointer; }
     </a>
     <a href="{{ url_for('perspicuus_inferencias') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_inferencias' %}active{% endif %}">
       <span class="icon">•</span> Inferências
+    </a>
+    <a href="{{ url_for('perspicuus_analise_rebanho') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_analise_rebanho' %}active{% endif %}">
+      <span class="icon">•</span> análise rebanho
+    </a>
+    <a href="{{ url_for('perspicuus_analise_individual') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_analise_individual' %}active{% endif %}">
+      <span class="icon">•</span> análise individual
     </a>
     <a href="{{ url_for('perspicuus_modelos') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_modelos' %}active{% endif %}">
       <span class="icon">•</span> Modelos

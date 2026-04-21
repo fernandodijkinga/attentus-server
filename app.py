@@ -26,6 +26,7 @@
 
 import os
 import re
+import math
 import sqlite3
 import json
 import threading
@@ -36,6 +37,7 @@ import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from typing import Any
 from zoneinfo import ZoneInfo
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -878,6 +880,168 @@ def _merged_traits_mean(inf: dict) -> dict[str, float]:
     return {k: sum(vals) / len(vals) for k, vals in merged.items() if vals}
 
 
+def _persp_event_day_iso(ts: str | None) -> str:
+    s = str(ts or '').strip()
+    return s[:10] if len(s) >= 10 else ''
+
+
+def _perspicuus_events_for_charts(
+    db,
+    station_filter: str = '',
+    q: str = '',
+    limit: int = 4000,
+) -> list[dict]:
+    """Eventos com inferência gravada, para séries temporais e gráficos."""
+    cond = [
+        "inference_at IS NOT NULL",
+        "trim(inference_at) != ''",
+    ]
+    params: list[str] = []
+    if station_filter:
+        cond.append('station_id = ?')
+        params.append(station_filter)
+    if q:
+        like = f'%{q}%'
+        cond.append('(animal_rfid LIKE ? OR station_id LIKE ? OR event_id LIKE ?)')
+        params.extend([like, like, like])
+    where = ' AND '.join(cond)
+    rows = db.execute(
+        f"""
+        SELECT station_id, timestamp_utc, received_at, animal_rfid, inference_json, event_id
+        FROM perspicuus_events
+        WHERE {where}
+        ORDER BY timestamp_utc DESC
+        LIMIT ?
+        """,
+        params + [max(1, min(12000, limit))],
+    ).fetchall()
+    out: list[dict] = []
+    for row in rows:
+        d = dict(row)
+        raw = d.get('inference_json') or '{}'
+        try:
+            d['inference'] = json.loads(raw) if raw else {}
+        except (json.JSONDecodeError, TypeError):
+            d['inference'] = {}
+        out.append(d)
+    return out
+
+
+def perspicuus_trait_daily_series(events: list[dict]) -> list[dict]:
+    """
+    Agrega por (estação, dia, trait): média e desvio dos valores merged (raw −4…+4).
+    """
+    cells: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for ev in events:
+        inf = ev.get('inference') or {}
+        if not isinstance(inf, dict) or inf.get('error'):
+            continue
+        traits = _merged_traits_mean(inf)
+        if not traits:
+            continue
+        st = str(ev.get('station_id') or '').strip() or '—'
+        day = _persp_event_day_iso(ev.get('timestamp_utc') or ev.get('received_at'))
+        if not day:
+            continue
+        rfid = str(ev.get('animal_rfid') or '').strip()
+        for tname, val in traits.items():
+            try:
+                vf = float(val)
+            except (TypeError, ValueError):
+                continue
+            key = (st, day, str(tname))
+            cell = cells.setdefault(key, {'vals': [], 'animals': set(), 'n_events': 0})
+            cell['vals'].append(vf)
+            cell['n_events'] += 1
+            if rfid:
+                cell['animals'].add(rfid)
+    series: list[dict[str, Any]] = []
+    for (st, day, trait), cell in cells.items():
+        vals = cell['vals']
+        n_events = int(cell['n_events'])
+        n_animals = len(cell['animals'])
+        if vals:
+            mean = sum(vals) / len(vals)
+            var = sum((v - mean) ** 2 for v in vals) / len(vals)
+            mean_r = round(mean, 4)
+            std_r = round(math.sqrt(var), 4)
+        else:
+            mean_r, std_r = None, None
+        series.append(
+            {
+                'station_id': st,
+                'date': day,
+                'trait': trait,
+                'mean': mean_r,
+                'std': std_r,
+                'n_records': n_events,
+                'n_animals': n_animals,
+                'n_scored': len(vals),
+            }
+        )
+    series.sort(key=lambda x: (x['station_id'], x['date'], x['trait']))
+    return series
+
+
+def perspicuus_volume_daily_series(events: list[dict]) -> list[dict]:
+    """Volume de eventos com inferência por estação e dia."""
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for ev in events:
+        inf = ev.get('inference') or {}
+        if not isinstance(inf, dict) or inf.get('error'):
+            continue
+        if not _merged_traits_mean(inf):
+            continue
+        st = str(ev.get('station_id') or '').strip() or '—'
+        day = _persp_event_day_iso(ev.get('timestamp_utc') or ev.get('received_at'))
+        if not day:
+            continue
+        k = (st, day)
+        cell = by_key.setdefault(k, {'n_events': 0, 'animals': set()})
+        cell['n_events'] += 1
+        rf = str(ev.get('animal_rfid') or '').strip()
+        if rf:
+            cell['animals'].add(rf)
+    out: list[dict[str, Any]] = []
+    for (st, day), cell in by_key.items():
+        out.append(
+            {
+                'station_id': st,
+                'date': day,
+                'n_records': int(cell['n_events']),
+                'n_animals': len(cell['animals']),
+            }
+        )
+    out.sort(key=lambda x: (x['station_id'], x['date']))
+    return out
+
+
+def perspicuus_trait_flat_samples(events: list[dict], cap: int = 8000) -> list[dict]:
+    """Uma entrada por (evento, trait) com raw e escala 1–9 para gráficos de distribuição."""
+    out: list[dict[str, Any]] = []
+    for ev in events:
+        inf = ev.get('inference') or {}
+        if not isinstance(inf, dict) or inf.get('error'):
+            continue
+        st = str(ev.get('station_id') or '').strip() or '—'
+        for tname, val in _merged_traits_mean(inf).items():
+            try:
+                raw_f = float(val)
+            except (TypeError, ValueError):
+                continue
+            out.append(
+                {
+                    'station_id': st,
+                    'trait': str(tname),
+                    'raw': raw_f,
+                    'rs': rescale_perspicuus_trait_score(raw_f),
+                }
+            )
+            if len(out) >= cap:
+                return out
+    return out
+
+
 def _trait_sort_key(name: str):
     """Ordena T1, T2, … T10 corretamente; resto alfabético."""
     s = str(name)
@@ -1195,6 +1359,155 @@ def perspicuus_inferencias():
         total=total,
         infer_stats=infer_stats,
         inference_engine_ready=_perspicuus_inference_engine_ready(),
+    )
+
+
+@app.route('/perspicuus/analise-rebanho')
+@login_required
+def perspicuus_analise_rebanho():
+    """Gráficos de barras / séries por estação (análogo a ECC análise rebanho)."""
+    db = get_db()
+    station_filter = str(request.args.get('station', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    lim = max(500, min(12000, int(os.environ.get('PERSPICUUS_CHART_EVENTS_MAX', '4000'))))
+    events = _perspicuus_events_for_charts(db, station_filter, q, limit=lim)
+    trait_series = perspicuus_trait_daily_series(events)
+    volume_series = perspicuus_volume_daily_series(events)
+    trait_flat = perspicuus_trait_flat_samples(events)
+    stations = [r[0] for r in db.execute(
+        'SELECT DISTINCT station_id FROM perspicuus_events ORDER BY station_id'
+    ).fetchall()]
+    trait_names = sorted({r['trait'] for r in trait_series}, key=_trait_sort_key)
+    table_rows: list[dict[str, Any]] = []
+    for ev in events[:120]:
+        inf = ev.get('inference') or {}
+        tr = _merged_traits_mean(inf)
+        parts = [
+            f'{k}:{float(v):.2f}'
+            for k, v in sorted(tr.items(), key=lambda kv: _trait_sort_key(kv[0]))[:6]
+        ]
+        table_rows.append(
+            {
+                'station_id': ev.get('station_id') or '—',
+                'date': _persp_event_day_iso(ev.get('timestamp_utc') or ev.get('received_at')),
+                'animal_rfid': ev.get('animal_rfid') or '—',
+                'summary': ', '.join(parts) if parts else '—',
+                'event_id': ev.get('event_id') or '—',
+            }
+        )
+    stats = {
+        'events_in_chart': len(events),
+        'trait_points': len(trait_series),
+        'inferred_total': db.execute(
+            "SELECT COUNT(*) FROM perspicuus_events WHERE inference_at IS NOT NULL AND trim(inference_at) != ''"
+        ).fetchone()[0],
+    }
+    return render_template(
+        'perspicuus_analise_rebanho.html',
+        trait_series=trait_series,
+        volume_series=volume_series,
+        trait_flat=trait_flat,
+        stations=stations,
+        station_filter=station_filter,
+        q_filter=q,
+        trait_names=trait_names,
+        table_rows=table_rows,
+        stats=stats,
+    )
+
+
+@app.route('/perspicuus/analise-individual')
+@login_required
+def perspicuus_analise_individual():
+    """Evolução das traits por animal (gráficos de barras agrupadas por dia)."""
+    db = get_db()
+    station_filter = str(request.args.get('station', '')).strip()
+    rfid_filter = str(request.args.get('rfid', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    stations = [r[0] for r in db.execute(
+        'SELECT DISTINCT station_id FROM perspicuus_events ORDER BY station_id'
+    ).fetchall()]
+    selected_station = station_filter or (stations[0] if stations else '')
+    animals: list[str] = []
+    if selected_station:
+        animals = [
+            str(r[0])
+            for r in db.execute(
+                """
+                SELECT DISTINCT animal_rfid FROM perspicuus_events
+                WHERE station_id = ? AND animal_rfid IS NOT NULL AND trim(animal_rfid) != ''
+                ORDER BY animal_rfid
+                """,
+                (selected_station,),
+            ).fetchall()
+        ]
+    selected_rfid = rfid_filter
+    if selected_station and not selected_rfid:
+        rr = db.execute(
+            """
+            SELECT animal_rfid, COUNT(*) AS c FROM perspicuus_events
+            WHERE station_id = ? AND animal_rfid IS NOT NULL AND trim(animal_rfid) != ''
+            GROUP BY animal_rfid ORDER BY c DESC LIMIT 1
+            """,
+            (selected_station,),
+        ).fetchone()
+        selected_rfid = str(rr[0]) if rr and rr[0] else ''
+
+    timeline: list[dict[str, Any]] = []
+    if selected_station and selected_rfid:
+        rows = db.execute(
+            """
+            SELECT timestamp_utc, inference_json FROM perspicuus_events
+            WHERE station_id = ? AND animal_rfid = ?
+              AND inference_at IS NOT NULL AND trim(inference_at) != ''
+            ORDER BY timestamp_utc ASC, id ASC
+            """,
+            (selected_station, selected_rfid),
+        ).fetchall()
+        by_day: dict[str, dict[str, float]] = {}
+        for row in rows:
+            inf = _safe_load_json(row['inference_json'] or '{}', {})
+            if not isinstance(inf, dict) or inf.get('error'):
+                continue
+            tm = _merged_traits_mean(inf)
+            if not tm:
+                continue
+            day = _persp_event_day_iso(row['timestamp_utc'])
+            if not day:
+                continue
+            by_day[day] = {str(k): float(v) for k, v in tm.items()}
+        for day in sorted(by_day.keys()):
+            traits = by_day[day]
+            timeline.append(
+                {
+                    'date': day,
+                    'traits': traits,
+                    'traits_rs': {k: rescale_perspicuus_trait_score(v) for k, v in traits.items()},
+                }
+            )
+
+    all_keys: set[str] = set()
+    for t in timeline:
+        all_keys.update((t.get('traits') or {}).keys())
+    trait_keys = sorted(all_keys, key=_trait_sort_key)
+    stats = {
+        'timeline_days': len(timeline),
+        'inferred_total': db.execute(
+            "SELECT COUNT(*) FROM perspicuus_events WHERE inference_at IS NOT NULL AND trim(inference_at) != ''"
+        ).fetchone()[0],
+    }
+    return render_template(
+        'perspicuus_analise_individual.html',
+        stations=stations,
+        animals=animals,
+        station_filter=station_filter,
+        rfid_filter=rfid_filter,
+        q_filter=q,
+        selected_station=selected_station,
+        selected_rfid=selected_rfid,
+        timeline=timeline,
+        trait_keys=trait_keys,
+        stats=stats,
     )
 
 

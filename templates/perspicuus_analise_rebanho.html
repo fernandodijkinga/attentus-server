@@ -1,0 +1,424 @@
+{% extends "base.html" %}
+{% block title %}Perspicuus — análise rebanho{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+.chart-card-p { background: var(--surf); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow-sm); }
+.chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.chart-title { font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
+.chart-sub { font-size: 11px; color: var(--text2); font-family: var(--mono); }
+.chart-canvas-wrap { position: relative; height: 300px; width: 100%; }
+.chart-canvas-wrap canvas { display: block; width: 100% !important; height: 100% !important; }
+.chart-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.chart-empty-p { min-height: 300px; display: flex; align-items: center; justify-content: center; color: var(--text2); font-family: var(--mono); font-size: 12px; border: 1px dashed var(--border); border-radius: 10px; }
+@media (max-width: 1080px) { .chart-grid-2 { grid-template-columns: 1fr; } }
+.trait-select-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 12px; }
+.trait-select-row .field { margin: 0; min-width: 200px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">🧠 <span>Perspicuus</span> <span style="color:var(--accent)">análise rebanho</span></div>
+    <div class="page-sub">Média e desvio das traits (raw −4…+4) por estação e dia — volume de avaliações e distribuição na escala 1–9</div>
+  </div>
+  <div class="flex gap-8" style="flex-wrap:wrap">
+    <span class="pill pill-blue">{{ stats.inferred_total }} eventos com inferência</span>
+    <span class="pill pill-green">{{ stats.events_in_chart }} no gráfico (filtro)</span>
+    <a href="{{ url_for('perspicuus') }}" class="btn btn-ghost btn-sm">← Eventos</a>
+    <a href="{{ url_for('perspicuus_analise_individual') }}" class="btn btn-ghost btn-sm">Análise individual</a>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <form method="get" class="filters-row">
+    <div class="field" style="margin:0">
+      <label>Estação</label>
+      <select name="station">
+        <option value="">Todas</option>
+        {% for s in stations %}
+        <option value="{{ s }}" {% if station_filter == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field" style="margin:0; min-width:240px">
+      <label>Busca</label>
+      <input name="q" value="{{ q_filter }}" placeholder="RFID, estação, event_id…">
+    </div>
+    <div class="flex gap-8">
+      <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
+      <a href="{{ url_for('perspicuus_analise_rebanho') }}" class="btn btn-ghost btn-sm">Limpar</a>
+    </div>
+  </form>
+</div>
+
+<div class="chart-card-p">
+  <div class="chart-head">
+    <div class="chart-title">Trait selecionada — média + desvio + volume</div>
+    <div class="chart-sub">Escolha o trait; barras = nº animais ou eventos por dia; linhas = média raw e desvio padrão</div>
+  </div>
+  <div class="trait-select-row">
+    <div class="field">
+      <label>Trait</label>
+      <select id="persp-trait-select">
+        {% for t in trait_names %}
+        <option value="{{ t }}">{{ t }}</option>
+        {% else %}
+        <option value="">— sem traits —</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="chart-canvas-wrap" id="wrap-persp-main"><canvas id="ch-persp-main"></canvas></div>
+</div>
+
+<div class="chart-grid-2">
+  <div class="chart-card-p">
+    <div class="chart-head">
+      <div class="chart-title">Volume diário (com inferência válida)</div>
+      <div class="chart-sub">Por estação: animais distintos ou nº de eventos</div>
+    </div>
+    <div class="chart-canvas-wrap" id="wrap-persp-volume"><canvas id="ch-persp-volume"></canvas></div>
+  </div>
+  <div class="chart-card-p">
+    <div class="chart-head">
+      <div class="chart-title">Distribuição (escala 1–9)</div>
+      <div class="chart-sub">Mesmo trait · Baixa / Média / Alta — por estação (registos no filtro)</div>
+    </div>
+    <div class="chart-canvas-wrap" id="wrap-persp-bands"><canvas id="ch-persp-bands"></canvas></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Eventos recentes (amostra)</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Data</th><th>Estação</th><th>RFID</th><th>Traits (merged)</th><th>Event ID</th></tr>
+      </thead>
+      <tbody>
+      {% for r in table_rows %}
+      <tr>
+        <td class="mono">{{ r.date }}</td>
+        <td class="td-accent">{{ r.station_id }}</td>
+        <td class="mono">{{ r.animal_rfid }}</td>
+        <td class="mono" style="font-size:11px">{{ r.summary }}</td>
+        <td class="mono text-muted" style="max-width:140px;overflow:hidden;text-overflow:ellipsis" title="{{ r.event_id }}">{{ r.event_id }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5"><div class="empty-state"><div class="icon">◇</div>Sem dados para o filtro.</div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const TRAIT_SERIES = {{ trait_series | tojson }};
+const VOLUME_SERIES = {{ volume_series | tojson }};
+const TRAIT_FLAT = {{ trait_flat | tojson }};
+const DEFAULT_TRAIT = {{ (trait_names[0] if trait_names else '') | tojson }};
+const PERSP_COLORS = ['#1b6fd4', '#00b894', '#ff9f40', '#cc66ff', '#ff4d6a', '#7dd3fc', '#0d7a5e'];
+const TICK_COLOR = '#5a6f82';
+const GRID_COLOR = '#dde4ed';
+
+function normDay(d) {
+  if (d == null || d === '') return '';
+  const s = String(d).trim();
+  return s.length >= 10 ? s.slice(0, 10) : s;
+}
+
+function uniqueSortedLabels(rows) {
+  const s = new Set();
+  (rows || []).forEach((r) => {
+    const d = normDay(r.date);
+    if (d) s.add(d);
+  });
+  return [...s].sort();
+}
+
+function groupedByStation(rows) {
+  const out = {};
+  (rows || []).forEach((r) => {
+    const st = r.station_id || '—';
+    if (!out[st]) out[st] = [];
+    out[st].push(r);
+  });
+  Object.keys(out).forEach((k) => out[k].sort((a, b) => String(a.date).localeCompare(String(b.date))));
+  return out;
+}
+
+function rowMapByDay(rows) {
+  const m = {};
+  (rows || []).forEach((r) => {
+    const d = normDay(r.date);
+    if (d) m[d] = r;
+  });
+  return m;
+}
+
+function seriesForTrait(trait) {
+  return (TRAIT_SERIES || []).filter((r) => r && r.trait === trait);
+}
+
+let chartMain = null;
+let chartBands = null;
+
+function buildMainChart(trait) {
+  const wrap = document.getElementById('wrap-persp-main');
+  if (chartMain) { chartMain.destroy(); chartMain = null; }
+  if (wrap) wrap.innerHTML = '<canvas id="ch-persp-main"></canvas>';
+  const c = document.getElementById('ch-persp-main');
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  const rows = seriesForTrait(trait);
+  const labels = uniqueSortedLabels(rows);
+  const bySt = groupedByStation(rows);
+  if (!labels.length || !Object.keys(bySt).length) {
+    if (wrap) wrap.innerHTML = '<div class="chart-empty-p">Sem dados para este trait / filtro.</div>';
+    return;
+  }
+  const hasMean = rows.some((r) => r.mean != null && Number.isFinite(Number(r.mean)));
+  const dsBar = [];
+  const dsLine = [];
+  let i = 0;
+  Object.entries(bySt).forEach(([st, rws]) => {
+    const color = PERSP_COLORS[i % PERSP_COLORS.length]; i += 1;
+    const m = rowMapByDay(rws);
+    const meanData = labels.map((d) => {
+      const r = m[d];
+      if (!r || r.mean == null || !Number.isFinite(Number(r.mean))) return null;
+      return Number(r.mean);
+    });
+    const stdData = labels.map((d) => {
+      const r = m[d];
+      if (!r || r.std == null || !Number.isFinite(Number(r.std))) return null;
+      return Number(r.std);
+    });
+    const barData = labels.map((d) => {
+      const r = m[d];
+      if (!r) return null;
+      return Number((r.n_animals > 0 ? r.n_animals : r.n_records) || 0);
+    });
+    if (barData.some((v) => v != null && v > 0)) {
+      dsBar.push({
+        type: 'bar',
+        label: `${st} · volume`,
+        data: barData,
+        backgroundColor: color + '33',
+        borderColor: color + '99',
+        borderWidth: 1,
+        yAxisID: 'y2',
+        maxBarThickness: 12,
+        order: 0,
+      });
+    }
+    if (meanData.some((v) => v != null)) {
+      dsLine.push({
+        type: 'line',
+        label: `${st} · média raw`,
+        data: meanData,
+        borderColor: color,
+        backgroundColor: color,
+        tension: 0.25,
+        borderWidth: 2.2,
+        pointRadius: 3,
+        spanGaps: true,
+        yAxisID: 'y',
+        order: 1,
+      });
+    }
+    if (stdData.some((v) => v != null)) {
+      dsLine.push({
+        type: 'line',
+        label: `${st} · desvio padrão`,
+        data: stdData,
+        borderColor: color + 'CC',
+        borderDash: [5, 4],
+        pointRadius: 0,
+        borderWidth: 1.5,
+        spanGaps: true,
+        yAxisID: 'y1',
+        order: 2,
+      });
+    }
+  });
+  const datasets = [...dsBar, ...dsLine];
+  if (!datasets.length) {
+    if (wrap) wrap.innerHTML = '<div class="chart-empty-p">Sem pontos válidos para o gráfico.</div>';
+    return;
+  }
+  chartMain = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: TICK_COLOR, font: { family: 'JetBrains Mono', size: 10 } } },
+      },
+      scales: {
+        x: {
+          type: 'category',
+          ticks: { color: TICK_COLOR, maxRotation: 40, maxTicksLimit: 20 },
+          grid: { color: GRID_COLOR },
+        },
+        y: {
+          display: hasMean,
+          min: -4,
+          max: 4,
+          ticks: { color: TICK_COLOR },
+          grid: { color: GRID_COLOR },
+          title: { display: true, text: 'Média raw (trait)', color: TICK_COLOR },
+        },
+        y1: {
+          display: hasMean,
+          position: 'right',
+          min: 0,
+          suggestedMax: 1.2,
+          ticks: { color: TICK_COLOR },
+          grid: { drawOnChartArea: false },
+          title: { display: true, text: 'Desvio padrão', color: TICK_COLOR },
+        },
+        y2: {
+          position: 'right',
+          min: 0,
+          suggestedMax: 8,
+          ticks: { color: TICK_COLOR },
+          grid: { drawOnChartArea: false },
+          title: { display: true, text: '# animais / eventos', color: TICK_COLOR },
+        },
+      },
+    },
+  });
+}
+
+function buildVolumeChart() {
+  const wrap = document.getElementById('wrap-persp-volume');
+  if (wrap) wrap.innerHTML = '<canvas id="ch-persp-volume"></canvas>';
+  const c = document.getElementById('ch-persp-volume');
+  if (!c || !wrap) return;
+  const ctx = c.getContext('2d');
+  const labels = uniqueSortedLabels(VOLUME_SERIES);
+  const bySt = groupedByStation(VOLUME_SERIES);
+  const sts = Object.keys(bySt);
+  if (!labels.length || !sts.length) {
+    wrap.innerHTML = '<div class="chart-empty-p">Sem dados de volume.</div>';
+    return;
+  }
+  const datasets = sts.map((st, j) => {
+    const m = rowMapByDay(bySt[st]);
+    const data = labels.map((d) => {
+      const r = m[d];
+      if (!r) return null;
+      return Number((r.n_animals > 0 ? r.n_animals : r.n_records) || 0);
+    });
+    const color = PERSP_COLORS[j % PERSP_COLORS.length];
+    return {
+      type: 'bar',
+      label: st,
+      data,
+      backgroundColor: color + '66',
+      borderColor: color + 'cc',
+      borderWidth: 1.2,
+      maxBarThickness: 18,
+    };
+  });
+  new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: TICK_COLOR, font: { family: 'JetBrains Mono', size: 10 } } } },
+      scales: {
+        x: { ticks: { color: TICK_COLOR, maxRotation: 40, maxTicksLimit: 20 }, grid: { color: GRID_COLOR } },
+        y: {
+          min: 0,
+          ticks: { color: TICK_COLOR },
+          grid: { color: GRID_COLOR },
+          title: { display: true, text: '# animais ou eventos / dia', color: TICK_COLOR },
+        },
+      },
+    },
+  });
+}
+
+function perspBandKey(rs) {
+  if (rs == null || !Number.isFinite(Number(rs))) return null;
+  const n = Number(rs);
+  if (n <= 3) return 'Baixa (1–3)';
+  if (n <= 6) return 'Média (4–6)';
+  return 'Alta (7–9)';
+}
+
+function buildBandsChart(trait) {
+  const wrap = document.getElementById('wrap-persp-bands');
+  if (chartBands) { chartBands.destroy(); chartBands = null; }
+  if (wrap) wrap.innerHTML = '<canvas id="ch-persp-bands"></canvas>';
+  const c = document.getElementById('ch-persp-bands');
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  const rows = (TRAIT_FLAT || []).filter((r) => r && r.trait === trait && r.rs != null);
+  if (!rows.length) {
+    if (wrap) wrap.innerHTML = '<div class="chart-empty-p">Sem amostras para distribuição neste trait.</div>';
+    return;
+  }
+  const sts = [...new Set(rows.map((r) => String(r.station_id || '—')))].sort();
+  const bands = ['Baixa (1–3)', 'Média (4–6)', 'Alta (7–9)'];
+  const colors = ['#ff9f40', '#1b6fd4', '#00b894'];
+  const by = {};
+  sts.forEach((s) => { by[s] = Object.fromEntries(bands.map((b) => [b, 0])); });
+  rows.forEach((r) => {
+    const st = String(r.station_id || '—');
+    const b = perspBandKey(r.rs);
+    if (b && by[st]) by[st][b] += 1;
+  });
+  const datasets = bands.map((b, i) => ({
+    label: b,
+    data: sts.map((s) => by[s][b] || 0),
+    backgroundColor: colors[i],
+  }));
+  chartBands = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: sts, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: TICK_COLOR, font: { family: 'JetBrains Mono', size: 10 } } } },
+      scales: {
+        x: { stacked: true, ticks: { color: TICK_COLOR }, grid: { color: GRID_COLOR } },
+        y: {
+          stacked: true,
+          min: 0,
+          ticks: { color: TICK_COLOR },
+          grid: { color: GRID_COLOR },
+          title: { display: true, text: '# eventos', color: TICK_COLOR },
+        },
+      },
+    },
+  });
+}
+
+const traitSel = document.getElementById('persp-trait-select');
+function currentTrait() {
+  return (traitSel && traitSel.value) ? traitSel.value : DEFAULT_TRAIT;
+}
+
+function refreshTraitCharts() {
+  const t = currentTrait();
+  if (!t) return;
+  buildMainChart(t);
+  buildBandsChart(t);
+}
+
+traitSel?.addEventListener('change', refreshTraitCharts);
+buildVolumeChart();
+refreshTraitCharts();
+</script>
+{% endblock %}
