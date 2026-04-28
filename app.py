@@ -39,6 +39,7 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 from typing import Any
 from zoneinfo import ZoneInfo
+from openpyxl import Workbook
 from flask import (
     Flask, render_template, request, redirect, url_for,
     session, jsonify, send_file, flash, g, abort
@@ -54,7 +55,7 @@ from ecc_module import (
     save_ecc_crop_thumbnail,
     save_ecc_bbox_overlay,
     ecc_farm_time_series,
-    ecc_attention_ranking,
+    ecc_recurrent_animal_trends,
     rescale_ecc_1_to_5_quarter,
 )
 from perspicuus_scoring import rescale_perspicuus_trait_score
@@ -164,6 +165,7 @@ def _build_auth_users() -> dict[str, dict[str, Any]]:
             'pass_hash': ADMIN_PASS_HASH,
             'envs': set(ALL_ENVIRONMENTS),
             'is_admin': True,
+            'source': 'env_admin',
         }
     }
 
@@ -194,6 +196,7 @@ def _build_auth_users() -> dict[str, dict[str, Any]]:
                         'pass_hash': pass_hash,
                         'envs': envs,
                         'is_admin': False,
+                        'source': 'env_json',
                     }
         except json.JSONDecodeError:
             log.warning('ATTENTUS_USERS_JSON inválido; ignorando usuários extras.')
@@ -214,12 +217,58 @@ def _build_auth_users() -> dict[str, dict[str, Any]]:
             'pass_hash': generate_password_hash(pwd),
             'envs': {env_name},
             'is_admin': False,
+            'source': 'env_shortcut',
         }
 
     return users
 
 
-AUTH_USERS = _build_auth_users()
+def _load_db_auth_users(db: sqlite3.Connection) -> dict[str, dict[str, Any]]:
+    users: dict[str, dict[str, Any]] = {}
+    try:
+        rows = db.execute(
+            "SELECT username, pass_hash, envs_json, is_admin FROM attentus_users ORDER BY username"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return users
+    for r in rows:
+        username = str(r['username'] or '').strip()
+        pass_hash = str(r['pass_hash'] or '').strip()
+        if not username or not pass_hash:
+            continue
+        envs = _normalize_env_access(r['envs_json'] or '[]')
+        is_admin = bool(r['is_admin'])
+        if is_admin:
+            envs = set(ALL_ENVIRONMENTS)
+        elif not envs:
+            continue
+        users[username] = {
+            'pass_hash': pass_hash,
+            'envs': envs,
+            'is_admin': is_admin,
+            'source': 'db',
+        }
+    return users
+
+
+def _refresh_auth_users() -> dict[str, dict[str, Any]]:
+    users = _build_auth_users()
+    try:
+        db = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
+        db.row_factory = sqlite3.Row
+        db_users = _load_db_auth_users(db)
+        db.close()
+    except Exception as e:
+        log.warning("Falha ao carregar usuários do DB: %s", e)
+        db_users = {}
+    for uname, data in db_users.items():
+        if uname == ADMIN_USER:
+            continue
+        users[uname] = data
+    return users
+
+
+AUTH_USERS = _refresh_auth_users()
 
 
 def _session_allowed_envs() -> set[str]:
@@ -245,11 +294,12 @@ def _environment_for_request() -> str | None:
         }.get(tab, 'weather')
 
     weather_eps = {
-        'weather', 'weather_data', 'delete_weather', 'edit_weather', 'download_weather',
+        'weather', 'weather_data', 'delete_weather', 'edit_weather',
+        'download_weather', 'download_weather_xlsx',
     }
     calves_eps = {
         'calf_monitor', 'cameras', 'calf_monitor_latest', 'serve_image',
-        'delete_image', 'edit_image_notes', 'download_images',
+        'delete_image', 'edit_image_notes', 'download_images', 'download_images_xlsx',
     }
     perspicuus_eps = {
         'perspicuus', 'perspicuus_animais', 'perspicuus_inferencias',
@@ -257,12 +307,15 @@ def _environment_for_request() -> str | None:
         'get_perspicuus_record', 'patch_perspicuus_record',
         'delete_perspicuus_record', 'infer_perspicuus_record_api',
         'download_perspicuus', 'download_perspicuus_event',
+        'download_perspicuus_xlsx',
     }
     bcs_eps = {
         'serve_ecc_media', 'ecc_analise', 'ecc_importar', 'api_ecc_upload_one',
         'api_ecc_recalculate_all', 'api_ecc_calibragem_apply', 'ecc_calibragem',
         'ecc_analise_rebanho', 'ecc_analise_individual',
-        'ecc_pontos_atencao', 'delete_ecc_record', 'edit_ecc_record',
+        'ecc_pontos_atencao', 'ecc_pontos_atencao_pdf',
+        'download_ecc_xlsx',
+        'delete_ecc_record', 'edit_ecc_record',
     }
     if ep in weather_eps:
         return 'weather'
@@ -710,6 +763,15 @@ def init_db():
         updated_at  TEXT    NOT NULL,
         updated_by  TEXT    NOT NULL DEFAULT 'system'
     );
+    CREATE TABLE IF NOT EXISTS attentus_users (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        username    TEXT    NOT NULL UNIQUE,
+        pass_hash   TEXT    NOT NULL,
+        envs_json   TEXT    NOT NULL DEFAULT '[]',
+        is_admin    INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT    NOT NULL,
+        updated_at  TEXT    NOT NULL
+    );
 
     CREATE INDEX IF NOT EXISTS idx_weather_received ON weather(received_at);
     CREATE INDEX IF NOT EXISTS idx_weather_device   ON weather(device_name);
@@ -720,6 +782,7 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_persp_rfid       ON perspicuus_events(animal_rfid);
     CREATE INDEX IF NOT EXISTS idx_ecc_farm_date    ON ecc_bcs_records(farm_id, inference_date);
     CREATE INDEX IF NOT EXISTS idx_ecc_animal_date  ON ecc_bcs_records(farm_id, animal_tag, inference_date);
+    CREATE INDEX IF NOT EXISTS idx_attentus_users_username ON attentus_users(username);
     """)
     db.commit()
     try:
@@ -768,6 +831,7 @@ def init_db():
     log.info("DB inicializado OK")
 
 init_db()
+AUTH_USERS = _refresh_auth_users()
 
 
 def _perspicuus_inference_engine_ready():
@@ -835,6 +899,19 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated
 
+
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('logged_in'):
+            return redirect(url_for('login', next=request.path))
+        if not session.get('is_admin'):
+            flash('Acesso restrito ao administrador.', 'error')
+            return redirect(_first_allowed_endpoint())
+        return f(*args, **kwargs)
+    return decorated
+
+
 def api_auth(f):
     """Autenticação por X-API-Key ou ?key= (dispensada se API_KEY não configurada)"""
     @wraps(f)
@@ -853,6 +930,8 @@ def api_auth(f):
 def login():
     error = None
     if request.method == 'POST':
+        global AUTH_USERS
+        AUTH_USERS = _refresh_auth_users()
         user = request.form.get('username', '').strip()
         pw   = request.form.get('password', '')
         account = AUTH_USERS.get(user)
@@ -871,6 +950,128 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for('login'))
+
+
+def _safe_username(v: str) -> str:
+    return re.sub(r'[^a-zA-Z0-9_.-]+', '', (v or '').strip())[:64]
+
+
+def _user_rows_for_admin() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for uname, data in sorted(AUTH_USERS.items(), key=lambda x: x[0].lower()):
+        envs = sorted(list(data.get('envs') or []))
+        source = str(data.get('source') or 'env')
+        is_admin = bool(data.get('is_admin'))
+        rows.append({
+            'username': uname,
+            'envs': envs,
+            'is_admin': is_admin,
+            'source': source,
+            'editable': (source == 'db' and not is_admin and uname != ADMIN_USER),
+            'role': 'admin' if is_admin else (' | '.join([ENV_LABELS.get(e, e) for e in envs]) if envs else 'restricted'),
+        })
+    return rows
+
+
+@app.route('/admin/usuarios', methods=['GET', 'POST'])
+@admin_required
+def admin_users():
+    global AUTH_USERS
+    db = get_db()
+    if request.method == 'POST':
+        action = (request.form.get('action') or '').strip().lower()
+        username = _safe_username(request.form.get('username', ''))
+        try:
+            if action == 'create':
+                password = request.form.get('password', '')
+                envs = _normalize_env_access(request.form.getlist('envs'))
+                if not username:
+                    raise ValueError('Informe um nome de usuário válido.')
+                if len(password) < 4:
+                    raise ValueError('A senha deve ter pelo menos 4 caracteres.')
+                if not envs:
+                    raise ValueError('Selecione ao menos um ambiente de acesso.')
+                db.execute(
+                    """
+                    INSERT INTO attentus_users (username, pass_hash, envs_json, is_admin, created_at, updated_at)
+                    VALUES (?, ?, ?, 0, ?, ?)
+                    """,
+                    (
+                        username,
+                        generate_password_hash(password),
+                        json.dumps(sorted(list(envs))),
+                        datetime.utcnow().isoformat() + 'Z',
+                        datetime.utcnow().isoformat() + 'Z',
+                    ),
+                )
+                db.commit()
+                flash(f'Usuário {username} criado com sucesso.', 'success')
+            elif action == 'update_envs':
+                envs = _normalize_env_access(request.form.getlist('envs'))
+                if not username:
+                    raise ValueError('Usuário inválido.')
+                if not envs:
+                    raise ValueError('Selecione ao menos um ambiente.')
+                cur = db.execute(
+                    """
+                    UPDATE attentus_users
+                    SET envs_json = ?, updated_at = ?
+                    WHERE username = ? AND is_admin = 0
+                    """,
+                    (json.dumps(sorted(list(envs))), datetime.utcnow().isoformat() + 'Z', username),
+                )
+                if cur.rowcount == 0:
+                    raise ValueError('Usuário não encontrado ou não editável.')
+                db.commit()
+                flash(f'Acessos de {username} atualizados.', 'success')
+            elif action == 'reset_password':
+                password = request.form.get('password', '')
+                if not username:
+                    raise ValueError('Usuário inválido.')
+                if len(password) < 4:
+                    raise ValueError('A senha deve ter pelo menos 4 caracteres.')
+                cur = db.execute(
+                    """
+                    UPDATE attentus_users
+                    SET pass_hash = ?, updated_at = ?
+                    WHERE username = ? AND is_admin = 0
+                    """,
+                    (generate_password_hash(password), datetime.utcnow().isoformat() + 'Z', username),
+                )
+                if cur.rowcount == 0:
+                    raise ValueError('Usuário não encontrado ou não editável.')
+                db.commit()
+                flash(f'Senha de {username} atualizada.', 'success')
+            elif action == 'delete':
+                if not username:
+                    raise ValueError('Usuário inválido.')
+                cur = db.execute(
+                    "DELETE FROM attentus_users WHERE username = ? AND is_admin = 0",
+                    (username,),
+                )
+                if cur.rowcount == 0:
+                    raise ValueError('Usuário não encontrado ou não editável.')
+                db.commit()
+                flash(f'Usuário {username} removido.', 'success')
+            else:
+                raise ValueError('Ação inválida.')
+        except sqlite3.IntegrityError:
+            flash(f'Usuário {username} já existe.', 'error')
+        except ValueError as e:
+            flash(str(e), 'error')
+        except Exception as e:
+            log.exception("Falha ao administrar usuários: %s", e)
+            flash('Erro inesperado ao salvar usuário.', 'error')
+        AUTH_USERS = _refresh_auth_users()
+        return redirect(url_for('admin_users'))
+
+    AUTH_USERS = _refresh_auth_users()
+    return render_template(
+        'admin_users.html',
+        users=_user_rows_for_admin(),
+        env_order=['weather', 'perspicuus', 'calves', 'bcs'],
+        env_labels=ENV_LABELS,
+    )
 
 # ─── PAGES ────────────────────────────────────────────────────────────────────
 
@@ -2240,10 +2441,14 @@ def ecc_analise_rebanho():
     q = str(request.args.get('q', '')).strip()
     records = _ecc_load_rows(db, farm_filter, '', q, limit=3000)
     farms, _, stats = _ecc_base_lists(db)
+    recurrent_trends = ecc_recurrent_animal_trends(records, min_points=3, top_n=10)
     return render_template(
         'ecc_analise_rebanho.html',
         records=records[:120], farms=farms, farm_filter=farm_filter, q_filter=q,
-        farm_series=ecc_farm_time_series(records), farm_records=records, stats=stats,
+        farm_series=ecc_farm_time_series(records),
+        farm_records=records,
+        recurrent_trends=recurrent_trends,
+        stats=stats,
     )
 
 
@@ -2256,6 +2461,18 @@ def ecc_analise_individual():
     q = str(request.args.get('q', '')).strip()
     records = _ecc_load_rows(db, farm_filter, animal_filter, q, limit=3000)
     farms, animals, stats = _ecc_base_lists(db)
+    animal_options_query = """
+        SELECT animal_tag, COUNT(*) AS n_inf
+        FROM ecc_bcs_records
+        WHERE (? = '' OR farm_id = ?)
+        GROUP BY animal_tag
+        ORDER BY animal_tag
+    """
+    animal_options = [
+        {'animal_tag': str(r['animal_tag']), 'n_inf': int(r['n_inf'] or 0)}
+        for r in db.execute(animal_options_query, (farm_filter, farm_filter)).fetchall()
+        if str(r['animal_tag'] or '').strip()
+    ]
     selected_farm = farm_filter or (farms[0] if farms else '')
     selected_animal = animal_filter
     if selected_farm and not selected_animal:
@@ -2296,36 +2513,177 @@ def ecc_analise_individual():
         animal_images = [dict(x) for x in ai]
     return render_template(
         'ecc_analise_individual.html',
-        records=records[:120], farms=farms, animals=animals,
+        records=records[:120], farms=farms, animals=animals, animal_options=animal_options,
         farm_filter=farm_filter, animal_filter=animal_filter, q_filter=q,
         selected_farm=selected_farm, selected_animal=selected_animal,
         animal_points=animal_points, animal_images=animal_images, stats=stats,
     )
 
 
+def _ecc_build_individual_report(db, farm_id: str, animal_tag: str) -> dict[str, Any]:
+    rows = db.execute(
+        """
+        SELECT id, inference_date, filename, image_path, thumb_path, bbox_path,
+               raw_score, ecc_score, trait_name, error_text
+        FROM ecc_bcs_records
+        WHERE farm_id = ? AND animal_tag = ?
+        ORDER BY inference_date ASC, id ASC
+        """,
+        (farm_id, animal_tag),
+    ).fetchall()
+    history = [dict(r) for r in rows]
+    scored = []
+    for r in history:
+        try:
+            if r.get('ecc_score') is not None:
+                scored.append(float(r['ecc_score']))
+        except (TypeError, ValueError):
+            continue
+    n_total = len(history)
+    n_scored = len(scored)
+    out: dict[str, Any] = {
+        'n_total': n_total,
+        'n_scored': n_scored,
+        'history': history,
+        'images': sorted(history, key=lambda x: (str(x.get('inference_date') or ''), int(x.get('id') or 0)), reverse=True)[:24],
+        'stats': {
+            'min': None, 'max': None, 'mean': None, 'std': None,
+            'first': None, 'last': None, 'delta': None, 'max_step': None,
+            'first_date': None, 'last_date': None,
+            'trend': 'flat',
+        },
+    }
+    if n_scored:
+        mean = sum(scored) / n_scored
+        var = sum((x - mean) ** 2 for x in scored) / n_scored
+        first = scored[0]
+        last = scored[-1]
+        delta = last - first
+        max_step = 0.0
+        for i in range(1, len(scored)):
+            max_step = max(max_step, abs(scored[i] - scored[i - 1]))
+        trend = 'up' if delta > 0.25 else ('down' if delta < -0.25 else 'flat')
+        out['stats'] = {
+            'min': round(min(scored), 2),
+            'max': round(max(scored), 2),
+            'mean': round(mean, 2),
+            'std': round(math.sqrt(var), 2),
+            'first': round(first, 2),
+            'last': round(last, 2),
+            'delta': round(delta, 2),
+            'max_step': round(max_step, 2),
+            'first_date': str(history[0].get('inference_date') or ''),
+            'last_date': str(history[-1].get('inference_date') or ''),
+            'trend': trend,
+        }
+    return out
+
+
 @app.route('/ecc/pontos-atencao')
 @login_required
 def ecc_pontos_atencao():
     db = get_db()
-    sort_param = str(request.args.get('sort', 'spread') or 'spread').strip().lower()
-    sort_by = 'step' if sort_param == 'step' else 'spread'
     farm_filter = str(request.args.get('farm', '')).strip()
+    animal_filter = str(request.args.get('animal', '')).strip()
     farms, _, stats = _ecc_base_lists(db)
     selected_farm = farm_filter or (farms[0] if farms else '')
-    attention_rows = []
+    animal_options: list[dict[str, Any]] = []
+    selected_animal = animal_filter
+    report: dict[str, Any] | None = None
     if selected_farm:
-        recs = _ecc_load_rows(db, selected_farm, '', '', limit=20000)
-        attention_rows = ecc_attention_ranking(
-            recs, selected_farm, min_records=2, top_n=60, sort_by=sort_by
-        )
+        rows = db.execute(
+            """
+            SELECT animal_tag, COUNT(*) AS n_inf, MAX(inference_date) AS last_date
+            FROM ecc_bcs_records
+            WHERE farm_id = ?
+            GROUP BY animal_tag
+            ORDER BY n_inf DESC, last_date DESC, animal_tag ASC
+            """,
+            (selected_farm,),
+        ).fetchall()
+        animal_options = [
+            {'animal_tag': str(r['animal_tag']), 'n_inf': int(r['n_inf'] or 0)}
+            for r in rows if str(r['animal_tag'] or '').strip()
+        ]
+        if not selected_animal and animal_options:
+            selected_animal = str(animal_options[0]['animal_tag'])
+        if selected_animal:
+            report = _ecc_build_individual_report(db, selected_farm, selected_animal)
     return render_template(
         'ecc_pontos_atencao.html',
         farms=farms,
         farm_filter=selected_farm,
-        sort_by=sort_by,
-        attention_rows=attention_rows,
+        animal_filter=selected_animal,
+        animal_options=animal_options,
+        report=report,
         stats=stats,
     )
+
+
+@app.route('/ecc/pontos-atencao/pdf')
+@login_required
+def ecc_pontos_atencao_pdf():
+    farm = str(request.args.get('farm', '')).strip()
+    animal = str(request.args.get('animal', '')).strip()
+    if not farm or not animal:
+        flash('Selecione fazenda e animal para gerar o PDF.', 'error')
+        return redirect(url_for('ecc_pontos_atencao', farm=farm, animal=animal))
+    db = get_db()
+    report = _ecc_build_individual_report(db, farm, animal)
+    if not report or not report.get('history'):
+        flash('Sem dados para gerar PDF.', 'error')
+        return redirect(url_for('ecc_pontos_atencao', farm=farm, animal=animal))
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import mm
+        from reportlab.pdfgen import canvas
+    except Exception:
+        flash('Dependência de PDF não instalada (reportlab).', 'error')
+        return redirect(url_for('ecc_pontos_atencao', farm=farm, animal=animal))
+
+    buff = io.BytesIO()
+    c = canvas.Canvas(buff, pagesize=A4)
+    width, height = A4
+    y = height - 18 * mm
+    c.setTitle(f"relatorio_bcs_{farm}_{animal}")
+
+    def line(txt: str, size: int = 10, dy_mm: float = 6.0, bold: bool = False):
+        nonlocal y
+        c.setFont("Helvetica-Bold" if bold else "Helvetica", size)
+        c.drawString(16 * mm, y, txt[:130])
+        y -= dy_mm * mm
+        if y < 18 * mm:
+            c.showPage()
+            y = height - 18 * mm
+
+    s = report['stats']
+    line("Perspicuus BCS - Relatorio Individual", 14, 8, True)
+    line(f"Fazenda: {farm}", 10, 6, True)
+    line(f"Animal: {animal}", 10, 6, True)
+    line(f"Total de inferencias: {report['n_total']} | Com score: {report['n_scored']}")
+    if s['mean'] is not None:
+        line(
+            f"BCS min={s['min']:.2f} max={s['max']:.2f} media={s['mean']:.2f} "
+            f"desvio={s['std']:.2f} delta={s['delta']:.2f} max_salto={s['max_step']:.2f}"
+        )
+    line("Historico (data | BCS | raw | trait | status):", 10, 7, True)
+    for r in report['history']:
+        ecc = r.get('ecc_score')
+        raw = r.get('raw_score')
+        line(
+            f"{r.get('inference_date') or '—'} | "
+            f"{(f'{float(ecc):.2f}' if ecc is not None else '—')} | "
+            f"{(f'{float(raw):.4f}' if raw is not None else '—')} | "
+            f"{str(r.get('trait_name') or '—')} | "
+            f"{str(r.get('error_text') or 'ok')}",
+            9,
+            5.5,
+        )
+    c.showPage()
+    c.save()
+    buff.seek(0)
+    fname = f"relatorio_bcs_{ecc_safe_slug(farm)}_{ecc_safe_slug(animal)}.pdf"
+    return send_file(buff, mimetype='application/pdf', as_attachment=True, download_name=fname)
 
 
 @app.route('/cameras')
@@ -3042,6 +3400,19 @@ def _perspicuus_download_where():
     return ' AND '.join(conditions), params
 
 
+def _xlsx_from_rows(sheet_name: str, headers: list[str], rows: list[list[Any]]) -> io.BytesIO:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = (sheet_name or 'dados')[:31]
+    ws.append(headers)
+    for r in rows:
+        ws.append(r)
+    out = io.BytesIO()
+    wb.save(out)
+    out.seek(0)
+    return out
+
+
 @app.route('/download/perspicuus')
 @login_required
 def download_perspicuus():
@@ -3074,6 +3445,128 @@ def download_perspicuus():
         mimetype='text/csv',
         as_attachment=True,
         download_name=f'attentus_perspicuus_{ts}.csv',
+    )
+
+
+@app.route('/download/weather.xlsx')
+@login_required
+def download_weather_xlsx():
+    db = get_db()
+    device = request.args.get('device', '')
+    where = "WHERE device_name=?" if device else ""
+    params = (device,) if device else ()
+    rows = db.execute(
+        f"SELECT id, received_at, device_name, lux, temp_c, press_hpa, alt_m, humidity, uptime_s, rssi, "
+        f"mq135_raw, mq135_ppm "
+        f"FROM weather {where} ORDER BY received_at ASC",
+        params,
+    ).fetchall()
+    headers = [
+        'id', 'received_at_utc', 'device_name', 'lux_lx',
+        'temp_c', 'press_hpa', 'alt_m', 'humidity_pct', 'uptime_s', 'rssi_dbm',
+        'mq135_raw', 'mq135_ppm',
+    ]
+    data = [list(r) for r in rows]
+    ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    return send_file(
+        _xlsx_from_rows('weather', headers, data),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=f'attentus_weather_{ts}.xlsx',
+    )
+
+
+@app.route('/download/images.xlsx')
+@login_required
+def download_images_xlsx():
+    db = get_db()
+    device = request.args.get('device', '')
+    where = "WHERE device_name=?" if device else ""
+    params = (device,) if device else ()
+    rows = db.execute(
+        f"SELECT id, received_at, device_name, capture_id, filename, filesize, rssi, notes "
+        f"FROM images {where} ORDER BY received_at ASC",
+        params,
+    ).fetchall()
+    headers = ['id', 'received_at_utc', 'device_name', 'capture_id', 'filename', 'filesize_bytes', 'rssi_dbm', 'notes']
+    data = [list(r) for r in rows]
+    ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    return send_file(
+        _xlsx_from_rows('images', headers, data),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=f'attentus_images_{ts}.xlsx',
+    )
+
+
+@app.route('/download/perspicuus.xlsx')
+@login_required
+def download_perspicuus_xlsx():
+    where, params = _perspicuus_download_where()
+    db = get_db()
+    rows = db.execute(
+        f"""
+        SELECT id, event_id, received_at, timestamp_utc, station_id, device_id,
+               animal_rfid, animal_status, animal_repetition, inference_ready,
+               total_images
+        FROM perspicuus_events
+        WHERE {where}
+        ORDER BY timestamp_utc ASC
+        """,
+        params,
+    ).fetchall()
+    headers = [
+        'id', 'event_id', 'received_at_utc', 'timestamp_utc', 'station_id', 'device_id',
+        'animal_rfid', 'animal_status', 'animal_repetition', 'inference_ready', 'total_images',
+    ]
+    data = [list(r) for r in rows]
+    ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    return send_file(
+        _xlsx_from_rows('perspicuus', headers, data),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=f'attentus_perspicuus_{ts}.xlsx',
+    )
+
+
+@app.route('/download/ecc.xlsx')
+@login_required
+def download_ecc_xlsx():
+    db = get_db()
+    farm = request.args.get('farm', '').strip()
+    animal = request.args.get('animal', '').strip()
+    q = request.args.get('q', '').strip()
+    conditions = ['1=1']
+    params: list[Any] = []
+    if farm:
+        conditions.append("farm_id = ?")
+        params.append(farm)
+    if animal:
+        conditions.append("animal_tag = ?")
+        params.append(animal)
+    if q:
+        like = f'%{q}%'
+        conditions.append("(farm_id LIKE ? OR animal_tag LIKE ? OR filename LIKE ? OR trait_name LIKE ?)")
+        params.extend([like, like, like, like])
+    where = " AND ".join(conditions)
+    rows = db.execute(
+        f"""
+        SELECT id, created_at, farm_id, inference_date, animal_tag, view, filename,
+               raw_score, ecc_score, trait_name, error_text
+        FROM ecc_bcs_records
+        WHERE {where}
+        ORDER BY inference_date ASC, id ASC
+        """,
+        params,
+    ).fetchall()
+    headers = ['id', 'created_at_utc', 'farm_id', 'inference_date', 'animal_tag', 'view', 'filename', 'raw_score', 'ecc_score', 'trait_name', 'error_text']
+    data = [list(r) for r in rows]
+    ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    return send_file(
+        _xlsx_from_rows('bcs_ecc', headers, data),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=f'attentus_bcs_{ts}.xlsx',
     )
 
 

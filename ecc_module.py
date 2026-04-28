@@ -298,6 +298,9 @@ def ecc_attention_ranking(
             continue
         d0 = str(recs[0].get("inference_date") or "")
         d1 = str(recs[-1].get("inference_date") or "")
+        first_ecc = float(scores[0])
+        last_ecc = float(scores[-1])
+        delta = last_ecc - first_ecc
         out.append(
             {
                 "animal_tag": tag,
@@ -308,10 +311,78 @@ def ecc_attention_ranking(
                 "max_step": round(max_step, 2),
                 "first_date": d0,
                 "last_date": d1,
+                "first_ecc": round(first_ecc, 2),
+                "last_ecc": round(last_ecc, 2),
+                "delta": round(delta, 2),
             }
         )
 
     key = "max_step" if sort_by == "step" else "spread"
     out.sort(key=lambda x: -x[key])
+    return out[:top_n]
+
+
+def ecc_recurrent_animal_trends(
+    rows: list[dict[str, Any]],
+    *,
+    min_points: int = 3,
+    top_n: int = 10,
+) -> list[dict[str, Any]]:
+    """
+    Constrói séries de tendência para animais com recorrência.
+
+    Regras:
+    - Usa apenas registros com ecc_score numérico e data válida.
+    - Se houver múltiplas imagens no mesmo dia, mantém a de maior id (mais recente).
+    - Retorna os `top_n` por número de pontos (desempate por |delta| e recência).
+    """
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in rows:
+        farm = str(r.get("farm_id") or "").strip()
+        tag = str(r.get("animal_tag") or "").strip()
+        d = str(r.get("inference_date") or "").strip()
+        if not farm or not tag or not d:
+            continue
+        try:
+            ecc = float(r.get("ecc_score"))
+        except (TypeError, ValueError):
+            continue
+        rid = int(r.get("id") or 0)
+        key = (farm, tag)
+        box = grouped.setdefault(key, {"by_day": {}})
+        cur = box["by_day"].get(d)
+        if not cur or rid >= int(cur.get("id") or 0):
+            box["by_day"][d] = {"id": rid, "date": d, "ecc": round(ecc, 3)}
+
+    out: list[dict[str, Any]] = []
+    for (farm, tag), box in grouped.items():
+        pts = sorted(box["by_day"].values(), key=lambda x: x["date"])
+        if len(pts) < min_points:
+            continue
+        first = float(pts[0]["ecc"])
+        last = float(pts[-1]["ecc"])
+        delta = round(last - first, 3)
+        out.append(
+            {
+                "farm_id": farm,
+                "animal_tag": tag,
+                "label": f"{farm} · {tag}",
+                "n_points": len(pts),
+                "first_date": pts[0]["date"],
+                "last_date": pts[-1]["date"],
+                "first_ecc": round(first, 3),
+                "last_ecc": round(last, 3),
+                "delta": delta,
+                "points": pts,
+            }
+        )
+
+    out.sort(
+        key=lambda x: (
+            -int(x["n_points"]),
+            -abs(float(x["delta"])),
+            str(x["last_date"]),
+        )
+    )
     return out[:top_n]
 

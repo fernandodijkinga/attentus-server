@@ -419,6 +419,9 @@ select { cursor: pointer; }
     <a href="{{ url_for('index') }}"    class="nav-link {% if request.endpoint == 'index' %}active{% endif %}">
       <span class="icon">⬡</span> Dashboard
     </a>
+    <a href="{{ url_for('admin_users') }}" class="nav-link {% if request.endpoint == 'admin_users' %}active{% endif %}">
+      <span class="icon">👥</span> Usuários
+    </a>
     {% endif %}
     {% if can_access_env('weather') or can_access_env('calves') %}
     <div class="nav-section">Attentus</div>
@@ -470,7 +473,7 @@ select { cursor: pointer; }
       <span class="icon">•</span> análise individual
     </a>
     <a href="{{ url_for('ecc_pontos_atencao') }}" class="nav-link nav-sub {% if request.endpoint == 'ecc_pontos_atencao' %}active{% endif %}">
-      <span class="icon">•</span> pontos de atenção
+      <span class="icon">•</span> relatório individual
     </a>
     {% endif %}
 
@@ -498,22 +501,36 @@ select { cursor: pointer; }
     </a>
     {% endif %}
 
-    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') %}
+    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') or can_access_env('bcs') %}
     <div class="nav-section">Export</div>
     {% endif %}
     {% if can_access_env('weather') %}
     <a href="{{ url_for('download_weather') }}" class="nav-link">
       <span class="icon">↓</span> CSV Weather
     </a>
+    <a href="{{ url_for('download_weather_xlsx') }}" class="nav-link">
+      <span class="icon">↓</span> XLSX Weather
+    </a>
     {% endif %}
     {% if can_access_env('calves') %}
     <a href="{{ url_for('download_images') }}" class="nav-link">
       <span class="icon">↓</span> ZIP Imagens
     </a>
+    <a href="{{ url_for('download_images_xlsx') }}" class="nav-link">
+      <span class="icon">↓</span> XLSX Imagens DB
+    </a>
     {% endif %}
     {% if can_access_env('perspicuus') %}
     <a href="{{ url_for('download_perspicuus') }}" class="nav-link">
       <span class="icon">↓</span> ZIP Perspicuus
+    </a>
+    <a href="{{ url_for('download_perspicuus_xlsx') }}" class="nav-link">
+      <span class="icon">↓</span> XLSX Perspicuus DB
+    </a>
+    {% endif %}
+    {% if can_access_env('bcs') %}
+    <a href="{{ url_for('download_ecc_xlsx') }}" class="nav-link">
+      <span class="icon">↓</span> XLSX BCS DB
     </a>
     {% endif %}
 

@@ -20,6 +20,21 @@
   border: 1px dashed var(--border);
   border-radius: 10px;
 }
+.trend-mini-list {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.trend-mini {
+  font-family: var(--mono);
+  font-size: 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: var(--text2);
+  background: var(--surf2);
+}
 </style>
 {% endblock %}
 
@@ -117,6 +132,29 @@
   </div>
 </div>
 
+<div class="bcs-grid-2">
+  <div class="bcs-section">
+    <div class="bcs-section-head">
+      <div class="bcs-section-title"><span class="ico orange">📉</span> Tendência BCS por animal recorrente</div>
+      <div class="bcs-section-sub">animais com 3+ medições (top 10)</div>
+    </div>
+    <div class="bcs-section-body">
+      <div class="chart-wrap"><canvas id="ch-rec-trend"></canvas></div>
+      <div id="rec-trend-tags" class="trend-mini-list"></div>
+    </div>
+  </div>
+
+  <div class="bcs-section">
+    <div class="bcs-section-head">
+      <div class="bcs-section-title"><span class="ico warn">↕</span> Variação primeiro → último BCS</div>
+      <div class="bcs-section-sub">delta por animal recorrente</div>
+    </div>
+    <div class="bcs-section-body">
+      <div class="chart-wrap"><canvas id="ch-rec-delta"></canvas></div>
+    </div>
+  </div>
+</div>
+
 <div class="bcs-section">
   <div class="bcs-section-head">
     <div class="bcs-section-title"><span class="ico">🗂</span> Registros recentes</div>
@@ -165,6 +203,7 @@
 <script>
 const FARM_SERIES = {{ farm_series | tojson }};
 const FARM_RECORDS = {{ farm_records | tojson }};
+const RECURRENT_TRENDS = {{ recurrent_trends | tojson }};
 const ECC_COLORS = ['#0d7a5e', '#1a6fd4', '#d9782b', '#cc66ff', '#c62841', '#7dd3fc', '#a3e635'];
 const TICK_COLOR = '#5a6f82';
 const GRID_COLOR = '#dde4ed';
@@ -402,5 +441,92 @@ function buildFarmBandsChart() {
 
 buildFarmVolumeChart();
 buildFarmBandsChart();
+
+function buildRecurrentTrendCharts() {
+  const trendCanvas = document.getElementById('ch-rec-trend');
+  const deltaCanvas = document.getElementById('ch-rec-delta');
+  const tagsWrap = document.getElementById('rec-trend-tags');
+  if (!trendCanvas || !deltaCanvas) return;
+  const rows = Array.isArray(RECURRENT_TRENDS) ? RECURRENT_TRENDS : [];
+  if (!rows.length) {
+    showEmpty('ch-rec-trend', 'Sem animais com recorrência suficiente (mín. 3 medições).');
+    showEmpty('ch-rec-delta', 'Sem deltas de tendência para exibir.');
+    if (tagsWrap) tagsWrap.innerHTML = '';
+    return;
+  }
+
+  const labels = [...new Set(rows.flatMap((r) => (r.points || []).map((p) => String(p.date || '').slice(0, 10))))].filter(Boolean).sort();
+  const datasets = rows.map((r, idx) => {
+    const c = ECC_COLORS[idx % ECC_COLORS.length];
+    const map = {};
+    (r.points || []).forEach((p) => { map[String(p.date || '').slice(0, 10)] = Number(p.ecc); });
+    const data = labels.map((d) => (Number.isFinite(map[d]) ? map[d] : null));
+    return {
+      label: `${r.animal_tag} (${r.n_points}x)`,
+      data,
+      borderColor: c,
+      backgroundColor: c,
+      borderWidth: 2.2,
+      pointRadius: 2.5,
+      pointHoverRadius: 5,
+      tension: 0.2,
+      spanGaps: true,
+    };
+  });
+
+  new Chart(trendCanvas.getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: TICK_COLOR, font: { family: 'JetBrains Mono', size: 10 } } },
+      },
+      scales: {
+        x: { ticks: { color: TICK_COLOR, maxRotation: 45, maxTicksLimit: 20 }, grid: { color: GRID_COLOR } },
+        y: { min: 1, max: 5, ticks: { color: TICK_COLOR, stepSize: 0.25 }, grid: { color: GRID_COLOR } },
+      },
+    },
+  });
+
+  const deltaLabels = rows.map((r) => `${r.animal_tag} (${r.n_points}x)`);
+  const deltaData = rows.map((r) => Number(r.delta || 0));
+  const deltaColors = deltaData.map((v) => (v >= 0 ? '#c62841' : '#1a6fd4'));
+  new Chart(deltaCanvas.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: deltaLabels,
+      datasets: [{
+        label: 'Delta BCS (último - primeiro)',
+        data: deltaData,
+        backgroundColor: deltaColors,
+        borderColor: deltaColors,
+        borderWidth: 1.2,
+        borderRadius: 6,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: TICK_COLOR, font: { family: 'JetBrains Mono', size: 10 } } },
+      },
+      scales: {
+        x: { ticks: { color: TICK_COLOR, maxRotation: 45, maxTicksLimit: 16 }, grid: { color: GRID_COLOR } },
+        y: { ticks: { color: TICK_COLOR }, grid: { color: GRID_COLOR }, title: { display: true, text: 'Δ BCS', color: TICK_COLOR } },
+      },
+    },
+  });
+
+  if (tagsWrap) {
+    tagsWrap.innerHTML = rows.map((r) =>
+      `<span class="trend-mini">${r.farm_id} · ${r.animal_tag} · ${r.n_points} medições · Δ ${Number(r.delta).toFixed(2)}</span>`
+    ).join('');
+  }
+}
+
+buildRecurrentTrendCharts();
 </script>
 {% endblock %}

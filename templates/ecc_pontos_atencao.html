@@ -1,45 +1,41 @@
 {% extends "base.html" %}
 {% from "_bcs_layout.html" import bcs_styles, bcs_tabs %}
-{% block title %}Perspicuus BCS — pontos de atenção{% endblock %}
+{% block title %}Perspicuus BCS — relatório individual{% endblock %}
 
 {% block head %}
 {{ bcs_styles() }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
-.pa-help {
-  font-size: 12.5px; color: var(--text2);
-  line-height: 1.55; max-width: 760px;
-}
-.pa-help b { color: var(--text); }
-
-.pa-tag {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 4px 10px; border-radius: 999px;
-  border: 1px solid var(--border); color: var(--text2);
-  font-family: var(--mono); font-size: 10.5px;
+.rep-grid { display:grid; grid-template-columns: 1.2fr 1fr; gap:16px; margin-bottom:16px; }
+@media (max-width: 1050px) { .rep-grid { grid-template-columns: 1fr; } }
+.rep-chart-wrap { position: relative; height: 320px; }
+.rep-chart-wrap canvas { width: 100% !important; height: 100% !important; }
+.rep-kpi { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+.rep-k {
+  border: 1px solid var(--border);
+  border-radius: 10px;
   background: var(--surf2);
+  padding: 10px 12px;
 }
-.pa-tag.active {
-  background: rgba(13,122,94,.10);
-  border-color: rgba(13,122,94,.30);
-  color: var(--accent);
+.rep-k .label { font-family: var(--mono); font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); }
+.rep-k .value { font-family: var(--mono); font-size: 22px; color: var(--text); font-weight: 700; line-height: 1.1; margin-top: 2px; }
+.rep-k .sub { font-family: var(--mono); font-size: 10px; color: var(--text2); margin-top: 2px; }
+.rep-k.up .value { color: var(--err); }
+.rep-k.down .value { color: var(--accent2); }
+.rep-k.flat .value { color: var(--muted); }
+.rep-empty {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 36px 14px;
+  text-align: center;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
 }
-
-.pa-spread {
-  font-family: var(--mono); font-weight: 700;
-  display: inline-flex; align-items: center; gap: 4px;
-}
-.pa-spread.high { color: var(--err); }
-.pa-spread.med { color: var(--warn); }
-.pa-spread.low { color: var(--accent); }
-
-.pa-trend-arrow {
-  display: inline-block; width: 0; height: 0;
-  border-left: 5px solid transparent; border-right: 5px solid transparent;
-  margin-left: 4px;
-}
-.pa-trend-arrow.up { border-bottom: 7px solid var(--err); }
-.pa-trend-arrow.down { border-top: 7px solid var(--accent2); }
-.pa-trend-arrow.flat { border-top: 4px solid var(--muted); border-bottom: 4px solid var(--muted); width: 8px; height: 0; }
+.rep-thumb-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap:10px; }
+.rep-thumb-wrap { border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--surf2); }
+.rep-thumb-wrap img { width:100%; height:82px; object-fit:cover; cursor:zoom-in; display:block; }
+.rep-thumb-meta { padding:6px 8px; font-family:var(--mono); font-size:10px; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 </style>
 {% endblock %}
 
@@ -47,19 +43,19 @@
 <div class="bcs-hero">
   <div class="bcs-hero-top">
     <div>
-      <div class="bcs-hero-eyebrow">Perspicuus BCS · qualidade</div>
-      <h1 class="bcs-hero-title">Pontos de <em>atenção</em></h1>
+      <div class="bcs-hero-eyebrow">Perspicuus BCS · relatório</div>
+      <h1 class="bcs-hero-title">Relatório <em>individual</em> do animal</h1>
       <p class="bcs-hero-sub">
-        Brincos com maior <strong>variação de ECC</strong> entre visitas. Use para priorizar conferências
-        manuais, recalibragem ou revisão da imagem fonte.
-      </p>
-      <p class="pa-help" style="margin-top:8px">
-        Apenas animais com <b>2 ou mais medições</b> com escore válido. <b>Amplitude</b> = (máx − mín);
-        <b>maior salto</b> = maior alteração entre visitas consecutivas (ordenadas por data e id).
+        Página substitui pontos de atenção por um laudo operacional: histórico completo de inferências,
+        tendência do BCS, estatísticas e exportação para PDF.
       </p>
     </div>
+    <div class="bcs-hero-actions">
+      {% if report and report.history %}
+      <a class="btn btn-accent btn-sm" href="{{ url_for('ecc_pontos_atencao_pdf', farm=farm_filter, animal=animal_filter) }}">⬇ Baixar PDF</a>
+      {% endif %}
+    </div>
   </div>
-
   <div class="bcs-kpi-strip">
     <div class="bcs-kpi accent">
       <div class="lbl"><span class="ico">📚</span> Registros totais</div>
@@ -69,10 +65,10 @@
       <div class="lbl"><span class="ico">🏡</span> Fazendas</div>
       <div class="val">{{ stats.farms }}</div>
     </div>
-    <div class="bcs-kpi warn">
-      <div class="lbl"><span class="ico">⚠️</span> Sinalizados</div>
-      <div class="val">{{ attention_rows|length }}</div>
-      <div class="extra">na fazenda atual</div>
+    <div class="bcs-kpi orange">
+      <div class="lbl"><span class="ico">🐂</span> Animal selecionado</div>
+      <div class="val">{{ animal_filter or '—' }}</div>
+      <div class="extra">{{ farm_filter or 'sem fazenda' }}</div>
     </div>
   </div>
 </div>
@@ -81,8 +77,8 @@
 
 <div class="bcs-section">
   <div class="bcs-section-head">
-    <div class="bcs-section-title"><span class="ico warn">🔎</span> Filtros</div>
-    <div class="bcs-section-sub">classificação: {% if sort_by == 'step' %}maior salto{% else %}amplitude{% endif %}</div>
+    <div class="bcs-section-title"><span class="ico warn">🔎</span> Seleção do relatório</div>
+    <div class="bcs-section-sub">fazenda + animal</div>
   </div>
   <div class="bcs-section-body">
     <form method="get" class="bcs-filter-row">
@@ -95,90 +91,131 @@
           {% endfor %}
         </select>
       </div>
-      <div class="field">
-        <label>Ordenar por</label>
-        <select name="sort" onchange="this.form.submit()">
-          <option value="spread" {% if sort_by == 'spread' %}selected{% endif %}>Amplitude (máx − mín)</option>
-          <option value="step" {% if sort_by == 'step' %}selected{% endif %}>Maior salto entre visitas</option>
+      <div class="field" style="min-width:280px">
+        <label>Animal</label>
+        <select name="animal" onchange="this.form.submit()">
+          <option value="">—</option>
+          {% for a in animal_options %}
+          <option value="{{ a.animal_tag }}" {% if animal_filter == a.animal_tag %}selected{% endif %}>
+            {{ a.animal_tag }} ({{ a.n_inf }} inf.)
+          </option>
+          {% endfor %}
         </select>
       </div>
       <div class="flex gap-8" style="align-items:flex-end">
+        <button class="btn btn-accent btn-sm" type="submit">Abrir relatório</button>
         <a href="{{ url_for('ecc_pontos_atencao') }}" class="btn btn-ghost btn-sm">Limpar</a>
       </div>
     </form>
-    <div class="flex gap-8" style="margin-top:12px;flex-wrap:wrap">
-      <span class="pa-tag active">Top 60 brincos</span>
-      <span class="pa-tag">≥ 2 medições</span>
-      <span class="pa-tag">ECC válido</span>
+  </div>
+</div>
+
+{% if report and report.history %}
+<div class="rep-grid">
+  <div class="bcs-section" style="margin-bottom:0">
+    <div class="bcs-section-head">
+      <div class="bcs-section-title"><span class="ico">📈</span> Tendência BCS no tempo</div>
+      <div class="bcs-section-sub">{{ report.n_total }} inferências ({{ report.n_scored }} com escore)</div>
+    </div>
+    <div class="bcs-section-body">
+      <div class="rep-chart-wrap"><canvas id="rep-chart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="bcs-section" style="margin-bottom:0">
+    <div class="bcs-section-head">
+      <div class="bcs-section-title"><span class="ico blue">📊</span> Resumo estatístico</div>
+      <div class="bcs-section-sub">início / fim / variação</div>
+    </div>
+    <div class="bcs-section-body">
+      <div class="rep-kpi">
+        <div class="rep-k">
+          <div class="label">Inferências</div>
+          <div class="value">{{ report.n_total }}</div>
+          <div class="sub">{{ report.n_scored }} com score</div>
+        </div>
+        <div class="rep-k {% if report.stats.trend == 'up' %}up{% elif report.stats.trend == 'down' %}down{% else %}flat{% endif %}">
+          <div class="label">Δ início → fim</div>
+          <div class="value">{{ '%.2f'|format(report.stats.delta or 0) }}</div>
+          <div class="sub">{{ report.stats.first_date if report.history else '—' }} até {{ report.stats.last_date if report.history else '—' }}</div>
+        </div>
+        <div class="rep-k">
+          <div class="label">BCS mínimo</div>
+          <div class="value">{{ '%.2f'|format(report.stats.min) if report.stats.min is not none else '—' }}</div>
+        </div>
+        <div class="rep-k">
+          <div class="label">BCS máximo</div>
+          <div class="value">{{ '%.2f'|format(report.stats.max) if report.stats.max is not none else '—' }}</div>
+        </div>
+        <div class="rep-k">
+          <div class="label">BCS médio</div>
+          <div class="value">{{ '%.2f'|format(report.stats.mean) if report.stats.mean is not none else '—' }}</div>
+        </div>
+        <div class="rep-k">
+          <div class="label">Maior salto</div>
+          <div class="value">{{ '%.2f'|format(report.stats.max_step) if report.stats.max_step is not none else '—' }}</div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
 
 <div class="bcs-section">
   <div class="bcs-section-head">
-    <div class="bcs-section-title"><span class="ico warn">⚠️</span> Animais a monitorar — {{ farm_filter or 'nenhuma fazenda' }}</div>
-    <div class="bcs-section-sub">{{ attention_rows|length }} brincos</div>
+    <div class="bcs-section-title"><span class="ico">🖼</span> Galeria recente</div>
+    <div class="bcs-section-sub">últimas {{ report.images|length }} imagens</div>
+  </div>
+  <div class="bcs-section-body">
+    <div class="rep-thumb-grid">
+      {% for r in report.images %}
+      {% set src = r.bbox_path or r.image_path or r.thumb_path %}
+      <div class="rep-thumb-wrap">
+        {% if src %}
+        <img src="{{ src }}" alt="{{ r.inference_date }}" onclick="window.open('{{ src }}')">
+        {% else %}
+        <div class="rep-empty" style="padding:18px 8px">sem imagem</div>
+        {% endif %}
+        <div class="rep-thumb-meta">{{ r.inference_date or '—' }} · BCS {{ '%.2f'|format(r.ecc_score) if r.ecc_score is not none else '—' }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="bcs-section">
+  <div class="bcs-section-head">
+    <div class="bcs-section-title"><span class="ico">🗂</span> Histórico completo</div>
+    <div class="bcs-section-sub">ordem cronológica</div>
   </div>
   <div class="bcs-section-body tight">
     <div class="bcs-table">
       <table>
         <thead>
           <tr>
-            <th>#</th>
-            <th>Brinco</th>
-            <th class="num">Medições</th>
-            <th class="num">ECC mín</th>
-            <th class="num">ECC máx</th>
-            <th class="num">Amplitude</th>
-            <th class="num">Maior salto</th>
-            <th>1ª data</th>
-            <th>Última</th>
-            <th></th>
+            <th>Data</th>
+            <th>ID</th>
+            <th>Arquivo</th>
+            <th class="num">BCS</th>
+            <th class="num">Raw</th>
+            <th>Trait</th>
+            <th>Status</th>
           </tr>
         </thead>
         <tbody>
-          {% for r in attention_rows %}
+          {% for r in report.history %}
           <tr>
-            <td class="mono">{{ loop.index }}</td>
-            <td class="mono"><strong>{{ r.animal_tag }}</strong></td>
-            <td class="num">{{ r.n_records }}</td>
-            <td class="num">{{ '%.2f' % r.min_ecc }}</td>
-            <td class="num">{{ '%.2f' % r.max_ecc }}</td>
-            <td class="num">
-              {% if r.spread >= 1.0 %}
-                <span class="pa-spread high">{{ '%.2f' % r.spread }}</span>
-              {% elif r.spread >= 0.5 %}
-                <span class="pa-spread med">{{ '%.2f' % r.spread }}</span>
-              {% else %}
-                <span class="pa-spread low">{{ '%.2f' % r.spread }}</span>
-              {% endif %}
-            </td>
-            <td class="num">
-              {% if r.max_step >= 1.0 %}
-                <span class="pa-spread high">{{ '%.2f' % r.max_step }}</span>
-              {% elif r.max_step >= 0.5 %}
-                <span class="pa-spread med">{{ '%.2f' % r.max_step }}</span>
-              {% else %}
-                <span class="pa-spread low">{{ '%.2f' % r.max_step }}</span>
-              {% endif %}
-            </td>
-            <td class="mono">{{ r.first_date or '—' }}</td>
-            <td class="mono">{{ r.last_date or '—' }}</td>
+            <td class="mono">{{ r.inference_date or '—' }}</td>
+            <td class="mono">{{ r.id }}</td>
+            <td class="mono">{{ r.filename }}</td>
+            <td class="num">{{ '%.2f'|format(r.ecc_score) if r.ecc_score is not none else '—' }}</td>
+            <td class="num">{{ '%.4f'|format(r.raw_score) if r.raw_score is not none else '—' }}</td>
+            <td class="mono">{{ r.trait_name or '—' }}</td>
             <td>
-              <a class="btn btn-ghost btn-sm" href="{{ url_for('ecc_analise_individual', farm=farm_filter, animal=r.animal_tag) }}">Ver análise →</a>
-            </td>
-          </tr>
-          {% else %}
-          <tr>
-            <td colspan="10">
-              <div class="bcs-empty">
-                <div class="icon">📈</div>
-                {% if not farm_filter %}
-                  Selecione uma fazenda com dados ECC.
-                {% else %}
-                  Nenhum animal com 2+ medições com ECC nesta fazenda, ou ainda sem variação.
-                {% endif %}
-              </div>
+              {% if r.error_text %}
+              <span class="bcs-status-pill err">{{ r.error_text }}</span>
+              {% else %}
+              <span class="bcs-status-pill ok">ok</span>
+              {% endif %}
             </td>
           </tr>
           {% endfor %}
@@ -187,4 +224,62 @@
     </div>
   </div>
 </div>
+{% else %}
+<div class="bcs-section">
+  <div class="bcs-section-body">
+    <div class="rep-empty">
+      Selecione fazenda e animal com inferências para montar o relatório individual.
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if report and report.history %}
+<script>
+const REPORT_HISTORY = {{ report.history | tojson }};
+(function buildReportChart() {
+  const canvas = document.getElementById('rep-chart');
+  if (!canvas) return;
+  const rows = (Array.isArray(REPORT_HISTORY) ? REPORT_HISTORY : []).filter((r) => r && r.ecc_score != null);
+  if (!rows.length) return;
+  rows.sort((a, b) => {
+    const da = String(a.inference_date || '').localeCompare(String(b.inference_date || ''));
+    if (da !== 0) return da;
+    return (Number(a.id) || 0) - (Number(b.id) || 0);
+  });
+  const labels = rows.map((r) => String(r.inference_date || ''));
+  const data = rows.map((r) => Number(r.ecc_score));
+  new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'BCS (1-5)',
+        data,
+        borderColor: '#0d7a5e',
+        backgroundColor: 'rgba(13,122,94,.16)',
+        borderWidth: 2.4,
+        pointRadius: 3.5,
+        tension: 0.2,
+        fill: true,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#5a6f82', font: { family: 'JetBrains Mono', size: 10 } } },
+      },
+      scales: {
+        x: { ticks: { color: '#5a6f82', maxRotation: 40 }, grid: { color: '#dde4ed' } },
+        y: { min: 1, max: 5, ticks: { color: '#5a6f82', stepSize: 0.25 }, grid: { color: '#dde4ed' } },
+      },
+    },
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

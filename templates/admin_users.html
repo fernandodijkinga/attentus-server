@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Admin - Usuários{% endblock %}
+
+{% block head %}
+<style>
+.admin-users-grid { display:grid; grid-template-columns: 360px 1fr; gap:16px; align-items:start; }
+@media (max-width: 1100px) { .admin-users-grid { grid-template-columns: 1fr; } }
+.env-checks { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:6px; }
+@media (max-width: 700px) { .env-checks { grid-template-columns: 1fr; } }
+.env-check {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-size: 12px;
+  color: var(--text2);
+  background: var(--surf2);
+}
+.env-check input { width: 14px; height: 14px; margin: 0; }
+.user-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 10px;
+  background: var(--surf);
+}
+.user-head {
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:8px;
+  margin-bottom: 8px;
+}
+.user-name { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--text); }
+.user-meta { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 2px; }
+.user-role { font-size: 11px; color: var(--text2); margin-top: 6px; }
+.user-actions { display:grid; grid-template-columns: 1fr; gap:8px; margin-top:10px; }
+.flash-bar { padding:10px 12px; border-radius:8px; margin-bottom:10px; font-size:12px; border:1px solid; }
+.flash-bar.success { background: rgba(13,122,94,.10); border-color: rgba(13,122,94,.30); color: var(--accent); }
+.flash-bar.error { background: rgba(198,40,65,.09); border-color: rgba(198,40,65,.28); color: var(--err); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">👥 <span>Admin</span> <span style="color:var(--accent)">usuários</span></div>
+    <div class="page-sub">Criar clientes e definir acesso por ambiente (Weather, Perspicuus, Calf Monitor e BCS).</div>
+  </div>
+  <div class="flex gap-8" style="flex-wrap:wrap">
+    <span class="pill pill-blue">{{ users|length }} usuário(s)</span>
+    <span class="pill pill-green">admin: {{ session.username }}</span>
+  </div>
+</div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+      <div class="flash-bar {{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
+
+<div class="admin-users-grid">
+  <div class="card">
+    <div class="card-title">Criar usuário</div>
+    <form method="post">
+      <input type="hidden" name="action" value="create">
+      <div class="field">
+        <label>Usuário</label>
+        <input type="text" name="username" placeholder="cliente_a" maxlength="64" required>
+      </div>
+      <div class="field">
+        <label>Senha inicial</label>
+        <input type="password" name="password" placeholder="mínimo 4 caracteres" minlength="4" required>
+      </div>
+      <div class="field">
+        <label>Acessos</label>
+        <div class="env-checks">
+          {% for env in env_order %}
+          <label class="env-check">
+            <input type="checkbox" name="envs" value="{{ env }}">
+            <span>{{ env_labels.get(env, env) }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      <button class="btn btn-accent btn-sm" type="submit">Criar usuário</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Usuários existentes</div>
+    {% for u in users %}
+    <div class="user-card">
+      <div class="user-head">
+        <div>
+          <div class="user-name">{{ u.username }}</div>
+          <div class="user-meta">origem: {{ u.source }}</div>
+        </div>
+        {% if u.is_admin %}
+        <span class="pill pill-red">admin</span>
+        {% elif u.editable %}
+        <span class="pill pill-green">editável</span>
+        {% else %}
+        <span class="pill pill-orange">somente leitura</span>
+        {% endif %}
+      </div>
+
+      <div class="user-role"><strong>acesso:</strong> {{ u.role }}</div>
+
+      {% if u.editable %}
+      <div class="user-actions">
+        <form method="post">
+          <input type="hidden" name="action" value="update_envs">
+          <input type="hidden" name="username" value="{{ u.username }}">
+          <div class="env-checks">
+            {% for env in env_order %}
+            <label class="env-check">
+              <input type="checkbox" name="envs" value="{{ env }}" {% if env in u.envs %}checked{% endif %}>
+              <span>{{ env_labels.get(env, env) }}</span>
+            </label>
+            {% endfor %}
+          </div>
+          <button class="btn btn-ghost btn-sm" type="submit" style="margin-top:8px">Salvar acessos</button>
+        </form>
+
+        <form method="post" class="flex gap-8" style="align-items:flex-end;flex-wrap:wrap">
+          <input type="hidden" name="action" value="reset_password">
+          <input type="hidden" name="username" value="{{ u.username }}">
+          <div class="field" style="margin:0;min-width:240px">
+            <label>Nova senha</label>
+            <input type="password" name="password" minlength="4" required placeholder="nova senha">
+          </div>
+          <button class="btn btn-ghost btn-sm" type="submit">Redefinir senha</button>
+        </form>
+
+        <form method="post" onsubmit="return confirm('Remover usuário {{ u.username }}?');">
+          <input type="hidden" name="action" value="delete">
+          <input type="hidden" name="username" value="{{ u.username }}">
+          <button class="btn btn-danger btn-sm" type="submit">Excluir usuário</button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="empty-state"><div class="icon">👤</div>Sem usuários carregados.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

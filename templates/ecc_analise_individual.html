@@ -157,8 +157,10 @@
         <label>Brinco</label>
         <select name="animal">
           <option value="">Todos</option>
-          {% for a in animals %}
-          <option value="{{ a }}" {% if animal_filter == a %}selected{% endif %}>{{ a }}</option>
+          {% for a in animal_options %}
+          <option value="{{ a.animal_tag }}" {% if animal_filter == a.animal_tag %}selected{% endif %}>
+            {{ a.animal_tag }} ({{ a.n_inf }} inf.)
+          </option>
           {% endfor %}
         </select>
       </div>
@@ -255,6 +257,7 @@
             <th class="num">Raw</th>
             <th>Trait</th>
             <th>Status</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -273,9 +276,12 @@
             <span class="bcs-status-pill ok">ok</span>
             {% endif %}
           </td>
+          <td>
+            <a class="btn btn-ghost btn-sm" href="{{ url_for('ecc_analise_individual', farm=r.farm_id, animal=r.animal_tag) }}">Ver animal</a>
+          </td>
         </tr>
         {% else %}
-        <tr><td colspan="7"><div class="bcs-empty"><div class="icon">📈</div>Sem dados.</div></td></tr>
+        <tr><td colspan="8"><div class="bcs-empty"><div class="icon">📈</div>Sem dados.</div></td></tr>
         {% endfor %}
         </tbody>
       </table>
