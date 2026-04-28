@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Perspicuus Angus - análise população{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">🐮 <span>Perspicuus Angus</span> <span style="color:var(--accent)">análise população</span></div>
+    <div class="page-sub">Distribuição populacional e tendência global (não agrupada por rebanho)</div>
+  </div>
+</div>
+<div class="card mb-16">
+  <form method="get" class="filters-row">
+    <div class="field"><label>Fazenda</label><select name="farm"><option value="">Todas</option>{% for f in farms %}<option value="{{ f }}" {% if farm_filter==f %}selected{% endif %}>{{ f }}</option>{% endfor %}</select></div>
+    <div class="field"><label>Busca</label><input name="q" value="{{ q_filter }}" placeholder="fazenda ou brinco"></div>
+    <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
+  </form>
+</div>
+<div class="grid-2 mb-16">
+  <div class="card"><div class="card-title">Distribuição de score (1-9)</div><div style="height:300px"><canvas id="ang-pop-dist"></canvas></div></div>
+  <div class="card"><div class="card-title">Média da população por dia</div><div style="height:300px"><canvas id="ang-pop-series"></canvas></div></div>
+</div>
+<div class="card">
+  <div class="card-title">Animais com maior variação</div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Fazenda</th><th>Brinco</th><th>N</th><th>Média</th><th>Mín</th><th>Máx</th><th>Spread</th></tr></thead>
+    <tbody>{% for r in ranked %}<tr>
+      <td>{{ r.farm_id }}</td><td class="mono">{{ r.animal_tag }}</td><td class="mono">{{ r.n }}</td>
+      <td class="mono">{{ '%.2f'|format(r.mean) }}</td><td class="mono">{{ '%.2f'|format(r.min) }}</td><td class="mono">{{ '%.2f'|format(r.max) }}</td><td class="mono">{{ '%.2f'|format(r.spread) }}</td>
+    </tr>{% else %}<tr><td colspan="7"><div class="empty-state"><div class="icon">📊</div>Sem dados.</div></td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const DIST={{ dist|tojson }};
+const SER={{ pop_series|tojson }};
+const d=document.getElementById('ang-pop-dist');
+if(d){new Chart(d.getContext('2d'),{type:'bar',data:{labels:['1-3','3-5','5-7','7-9'],datasets:[{data:DIST,backgroundColor:['#c62841','#d9782b','#0d7a5e','#1a6fd4']}]},options:{responsive:true,maintainAspectRatio:false}});}
+const s=document.getElementById('ang-pop-series');
+if(s){new Chart(s.getContext('2d'),{type:'line',data:{labels:(SER||[]).map(x=>x.date),datasets:[{label:'Média 1-9',data:(SER||[]).map(x=>x.mean),borderColor:'#1a6fd4',backgroundColor:'rgba(26,111,212,.14)',fill:true,tension:.2}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{min:1,max:9}}}});}
+</script>
+{% endblock %}
