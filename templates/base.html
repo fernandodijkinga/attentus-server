@@ -439,7 +439,7 @@ select { cursor: pointer; }
 
     {% if can_access_env('perspicuus') %}
     <div class="nav-section">Perspicuus</div>
-    <a href="{{ url_for('perspicuus') }}"  class="nav-link {% if request.endpoint in ['perspicuus', 'perspicuus_animais', 'perspicuus_inferencias', 'perspicuus_modelos', 'perspicuus_analise_rebanho', 'perspicuus_angus_importar', 'perspicuus_angus_analise_individual', 'perspicuus_angus_analise_populacao', 'perspicuus_angus_modelos'] %}active{% endif %}">
+    <a href="{{ url_for('perspicuus') }}"  class="nav-link {% if request.endpoint in ['perspicuus', 'perspicuus_animais', 'perspicuus_inferencias', 'perspicuus_modelos', 'perspicuus_analise_rebanho'] %}active{% endif %}">
       <span class="icon">🧠</span> Perspicuus
     </a>
     <a href="{{ url_for('perspicuus_animais') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_animais' %}active{% endif %}">
@@ -454,18 +454,25 @@ select { cursor: pointer; }
     <a href="{{ url_for('perspicuus_modelos') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_modelos' %}active{% endif %}">
       <span class="icon">•</span> Modelos
     </a>
+    {% endif %}
+
+    {% if can_access_env('angus') %}
+    <div class="nav-section">Perspicuus Angus</div>
+    <a href="{{ url_for('perspicuus_angus_importar') }}" class="nav-link {% if request.endpoint in ['perspicuus_angus_importar', 'perspicuus_angus_analise_individual', 'perspicuus_angus_analise_populacao', 'perspicuus_angus_modelos'] %}active{% endif %}">
+      <span class="icon">🐂</span> Angus
+    </a>
     <a href="{{ url_for('perspicuus_angus_importar') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_angus_importar' %}active{% endif %}">
-      <span class="icon">•</span> Angus importar
+      <span class="icon">•</span> importar
     </a>
     <a href="{{ url_for('perspicuus_angus_analise_individual') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_angus_analise_individual' %}active{% endif %}">
-      <span class="icon">•</span> Angus individual
+      <span class="icon">•</span> análise individual
     </a>
     <a href="{{ url_for('perspicuus_angus_analise_populacao') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_angus_analise_populacao' %}active{% endif %}">
-      <span class="icon">•</span> Angus população
+      <span class="icon">•</span> análise população
     </a>
     {% if is_admin_user %}
     <a href="{{ url_for('perspicuus_angus_modelos') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_angus_modelos' %}active{% endif %}">
-      <span class="icon">•</span> Angus modelos
+      <span class="icon">•</span> modelos IA
     </a>
     {% endif %}
     {% endif %}
@@ -491,7 +498,7 @@ select { cursor: pointer; }
     </a>
     {% endif %}
 
-    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') or can_access_env('bcs') %}
+    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') or can_access_env('angus') or can_access_env('bcs') %}
     <div class="nav-section">Dados</div>
     {% endif %}
     {% if can_access_env('weather') %}
@@ -515,7 +522,7 @@ select { cursor: pointer; }
     </a>
     {% endif %}
 
-    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') or can_access_env('bcs') %}
+    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') or can_access_env('angus') or can_access_env('bcs') %}
     <div class="nav-section">Export</div>
     {% endif %}
     {% if can_access_env('weather') %}

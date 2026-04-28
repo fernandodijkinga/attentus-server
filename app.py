@@ -125,10 +125,11 @@ log.info(f"DATA_DIR={DATA_DIR}")
 # Autenticação de usuário web
 ADMIN_USER      = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS_HASH = generate_password_hash(os.environ.get('ADMIN_PASS', 'attentus2024'))
-ALL_ENVIRONMENTS = {'weather', 'perspicuus', 'calves', 'bcs'}
+ALL_ENVIRONMENTS = {'weather', 'perspicuus', 'angus', 'calves', 'bcs'}
 ENV_LABELS = {
     'weather': 'Attentus Weather',
     'perspicuus': 'Perspicuus',
+    'angus': 'Perspicuus Angus',
     'calves': 'Attentus Calves',
     'bcs': 'Perspicuus BCS',
 }
@@ -209,6 +210,7 @@ def _build_auth_users() -> dict[str, dict[str, Any]]:
     env_shortcuts = {
         'weather': ('WEATHER_USER', 'WEATHER_PASS'),
         'perspicuus': ('PERSPICUUS_USER', 'PERSPICUUS_PASS'),
+        'angus': ('ANGUS_USER', 'ANGUS_PASS'),
         'calves': ('CALVES_USER', 'CALVES_PASS'),
         'bcs': ('BCS_USER', 'BCS_PASS'),
     }
@@ -317,13 +319,15 @@ def _environment_for_request() -> str | None:
     perspicuus_eps = {
         'perspicuus', 'perspicuus_animais', 'perspicuus_inferencias',
         'perspicuus_analise_rebanho', 'perspicuus_modelos', 'serve_perspicuus_media',
-        'perspicuus_angus_importar', 'perspicuus_angus_analise_individual',
-        'perspicuus_angus_analise_populacao', 'perspicuus_angus_modelos',
-        'serve_perspicuus_angus_media',
         'get_perspicuus_record', 'patch_perspicuus_record',
         'delete_perspicuus_record', 'infer_perspicuus_record_api',
         'download_perspicuus', 'download_perspicuus_event',
         'download_perspicuus_xlsx',
+    }
+    angus_eps = {
+        'perspicuus_angus_importar', 'perspicuus_angus_analise_individual',
+        'perspicuus_angus_analise_populacao', 'perspicuus_angus_modelos',
+        'serve_perspicuus_angus_media',
     }
     bcs_eps = {
         'serve_ecc_media', 'ecc_analise', 'ecc_importar', 'api_ecc_upload_one',
@@ -339,6 +343,8 @@ def _environment_for_request() -> str | None:
         return 'calves'
     if ep in perspicuus_eps:
         return 'perspicuus'
+    if ep in angus_eps:
+        return 'angus'
     if ep in bcs_eps:
         return 'bcs'
     return None
@@ -349,6 +355,8 @@ def _first_allowed_endpoint() -> str:
         return url_for('weather')
     if _session_can_access('perspicuus'):
         return url_for('perspicuus')
+    if _session_can_access('angus'):
+        return url_for('perspicuus_angus_importar')
     if _session_can_access('calves'):
         return url_for('calf_monitor')
     if _session_can_access('bcs'):
@@ -383,7 +391,7 @@ def inject_auth_flags():
     def can_access(env_name: str) -> bool:
         return is_admin or env_name in allowed
 
-    env_labels = [ENV_LABELS[e] for e in ('weather', 'perspicuus', 'calves', 'bcs') if can_access(e)]
+    env_labels = [ENV_LABELS[e] for e in ('weather', 'perspicuus', 'angus', 'calves', 'bcs') if can_access(e)]
     return {
         'is_admin_user': is_admin,
         'can_access_env': can_access,
@@ -1101,7 +1109,7 @@ def admin_users():
     return render_template(
         'admin_users.html',
         users=_user_rows_for_admin(),
-        env_order=['weather', 'perspicuus', 'calves', 'bcs'],
+        env_order=['weather', 'perspicuus', 'angus', 'calves', 'bcs'],
         env_labels=ENV_LABELS,
     )
 
@@ -3034,6 +3042,7 @@ def ecc_pontos_atencao_pdf():
     try:
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.units import mm
+        from reportlab.lib.utils import ImageReader
         from reportlab.pdfgen import canvas
     except Exception:
         flash('Dependência de PDF não instalada (reportlab).', 'error')
@@ -3077,6 +3086,67 @@ def ecc_pontos_atencao_pdf():
             9,
             5.5,
         )
+
+    # Página visual: crops (ou bbox/original) + raw + reescalado
+    c.showPage()
+    y = height - 18 * mm
+    line("Imagens (crop) e escores", 13, 8, True)
+    line("Preferência de imagem: thumb (crop) -> bbox -> original", 9, 6)
+    cards = []
+    for r in report['history']:
+        src = str(r.get('thumb_path') or r.get('bbox_path') or r.get('image_path') or '').strip()
+        if not src:
+            continue
+        abs_path = _ecc_abs_path_from_web_path(src)
+        if not abs_path or not os.path.isfile(abs_path):
+            continue
+        cards.append(
+            {
+                'path': abs_path,
+                'date': str(r.get('inference_date') or '—'),
+                'raw': r.get('raw_score'),
+                'ecc': r.get('ecc_score'),
+            }
+        )
+    cards = cards[:24]
+    if not cards:
+        line("Sem imagens disponíveis para este animal.", 10, 6)
+    else:
+        cols = 2
+        card_w = (width - (16 * mm) * 2 - 8 * mm) / cols
+        img_w = card_w
+        img_h = 48 * mm
+        x0 = 16 * mm
+        col_gap = 8 * mm
+        row_h = img_h + 14 * mm
+        row = 0
+        col = 0
+        for it in cards:
+            if y - row_h < 16 * mm:
+                c.showPage()
+                y = height - 18 * mm
+                row = 0
+                col = 0
+            x = x0 + col * (img_w + col_gap)
+            y_img = y - img_h
+            try:
+                c.drawImage(ImageReader(it['path']), x, y_img, width=img_w, height=img_h, preserveAspectRatio=True, anchor='sw')
+            except Exception:
+                c.rect(x, y_img, img_w, img_h)
+                c.setFont("Helvetica", 8)
+                c.drawString(x + 2 * mm, y_img + 2 * mm, "falha ao carregar imagem")
+            c.setFont("Helvetica", 8)
+            c.drawString(x, y_img - 4 * mm, f"Data: {it['date']}")
+            raw = it['raw']
+            ecc = it['ecc']
+            raw_txt = f"{float(raw):.4f}" if raw is not None else "—"
+            ecc_txt = f"{float(ecc):.2f}" if ecc is not None else "—"
+            c.drawString(x, y_img - 8 * mm, f"Raw: {raw_txt} | Reescalado: {ecc_txt}")
+
+            col += 1
+            if col >= cols:
+                col = 0
+                y -= row_h
     c.showPage()
     c.save()
     buff.seek(0)
