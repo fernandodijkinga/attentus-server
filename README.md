@@ -275,5 +275,5 @@ Os dados serão salvos em `./data/` (criado automaticamente).
 # ATUALIZAR GITHUB
 # cd /Users/fernandojeandijkinga/codigos/Render-Attentus/attentus-server
 # git add -A
-# git commit -m "Melhorias gerais e de grande proporção"
+# git commit -m "Melhorias gerais"
 # git push origin main

@@ -63,6 +63,9 @@ ROLE_TO_ENV: Dict[str, str] = {
     "angus_yolo": "ANGUS_YOLO_ONNX",
     "angus_lateral": "ANGUS_LATERAL_ONNX",
     "angus_lateral_meta": "ANGUS_LATERAL_METADATA_JSON",
+    "nelore_yolo": "NELORE_YOLO_ONNX",
+    "nelore_lateral": "NELORE_LATERAL_ONNX",
+    "nelore_lateral_meta": "NELORE_LATERAL_METADATA_JSON",
 }
 REGISTRY_FILENAME = "registry.json"
 
@@ -481,6 +484,8 @@ def get_engine(kind: str = "default") -> PerspicuusInferenceEngine:
         return eng
     if k == "angus":
         eng = PerspicuusInferenceEngine(role_prefix="angus", views=("lateral",))
+    elif k == "nelore":
+        eng = PerspicuusInferenceEngine(role_prefix="nelore", views=("lateral",))
     else:
         eng = PerspicuusInferenceEngine()
     _ENGINES[k] = eng

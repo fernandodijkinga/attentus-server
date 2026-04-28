@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Perspicuus Nelore - importar{% endblock %}
+{% block head %}
+<style>
+.grid-2a{display:grid;grid-template-columns:1fr 1fr;gap:16px}.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:980px){.grid-2a,.row2{grid-template-columns:1fr}}
+.thumb{width:68px;height:52px;object-fit:cover;border:1px solid var(--border);border-radius:6px;cursor:zoom-in}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">🐃 <span>Perspicuus</span> <span style="color:var(--accent)">Nelore importar</span></div>
+    <div class="page-sub">Somente imagem lateral · upload individual ou lote</div>
+  </div>
+  <div class="flex gap-8">
+    <span class="pill pill-blue">{{ stats.total_records }} registros</span>
+    <span class="pill pill-green">{{ stats.with_score }} com score</span>
+    <span class="pill pill-orange">{{ stats.lots }} lotes</span>
+  </div>
+</div>
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}{% for category, message in messages %}
+<div class="bcs-flash {{ category }}">{{ message }}</div>
+{% endfor %}{% endif %}
+{% endwith %}
+
+<div class="grid-2a">
+  <div class="card">
+    <div class="card-title">Upload individual (lateral)</div>
+    <form method="post" enctype="multipart/form-data">
+      <input type="hidden" name="mode" value="single">
+      <div class="row2">
+        <div class="field"><label>Fazenda</label><input name="farm_id" required></div>
+        <div class="field"><label>Lote</label><input name="lot_id" placeholder="opcional"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Data</label><input type="date" name="inference_date" value="{{ today_iso }}" required></div>
+        <div class="field"><label>Brinco</label><input name="animal_tag" required></div>
+      </div>
+      <div class="field"><label>Imagem lateral</label><input type="file" name="image" accept="image/*" required></div>
+      <button class="btn btn-accent btn-sm" type="submit">Inferir e guardar</button>
+    </form>
+  </div>
+  <div class="card">
+    <div class="card-title">Upload lote (lateral)</div>
+    <form method="post" enctype="multipart/form-data">
+      <input type="hidden" name="mode" value="batch">
+      <div class="row2">
+        <div class="field"><label>Fazenda</label><input name="farm_id_batch" required></div>
+        <div class="field"><label>Lote</label><input name="lot_id_batch" placeholder="opcional"></div>
+      </div>
+      <div class="field"><label>Data</label><input type="date" name="inference_date_batch" required></div>
+      <div class="field"><label>Arquivos (nome = brinco)</label><input type="file" name="images_batch" multiple accept=".jpg,.jpeg,.png,.webp" required></div>
+      <button class="btn btn-accent btn-sm" type="submit">Processar lote</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Últimos registros Nelore</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Data</th><th>Fazenda</th><th>Lote</th><th>Brinco</th><th>Raw</th><th>1-9</th><th>Imagem</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for r in records %}
+      <tr>
+        <td class="mono">{{ r.inference_date }}</td><td>{{ r.farm_id }}</td><td>{{ r.lot_id or '—' }}</td><td class="mono">{{ r.animal_tag }}</td>
+        <td class="mono">{{ '%.4f'|format(r.raw_score) if r.raw_score is not none else '—' }}</td>
+        <td class="mono">{{ '%g'|format(r.score_1_9) if r.score_1_9 is not none else '—' }}</td>
+        <td>{% if r.image_path %}<img class="thumb" src="{{ r.image_path }}" onclick="window.open('{{ r.image_path }}')">{% else %}—{% endif %}</td>
+        <td class="mono">{{ r.error_text or 'ok' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8"><div class="empty-state"><div class="icon">📷</div>Sem registros ainda.</div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

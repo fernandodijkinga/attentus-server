@@ -122,17 +122,21 @@ PERSPICUUS_MODEL_ROLE_EXT = {
     'angus_yolo': {'.onnx'},
     'angus_lateral': {'.onnx'},
     'angus_lateral_meta': {'.json'},
+    'nelore_yolo': {'.onnx'},
+    'nelore_lateral': {'.onnx'},
+    'nelore_lateral_meta': {'.json'},
 }
 log.info(f"DATA_DIR={DATA_DIR}")
 
 # Autenticação de usuário web
 ADMIN_USER      = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS_HASH = generate_password_hash(os.environ.get('ADMIN_PASS', 'attentus2024'))
-ALL_ENVIRONMENTS = {'weather', 'perspicuus', 'angus', 'calves', 'bcs'}
+ALL_ENVIRONMENTS = {'weather', 'perspicuus', 'angus', 'nelore', 'calves', 'bcs'}
 ENV_LABELS = {
     'weather': 'Attentus Weather',
     'perspicuus': 'Perspicuus',
     'angus': 'Perspicuus Angus',
+    'nelore': 'Perspicuus Nelore',
     'calves': 'Attentus Calves',
     'bcs': 'Perspicuus BCS',
 }
@@ -151,6 +155,9 @@ os.makedirs(ECC_UPLOADS_DIR, exist_ok=True)
 ANGUS_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
 ANGUS_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'perspicuus_angus')
 os.makedirs(ANGUS_UPLOADS_DIR, exist_ok=True)
+NELORE_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
+NELORE_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'perspicuus_nelore')
+os.makedirs(NELORE_UPLOADS_DIR, exist_ok=True)
 
 
 def _normalize_env_access(raw: Any) -> set[str]:
@@ -214,6 +221,7 @@ def _build_auth_users() -> dict[str, dict[str, Any]]:
         'weather': ('WEATHER_USER', 'WEATHER_PASS'),
         'perspicuus': ('PERSPICUUS_USER', 'PERSPICUUS_PASS'),
         'angus': ('ANGUS_USER', 'ANGUS_PASS'),
+        'nelore': ('NELORE_USER', 'NELORE_PASS'),
         'calves': ('CALVES_USER', 'CALVES_PASS'),
         'bcs': ('BCS_USER', 'BCS_PASS'),
     }
@@ -332,6 +340,11 @@ def _environment_for_request() -> str | None:
         'perspicuus_angus_analise_populacao', 'perspicuus_angus_modelos',
         'serve_perspicuus_angus_media',
     }
+    nelore_eps = {
+        'perspicuus_nelore_importar', 'perspicuus_nelore_analise_individual',
+        'perspicuus_nelore_analise_populacao', 'perspicuus_nelore_modelos',
+        'serve_perspicuus_nelore_media',
+    }
     bcs_eps = {
         'serve_ecc_media', 'ecc_analise', 'ecc_importar', 'api_ecc_upload_one',
         'api_ecc_recalculate_all', 'api_ecc_calibragem_apply', 'ecc_calibragem',
@@ -348,6 +361,8 @@ def _environment_for_request() -> str | None:
         return 'perspicuus'
     if ep in angus_eps:
         return 'angus'
+    if ep in nelore_eps:
+        return 'nelore'
     if ep in bcs_eps:
         return 'bcs'
     return None
@@ -360,6 +375,8 @@ def _first_allowed_endpoint() -> str:
         return url_for('perspicuus')
     if _session_can_access('angus'):
         return url_for('perspicuus_angus_importar')
+    if _session_can_access('nelore'):
+        return url_for('perspicuus_nelore_importar')
     if _session_can_access('calves'):
         return url_for('calf_monitor')
     if _session_can_access('bcs'):
@@ -394,7 +411,7 @@ def inject_auth_flags():
     def can_access(env_name: str) -> bool:
         return is_admin or env_name in allowed
 
-    env_labels = [ENV_LABELS[e] for e in ('weather', 'perspicuus', 'angus', 'calves', 'bcs') if can_access(e)]
+    env_labels = [ENV_LABELS[e] for e in ('weather', 'perspicuus', 'angus', 'nelore', 'calves', 'bcs') if can_access(e)]
     return {
         'is_admin_user': is_admin,
         'can_access_env': can_access,
@@ -813,6 +830,21 @@ def init_db():
         meta_json      TEXT    NOT NULL DEFAULT '{}',
         error_text     TEXT
     );
+    CREATE TABLE IF NOT EXISTS perspicuus_nelore_records (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at     TEXT    NOT NULL,
+        farm_id        TEXT    NOT NULL,
+        lot_id         TEXT    NOT NULL DEFAULT '',
+        inference_date TEXT    NOT NULL,
+        animal_tag     TEXT    NOT NULL,
+        filename       TEXT    NOT NULL,
+        image_path     TEXT    NOT NULL,
+        raw_score      REAL,
+        score_1_9      REAL,
+        traits_json    TEXT    NOT NULL DEFAULT '{}',
+        meta_json      TEXT    NOT NULL DEFAULT '{}',
+        error_text     TEXT
+    );
 
     CREATE INDEX IF NOT EXISTS idx_weather_received ON weather(received_at);
     CREATE INDEX IF NOT EXISTS idx_weather_device   ON weather(device_name);
@@ -826,6 +858,9 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_attentus_users_username ON attentus_users(username);
     CREATE INDEX IF NOT EXISTS idx_angus_farm_date   ON perspicuus_angus_records(farm_id, inference_date);
     CREATE INDEX IF NOT EXISTS idx_angus_animal_date ON perspicuus_angus_records(farm_id, animal_tag, inference_date);
+    CREATE INDEX IF NOT EXISTS idx_nelore_farm_date   ON perspicuus_nelore_records(farm_id, inference_date);
+    CREATE INDEX IF NOT EXISTS idx_nelore_lot_date    ON perspicuus_nelore_records(lot_id, inference_date);
+    CREATE INDEX IF NOT EXISTS idx_nelore_animal_date ON perspicuus_nelore_records(farm_id, animal_tag, inference_date);
     """)
     db.commit()
     try:
@@ -857,6 +892,13 @@ def init_db():
         db.commit()
     except sqlite3.OperationalError as e:
         log.warning("Migração ecc thumb_path: %s", e)
+    try:
+        nelore_cols = {row[1] for row in db.execute("PRAGMA table_info(perspicuus_nelore_records)")}
+        if nelore_cols and "lot_id" not in nelore_cols:
+            db.execute("ALTER TABLE perspicuus_nelore_records ADD COLUMN lot_id TEXT NOT NULL DEFAULT ''")
+        db.commit()
+    except sqlite3.OperationalError as e:
+        log.warning("Migração nelore lot_id: %s", e)
     try:
         row = db.execute("SELECT id FROM ecc_bcs_calibration WHERE id = 1").fetchone()
         if not row:
@@ -1112,7 +1154,7 @@ def admin_users():
     return render_template(
         'admin_users.html',
         users=_user_rows_for_admin(),
-        env_order=['weather', 'perspicuus', 'angus', 'calves', 'bcs'],
+        env_order=['weather', 'perspicuus', 'angus', 'nelore', 'calves', 'bcs'],
         env_labels=ENV_LABELS,
     )
 
@@ -2362,6 +2404,412 @@ def perspicuus_angus_modelos():
         max_mb=MAX_MODEL_UPLOAD_BYTES // (1024 * 1024),
         ml_models_dir=ML_MODELS_DIR,
         inference_engine_ready=get_engine('angus').is_ready(),
+        role_ext=PERSPICUUS_MODEL_ROLE_EXT,
+        role_labels=role_labels,
+    )
+
+
+@app.route('/api/perspicuus-nelore/media/<farm>/<day>/<filename>')
+@login_required
+def serve_perspicuus_nelore_media(farm, day, filename):
+    base = os.path.abspath(os.path.join(NELORE_UPLOADS_DIR, ecc_safe_slug(farm), ecc_safe_slug(day)))
+    filepath = os.path.abspath(os.path.join(base, secure_filename(filename)))
+    if not filepath.startswith(base + os.sep) or not os.path.isfile(filepath):
+        abort(404)
+    return send_file(filepath)
+
+
+def _nelore_save_one(
+    db,
+    now_iso: str,
+    farm_id: str,
+    lot_id: str,
+    inference_date: str,
+    animal_tag: str,
+    fs,
+) -> tuple[bool, str]:
+    from perspicuus_inference import get_engine
+
+    ext = os.path.splitext(fs.filename or '')[1].lower()
+    if ext not in NELORE_IMAGE_EXTS:
+        return False, f'Extensão inválida: {ext or "?"}'
+
+    safe_farm = ecc_safe_slug(farm_id, 'fazenda')
+    safe_day = ecc_safe_slug(inference_date.replace('-', ''), 'day')
+    safe_tag = ecc_safe_slug(animal_tag, 'animal')
+    folder = os.path.join(NELORE_UPLOADS_DIR, safe_farm, safe_day)
+    os.makedirs(folder, exist_ok=True)
+    fname = secure_filename(fs.filename or f'{safe_tag}{ext}') or f'{safe_tag}_{int(datetime.utcnow().timestamp())}{ext}'
+    local_name = f"{safe_tag}_{int(datetime.utcnow().timestamp()*1000)}_{fname}"
+    dest = os.path.join(folder, local_name)
+    fs.save(dest)
+
+    eng = get_engine('nelore')
+    if not eng.is_ready():
+        return False, 'Modelos Nelore não configurados (NELORE_YOLO_ONNX + NELORE_LATERAL_ONNX).'
+    img = cv2.imread(dest)
+    if img is None:
+        return False, 'Falha ao abrir imagem lateral.'
+    try:
+        out = eng.infer_bgr(img, 'lateral')
+        traits = out.get('traits') or {}
+    except Exception as e:  # noqa: BLE001
+        traits = {}
+        out = {}
+        err = str(e)
+    else:
+        err = None
+
+    vals = []
+    for v in (traits or {}).values():
+        try:
+            vals.append(float(v))
+        except (TypeError, ValueError):
+            continue
+    raw_score = round(sum(vals) / len(vals), 4) if vals else None
+    score_1_9 = rescale_perspicuus_trait_score(raw_score) if raw_score is not None else None
+    web_path = f"/api/perspicuus-nelore/media/{safe_farm}/{safe_day}/{local_name}"
+    db.execute(
+        """
+        INSERT INTO perspicuus_nelore_records (
+            created_at, farm_id, lot_id, inference_date, animal_tag, filename,
+            image_path, raw_score, score_1_9, traits_json, meta_json, error_text
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            now_iso, farm_id, lot_id, inference_date, animal_tag, fs.filename,
+            web_path, raw_score, score_1_9,
+            json.dumps(traits, ensure_ascii=False),
+            json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox')}, ensure_ascii=False),
+            err,
+        ),
+    )
+    return True, 'ok'
+
+
+def _nelore_load_rows(
+    db,
+    farm_filter: str = '',
+    lot_filter: str = '',
+    animal_filter: str = '',
+    q: str = '',
+    limit: int = 3000,
+):
+    cond = ['1=1']
+    params: list[Any] = []
+    if farm_filter:
+        cond.append('farm_id = ?')
+        params.append(farm_filter)
+    if lot_filter:
+        cond.append('lot_id = ?')
+        params.append(lot_filter)
+    if animal_filter:
+        cond.append('animal_tag = ?')
+        params.append(animal_filter)
+    if q:
+        like = f'%{q}%'
+        cond.append('(farm_id LIKE ? OR lot_id LIKE ? OR animal_tag LIKE ? OR filename LIKE ?)')
+        params.extend([like, like, like, like])
+    where = ' AND '.join(cond)
+    return db.execute(
+        f"SELECT * FROM perspicuus_nelore_records WHERE {where} ORDER BY inference_date DESC, id DESC LIMIT ?",
+        params + [limit],
+    ).fetchall()
+
+
+def _nelore_base_lists(db):
+    farms = [r[0] for r in db.execute("SELECT DISTINCT farm_id FROM perspicuus_nelore_records ORDER BY farm_id").fetchall()]
+    lots = [r[0] for r in db.execute("SELECT DISTINCT lot_id FROM perspicuus_nelore_records WHERE COALESCE(lot_id,'') <> '' ORDER BY lot_id").fetchall()]
+    animals = [r[0] for r in db.execute("SELECT DISTINCT animal_tag FROM perspicuus_nelore_records ORDER BY animal_tag").fetchall()]
+    stats = {
+        'total_records': db.execute("SELECT COUNT(*) FROM perspicuus_nelore_records").fetchone()[0],
+        'farms': db.execute("SELECT COUNT(DISTINCT farm_id) FROM perspicuus_nelore_records").fetchone()[0],
+        'lots': db.execute("SELECT COUNT(DISTINCT lot_id) FROM perspicuus_nelore_records WHERE COALESCE(lot_id,'') <> ''").fetchone()[0],
+        'animals': db.execute("SELECT COUNT(DISTINCT farm_id || '::' || animal_tag) FROM perspicuus_nelore_records").fetchone()[0],
+        'with_score': db.execute("SELECT COUNT(*) FROM perspicuus_nelore_records WHERE score_1_9 IS NOT NULL").fetchone()[0],
+    }
+    return farms, lots, animals, stats
+
+
+@app.route('/perspicuus-nelore/importar', methods=['GET', 'POST'])
+@login_required
+def perspicuus_nelore_importar():
+    db = get_db()
+    now_iso = datetime.utcnow().isoformat() + 'Z'
+    if request.method == 'POST':
+        mode = request.form.get('mode', 'single')
+        if mode == 'single':
+            farm_id = str(request.form.get('farm_id', '')).strip()
+            lot_id = str(request.form.get('lot_id', '')).strip()
+            date_iso = ecc_parse_iso_day(request.form.get('inference_date', ''))
+            animal_tag = str(request.form.get('animal_tag', '')).strip()
+            fs = request.files.get('image')
+            if not farm_id or not date_iso or not animal_tag or not fs or not fs.filename:
+                flash('Informe fazenda, lote, data, brinco e imagem lateral.', 'error')
+                return redirect(url_for('perspicuus_nelore_importar'))
+            ok, msg = _nelore_save_one(db, now_iso, farm_id, lot_id, date_iso, animal_tag, fs)
+            if ok:
+                db.commit(); flash('Imagem lateral inferida e guardada.', 'success')
+            else:
+                db.rollback(); flash(msg, 'error')
+            return redirect(url_for('perspicuus_nelore_importar'))
+        if mode == 'batch':
+            farm_id = str(request.form.get('farm_id_batch', '')).strip()
+            lot_id = str(request.form.get('lot_id_batch', '')).strip()
+            date_iso = ecc_parse_iso_day(request.form.get('inference_date_batch', ''))
+            files = request.files.getlist('images_batch')
+            if not farm_id or not date_iso or not files:
+                flash('Lote: informe fazenda, lote, data e ficheiros.', 'error')
+                return redirect(url_for('perspicuus_nelore_importar'))
+            n_ok, n_err = 0, 0
+            errs = []
+            for fs in files:
+                if not fs or not fs.filename:
+                    continue
+                animal_tag = os.path.splitext(os.path.basename(fs.filename))[0].strip()
+                if not animal_tag:
+                    n_err += 1; errs.append(f'Brinco ausente no nome: {fs.filename}'); continue
+                ok, msg = _nelore_save_one(db, now_iso, farm_id, lot_id, date_iso, animal_tag, fs)
+                if ok:
+                    n_ok += 1; db.commit()
+                else:
+                    n_err += 1; errs.append(f'{fs.filename}: {msg}'); db.rollback()
+            if n_ok:
+                flash(f'Lote Nelore: {n_ok} imagem(ns) processada(s).', 'success')
+            if n_err:
+                flash(f'Lote com {n_err} erro(s): ' + '; '.join(errs[:3]), 'error')
+            return redirect(url_for('perspicuus_nelore_importar'))
+        flash('Modo inválido.', 'error')
+        return redirect(url_for('perspicuus_nelore_importar'))
+
+    farm_filter = str(request.args.get('farm', '')).strip()
+    lot_filter = str(request.args.get('lot', '')).strip()
+    animal_filter = str(request.args.get('animal', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    records = _nelore_load_rows(db, farm_filter, lot_filter, animal_filter, q, limit=500)
+    farms, lots, animals, stats = _nelore_base_lists(db)
+    return render_template(
+        'perspicuus_nelore_importar.html',
+        records=records[:120],
+        farms=farms,
+        lots=lots,
+        animals=animals,
+        farm_filter=farm_filter,
+        lot_filter=lot_filter,
+        animal_filter=animal_filter,
+        q_filter=q,
+        stats=stats,
+        today_iso=datetime.now(TZ_BR).date().isoformat(),
+    )
+
+
+@app.route('/perspicuus-nelore/analise-individual')
+@login_required
+def perspicuus_nelore_analise_individual():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    lot_filter = str(request.args.get('lot', '')).strip()
+    animal_filter = str(request.args.get('animal', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    records = _nelore_load_rows(db, farm_filter, lot_filter, animal_filter, q, limit=3000)
+    farms, lots, animals, stats = _nelore_base_lists(db)
+    selected_farm = farm_filter or (farms[0] if farms else '')
+    selected_animal = animal_filter
+    if selected_farm and not selected_animal:
+        rr = db.execute(
+            """
+            SELECT animal_tag, MAX(inference_date) AS d
+            FROM perspicuus_nelore_records
+            WHERE farm_id = ? AND (? = '' OR lot_id = ?)
+            GROUP BY animal_tag
+            ORDER BY d DESC
+            LIMIT 1
+            """,
+            (selected_farm, lot_filter, lot_filter),
+        ).fetchone()
+        selected_animal = rr[0] if rr else ''
+    points = []
+    images = []
+    if selected_farm and selected_animal:
+        pr = db.execute(
+            """
+            SELECT id, inference_date, raw_score, score_1_9
+            FROM perspicuus_nelore_records
+            WHERE farm_id = ? AND animal_tag = ? AND (? = '' OR lot_id = ?) AND score_1_9 IS NOT NULL
+            ORDER BY inference_date ASC, id ASC
+            """,
+            (selected_farm, selected_animal, lot_filter, lot_filter),
+        ).fetchall()
+        points = [dict(x) for x in pr]
+        im = db.execute(
+            """
+            SELECT id, inference_date, lot_id, filename, image_path, raw_score, score_1_9, error_text
+            FROM perspicuus_nelore_records
+            WHERE farm_id = ? AND animal_tag = ? AND (? = '' OR lot_id = ?)
+            ORDER BY inference_date DESC, id DESC
+            """,
+            (selected_farm, selected_animal, lot_filter, lot_filter),
+        ).fetchall()
+        images = [dict(x) for x in im]
+    return render_template(
+        'perspicuus_nelore_analise_individual.html',
+        records=records[:120],
+        farms=farms,
+        lots=lots,
+        animals=animals,
+        farm_filter=farm_filter,
+        lot_filter=lot_filter,
+        animal_filter=animal_filter,
+        q_filter=q,
+        selected_farm=selected_farm,
+        selected_animal=selected_animal,
+        points=points,
+        images=images,
+        stats=stats,
+    )
+
+
+@app.route('/perspicuus-nelore/analise-populacao')
+@login_required
+def perspicuus_nelore_analise_populacao():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    lot_filter = str(request.args.get('lot', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    rows = _nelore_load_rows(db, farm_filter, lot_filter, '', q, limit=12000)
+    farms, lots, _, stats = _nelore_base_lists(db)
+    dist = [0, 0, 0, 0]
+    by_day: dict[str, dict[str, float]] = {}
+    by_animal: dict[str, list[float]] = {}
+    for r in rows:
+        sc = r['score_1_9']
+        if sc is None:
+            continue
+        try:
+            v = float(sc)
+        except (TypeError, ValueError):
+            continue
+        if v < 3:
+            dist[0] += 1
+        elif v < 5:
+            dist[1] += 1
+        elif v < 7:
+            dist[2] += 1
+        else:
+            dist[3] += 1
+        d = str(r['inference_date'] or '')
+        if d:
+            box = by_day.setdefault(d, {'sum': 0.0, 'n': 0})
+            box['sum'] += v
+            box['n'] += 1
+        key = f"{r['farm_id']}::{r['lot_id'] or ''}::{r['animal_tag']}"
+        by_animal.setdefault(key, []).append(v)
+    pop_series = [
+        {'date': d, 'mean': round(box['sum'] / box['n'], 3), 'n': int(box['n'])}
+        for d, box in sorted(by_day.items(), key=lambda x: x[0])
+        if box['n'] > 0
+    ]
+    ranked = []
+    for k, vals in by_animal.items():
+        if len(vals) < 2:
+            continue
+        farm_id, lot_id, animal_tag = k.split('::', 2)
+        ranked.append({
+            'farm_id': farm_id,
+            'lot_id': lot_id,
+            'animal_tag': animal_tag,
+            'n': len(vals),
+            'mean': round(sum(vals) / len(vals), 2),
+            'min': round(min(vals), 2),
+            'max': round(max(vals), 2),
+            'spread': round(max(vals) - min(vals), 2),
+        })
+    ranked.sort(key=lambda x: (-x['spread'], -x['n']))
+    return render_template(
+        'perspicuus_nelore_analise_populacao.html',
+        farms=farms,
+        lots=lots,
+        farm_filter=farm_filter,
+        lot_filter=lot_filter,
+        q_filter=q,
+        stats=stats,
+        dist=dist,
+        pop_series=pop_series,
+        ranked=ranked[:120],
+    )
+
+
+@app.route('/perspicuus-nelore/modelos', methods=['GET', 'POST'])
+@admin_required
+def perspicuus_nelore_modelos():
+    from perspicuus_inference import (
+        get_models_dir,
+        load_registry,
+        save_registry,
+        reset_engine,
+        resolve_model_path,
+        model_path_source,
+        ROLE_TO_ENV,
+        get_engine,
+    )
+    roles = ['nelore_yolo', 'nelore_lateral', 'nelore_lateral_meta']
+    role_labels = {
+        'nelore_yolo': 'YOLO Nelore (deteção / crop)',
+        'nelore_lateral': 'Perspicuus Nelore — lateral',
+        'nelore_lateral_meta': 'Metadata Nelore — lateral',
+    }
+    if request.method == 'POST':
+        action = request.form.get('action', 'upload')
+        role = request.form.get('role', '').strip()
+        if role not in roles:
+            flash('Função inválida.', 'error')
+            return redirect(url_for('perspicuus_nelore_modelos'))
+        if action == 'clear':
+            _clear_perspicuus_model_slot(role)
+            reset_engine()
+            flash('Slot limpo com sucesso.', 'success')
+            return redirect(url_for('perspicuus_nelore_modelos'))
+        file = request.files.get('file')
+        if not file or not file.filename:
+            flash('Selecione um ficheiro.', 'error')
+            return redirect(url_for('perspicuus_nelore_modelos'))
+        ext = os.path.splitext(file.filename)[1].lower()
+        allow = PERSPICUUS_MODEL_ROLE_EXT.get(role, set())
+        if ext not in allow:
+            flash('Extensão inválida.', 'error')
+            return redirect(url_for('perspicuus_nelore_modelos'))
+        fname = secure_filename(file.filename)
+        if not fname:
+            flash('Nome inválido.', 'error')
+            return redirect(url_for('perspicuus_nelore_modelos'))
+        models_dir = get_models_dir()
+        dest = os.path.join(models_dir, fname)
+        file.save(dest)
+        save_registry({role: fname})
+        reset_engine()
+        flash(f'Modelo Nelore guardado: {fname}', 'success')
+        return redirect(url_for('perspicuus_nelore_modelos'))
+    reg = load_registry()
+    slots = []
+    for role in roles:
+        p = resolve_model_path(role)
+        src = model_path_source(role)
+        sz = os.path.getsize(p) if p and os.path.isfile(p) else None
+        slots.append({
+            'role': role,
+            'env_var': ROLE_TO_ENV[role],
+            'source': src,
+            'path': p,
+            'size': sz,
+            'registry_name': reg.get(role),
+        })
+    return render_template(
+        'perspicuus_nelore_modelos.html',
+        slots=slots,
+        max_mb=MAX_MODEL_UPLOAD_BYTES // (1024 * 1024),
+        ml_models_dir=ML_MODELS_DIR,
+        inference_engine_ready=get_engine('nelore').is_ready(),
         role_ext=PERSPICUUS_MODEL_ROLE_EXT,
         role_labels=role_labels,
     )
