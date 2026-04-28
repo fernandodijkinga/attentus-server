@@ -1,125 +1,254 @@
 {% extends "base.html" %}
-{% block title %}ECC - calibragem{% endblock %}
+{% from "_bcs_layout.html" import bcs_styles, bcs_tabs %}
+{% block title %}Perspicuus BCS — calibragem{% endblock %}
 
 {% block head %}
+{{ bcs_styles() }}
 <style>
-.cal-top { display:grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; }
-@media (max-width: 920px) { .cal-top { grid-template-columns: 1fr; } }
-.cal-form { display:grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items:end; }
-@media (max-width: 920px) { .cal-form { grid-template-columns: 1fr; } }
+.cal-form-grid { display:grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items:end; }
+@media (max-width: 920px) { .cal-form-grid { grid-template-columns:1fr; } }
+
+.cal-formula {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text2);
+  background: var(--surf2);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.cal-formula code {
+  background: rgba(13,122,94,.08);
+  color: var(--accent);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.cal-current-band {
+  display:flex; flex-wrap:wrap; gap:14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text2);
+}
+.cal-current-band b { color: var(--text); font-weight: 700; }
+
 .cal-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
 }
 .cal-card {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--surf);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: transform .15s ease, box-shadow .15s ease;
 }
-.cal-img {
+.cal-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-sm); }
+.cal-img-wrap {
+  position: relative;
   width: 100%;
-  height: 130px;
-  object-fit: cover;
-  display: block;
+  height: 150px;
+  background: var(--surf2);
   border-bottom: 1px solid var(--border);
+  overflow: hidden;
 }
-.cal-body { padding: 8px 10px; }
-.cal-row { display:flex; justify-content:space-between; gap:8px; font-family: var(--mono); font-size:11px; margin-bottom: 4px; }
-.cal-row strong { color: var(--accent2); }
-.bcs-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
-.bcs-tab { text-decoration:none; padding:6px 10px; border-radius:999px; border:1px solid var(--border); color:var(--text2); font-family:var(--mono); font-size:11px; }
-.bcs-tab.active { background: rgba(13,122,94,.12); color: var(--accent); border-color: rgba(13,122,94,.35); }
+.cal-img-wrap img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  cursor: zoom-in;
+  display: block;
+}
+.cal-img-wrap .raw-badge {
+  position: absolute;
+  top: 8px; left: 8px;
+  background: rgba(12, 22, 34, 0.78);
+  color: #eaf8ff;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+  letter-spacing: .4px;
+}
+.cal-img-wrap .count-badge {
+  position: absolute;
+  top: 8px; right: 8px;
+  background: rgba(255,255,255,.92);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  letter-spacing: .3px;
+}
+.cal-card .empty {
+  display:flex; align-items:center; justify-content:center;
+  height: 150px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.cal-card-body {
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cal-bcs-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text2);
+}
+.cal-bcs-row .out {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 18px;
+}
+.cal-mini-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ff4d6a 0%, #ff9f40 28%, #00e5a0 50%, #ff9f40 72%, #ff4d6a 100%);
+}
+.cal-mini-marker {
+  position: absolute;
+  top: -3px;
+  width: 3px;
+  height: 12px;
+  background: #ffffff;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.35);
+  transform: translateX(-50%);
+  border-radius: 2px;
+}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="page-header">
-  <div>
-    <div class="page-title">⚖️ <span>Perspicuus BCS</span> <span style="color:var(--accent)">calibragem</span></div>
-    <div class="page-sub">Ajuste dinâmico do reescalonamento 1–5 a partir do raw (faixas de 0.5).</div>
-  </div>
-  <div class="flex gap-8" style="flex-wrap:wrap">
-    <span class="pill pill-blue">{{ stats.with_score }} com score</span>
-    <span class="pill pill-orange">{{ stats.calibration_rows }} usados na calibração</span>
-    <span class="pill pill-green">atual: {{ '%.2f'|format(calibration.raw_min) }} → {{ '%.2f'|format(calibration.raw_max) }}</span>
-  </div>
-</div>
-<div class="bcs-tabs">
-  <a class="bcs-tab" href="{{ url_for('ecc_importar') }}">Importar</a>
-  <a class="bcs-tab active" href="{{ url_for('ecc_calibragem') }}">Calibragem</a>
-  <a class="bcs-tab" href="{{ url_for('ecc_analise_rebanho') }}">Análise rebanho</a>
-  <a class="bcs-tab" href="{{ url_for('ecc_analise_individual') }}">Análise individual</a>
-  <a class="bcs-tab" href="{{ url_for('ecc_pontos_atencao') }}">Pontos de atenção</a>
-</div>
-
-<div class="card mb-16">
-  <div class="cal-top">
-    <div class="field" style="margin:0;max-width:320px">
-      <label>Fazenda (opcional)</label>
-      <form method="get" action="{{ url_for('ecc_calibragem') }}">
-        <div class="flex gap-8">
+<div class="bcs-hero">
+  <div class="bcs-hero-top">
+    <div>
+      <div class="bcs-hero-eyebrow">Perspicuus BCS · curadoria</div>
+      <h1 class="bcs-hero-title">Calibragem do escore <em>1 → 5</em></h1>
+      <p class="bcs-hero-sub">
+        Defina os limites do <strong>raw</strong> que correspondem a 1.00 e 5.00. As imagens são agrupadas em
+        faixas de 0.5 (esquerda → direita) com uma amostra por faixa para inspeção visual rápida.
+      </p>
+    </div>
+    <div class="bcs-hero-actions">
+      <form method="get" action="{{ url_for('ecc_calibragem') }}" class="bcs-filter-row">
+        <div class="field" style="margin:0;min-width:200px">
+          <label>Fazenda</label>
           <select name="farm">
             <option value="">Todas</option>
             {% for f in farms %}
             <option value="{{ f }}" {% if farm_filter == f %}selected{% endif %}>{{ f }}</option>
             {% endfor %}
           </select>
-          <button class="btn btn-ghost btn-sm" type="submit">Filtrar</button>
         </div>
+        <button class="btn btn-ghost btn-sm" type="submit">Filtrar</button>
       </form>
     </div>
-    <div class="mono text-muted" style="font-size:11px">
-      Atualizado por {{ calibration.updated_by }} em {{ calibration.updated_at|br_dt if calibration.updated_at else '—' }}
+  </div>
+
+  <div class="bcs-kpi-strip">
+    <div class="bcs-kpi accent">
+      <div class="lbl"><span class="ico">🎯</span> Raw mínimo (→ 1.00)</div>
+      <div class="val">{{ '%.2f'|format(calibration.raw_min) }}</div>
+    </div>
+    <div class="bcs-kpi blue">
+      <div class="lbl"><span class="ico">🎯</span> Raw máximo (→ 5.00)</div>
+      <div class="val">{{ '%.2f'|format(calibration.raw_max) }}</div>
+    </div>
+    <div class="bcs-kpi orange">
+      <div class="lbl"><span class="ico">📊</span> Amostra calibração</div>
+      <div class="val">{{ stats.calibration_rows }}</div>
+      <div class="extra">com escore: {{ stats.with_score }}</div>
+    </div>
+    <div class="bcs-kpi">
+      <div class="lbl"><span class="ico">🕒</span> Atualizado</div>
+      <div class="val" style="font-size:14px">{{ calibration.updated_at|br_dt if calibration.updated_at else '—' }}</div>
+      <div class="extra">por {{ calibration.updated_by or 'sistema' }}</div>
     </div>
   </div>
 </div>
 
-<div class="card mb-16">
-  <div class="card-title">Parâmetros de reescalonamento (global BCS)</div>
-  <p class="text-muted mono" style="font-size:11px;margin-bottom:10px">
-    Fórmula: clamp[1..5] de <span class="text-accent">1 + 4 * (raw - raw_min) / (raw_max - raw_min)</span>, com passo 0.25.
-  </p>
-  <div class="cal-form">
-    <div class="field" style="margin:0">
-      <label>Raw mínimo (vira 1.00)</label>
-      <input id="ecc-cal-raw-min" type="number" step="0.1" value="{{ '%.2f'|format(calibration.raw_min) }}">
-    </div>
-    <div class="field" style="margin:0">
-      <label>Raw máximo (vira 5.00)</label>
-      <input id="ecc-cal-raw-max" type="number" step="0.1" value="{{ '%.2f'|format(calibration.raw_max) }}">
-    </div>
-    <button id="ecc-cal-apply" class="btn btn-accent btn-sm" type="button">Aplicar e corrigir BCS</button>
-  </div>
-</div>
+{{ bcs_tabs('calibragem') }}
 
-<div class="card">
-  <div class="card-title">Faixas raw (0.5) — imagem representativa da esquerda para a direita</div>
-  {% if bucket_rows %}
-  <div class="cal-grid">
-    {% for b in bucket_rows %}
-    <div class="cal-card" data-raw="{{ '%.2f'|format(b.raw_bucket) }}">
-      {% set s = b.sample %}
-      {% if s and (s.thumb_path or s.image_path) %}
-      <img class="cal-img" src="{{ s.thumb_path or s.image_path }}" alt="raw {{ '%.2f'|format(b.raw_bucket) }}" onclick="window.open('{{ s.bbox_path or s.image_path }}')">
-      {% else %}
-      <div class="empty-state" style="padding:28px 8px">Sem imagem</div>
-      {% endif %}
-      <div class="cal-body">
-        <div class="cal-row"><span>Raw faixa</span><strong>{{ '%.2f'|format(b.raw_bucket) }}</strong></div>
-        <div class="cal-row"><span>Amostras</span><span>{{ b.count }}</span></div>
-        <div class="cal-row"><span>BCS previsto</span><strong class="js-cal-out">{{ '%0.2f'|format(b.suggested_ecc or 0) }}</strong></div>
+<div class="bcs-section">
+  <div class="bcs-section-head">
+    <div class="bcs-section-title"><span class="ico">⚙️</span> Parâmetros de reescalonamento (global)</div>
+    <div class="bcs-section-sub">aplicado a TODOS os registros BCS</div>
+  </div>
+  <div class="bcs-section-body">
+    <div class="cal-formula">
+      Fórmula:
+      <code>BCS = clamp[1..5]( 1 + 4 × (raw − raw_min) / (raw_max − raw_min) )</code>
+      , quantizado em passo <code>0.25</code>.
+    </div>
+    <div class="cal-form-grid">
+      <div class="field" style="margin:0">
+        <label>Raw mínimo (vira 1.00)</label>
+        <input id="ecc-cal-raw-min" type="number" step="0.1" value="{{ '%.2f'|format(calibration.raw_min) }}">
       </div>
+      <div class="field" style="margin:0">
+        <label>Raw máximo (vira 5.00)</label>
+        <input id="ecc-cal-raw-max" type="number" step="0.1" value="{{ '%.2f'|format(calibration.raw_max) }}">
+      </div>
+      <button id="ecc-cal-apply" class="btn btn-accent btn-sm" type="button">Aplicar e corrigir BCS</button>
     </div>
-    {% endfor %}
   </div>
-  {% else %}
-  <div class="empty-state">
-    <div class="icon">📉</div>
-    Não há registros com raw_score para esta seleção.
+</div>
+
+<div class="bcs-section">
+  <div class="bcs-section-head">
+    <div class="bcs-section-title"><span class="ico blue">🖼</span> Faixas raw (passo 0.5)</div>
+    <div class="bcs-section-sub">amostra representativa por faixa · esquerda → direita</div>
   </div>
-  {% endif %}
+  <div class="bcs-section-body">
+    {% if bucket_rows %}
+    <div class="cal-grid">
+      {% for b in bucket_rows %}
+      <div class="cal-card" data-raw="{{ '%.2f'|format(b.raw_bucket) }}">
+        {% set s = b.sample %}
+        <div class="cal-img-wrap">
+          {% if s and (s.thumb_path or s.image_path) %}
+          <img src="{{ s.thumb_path or s.image_path }}" alt="raw {{ '%.2f'|format(b.raw_bucket) }}"
+               onclick="window.open('{{ s.bbox_path or s.image_path }}')">
+          {% else %}
+          <div class="empty">sem imagem</div>
+          {% endif %}
+          <span class="raw-badge">raw {{ '%.2f'|format(b.raw_bucket) }}</span>
+          <span class="count-badge">{{ b.count }} amostra(s)</span>
+        </div>
+        <div class="cal-card-body">
+          <div class="cal-bcs-row">
+            <span>BCS previsto</span>
+            <span class="out js-cal-out">{{ '%0.2f'|format(b.suggested_ecc or 0) }}</span>
+          </div>
+          <div class="cal-mini-bar">
+            <div class="cal-mini-marker js-cal-marker"
+                 style="left: {{ ((b.suggested_ecc or 3.0) - 1.0) / 4.0 * 100.0 }}%"></div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="bcs-empty">
+      <div class="icon">📉</div>
+      Não há registros com raw_score para esta seleção.
+    </div>
+    {% endif %}
+  </div>
 </div>
 {% endblock %}
 
@@ -144,8 +273,13 @@ function refreshPreview() {
   document.querySelectorAll('.cal-card').forEach((card) => {
     const raw = Number(card.dataset.raw);
     const out = card.querySelector('.js-cal-out');
+    const marker = card.querySelector('.js-cal-marker');
     const val = calcBCS(raw, rawMin, rawMax);
     if (out) out.textContent = Number.isFinite(val) ? val.toFixed(2) : '—';
+    if (marker && Number.isFinite(val)) {
+      const pct = ((Math.max(1, Math.min(5, val)) - 1) / 4) * 100;
+      marker.style.left = `${pct}%`;
+    }
   });
 }
 

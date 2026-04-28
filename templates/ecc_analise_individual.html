@@ -1,167 +1,285 @@
 {% extends "base.html" %}
-{% block title %}ECC - análise individual{% endblock %}
+{% from "_bcs_layout.html" import bcs_styles, bcs_tabs %}
+{% block title %}Perspicuus BCS — análise individual{% endblock %}
 
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{{ bcs_styles() }}
 <style>
-.chart-card-ecc { background: var(--surf); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
-.chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
-.chart-title { font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
-.chart-sub { font-size: 11px; color: var(--text2); font-family: var(--mono); }
-.chart-canvas-wrap { position: relative; height: 300px; width: 100%; }
-.chart-canvas-wrap canvas { display: block; width: 100% !important; height: 100% !important; }
-.chart-empty-ecc { min-height: 300px; display: flex; align-items: center; justify-content: center; color: var(--text2); font-family: var(--mono); font-size: 12px; border: 1px dashed var(--border); border-radius: 10px; }
-.ecc-animal-viewer { display:grid; grid-template-columns: 1.35fr .9fr; gap:16px; margin-bottom:16px; }
-.ecc-photo-card,.ecc-score-card { background:var(--surf); border:1px solid var(--border); border-radius:var(--radius); padding:14px; }
-.ecc-photo-wrap { width:100%; height:min(56vh,520px); border:1px solid var(--border); border-radius:12px; background:var(--surf2); display:flex; align-items:center; justify-content:center; overflow:hidden; }
-.ecc-photo-wrap img { width:100%; height:100%; object-fit:contain; cursor:zoom-in; }
-.ecc-photo-empty { color:var(--text2); font-family:var(--mono); font-size:12px; }
-.ecc-carousel-controls { margin-top:10px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
-.ecc-carousel-counter { font-family:var(--mono); font-size:11px; color:var(--text2); }
-.ecc-metric-grid { display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:8px; }
-.ecc-metric { border:1px solid var(--border); border-radius:10px; padding:10px; background:rgba(255,255,255,0.02); }
-.ecc-metric .k { font-family:var(--mono); font-size:10px; letter-spacing:1.1px; text-transform:uppercase; color:var(--muted); margin-bottom:4px; }
-.ecc-metric .v { font-family:var(--mono); font-size:22px; color:var(--text); }
-.ecc-score-extra { margin-top:10px; display:grid; gap:6px; font-family:var(--mono); font-size:12px; color:var(--text2); }
-.ecc-score-bar-wrap { margin-top:12px; }
-.ecc-score-scale-head { display:flex; justify-content:space-between; font-family:var(--mono); color:var(--text2); font-size:10px; letter-spacing:1px; text-transform:uppercase; margin-bottom:6px; }
-.ecc-score-bar { position:relative; height:12px; border-radius:999px; border:1px solid var(--border); background:linear-gradient(90deg,#ff4d6a 0%,#ff9f40 28%,#00e5a0 50%,#ff9f40 72%,#ff4d6a 100%); overflow:hidden; }
-.ecc-score-marker { position:absolute; top:-4px; width:3px; height:20px; background:#eaf8ff; box-shadow:0 0 0 1px rgba(0,0,0,.35); transform:translateX(-50%); left:50%; }
-.ecc-score-desc { margin-top:8px; font-family:var(--mono); font-size:12px; color:var(--text); border:1px solid var(--border); border-radius:8px; padding:8px; background:rgba(255,255,255,0.03); }
-@media (max-width: 1020px) {
-  .ecc-animal-viewer { grid-template-columns: 1fr; }
-  .ecc-photo-wrap { height:min(52vh,420px); }
+.chart-wrap { position: relative; height: 320px; width: 100%; }
+.chart-wrap canvas { display: block; width: 100% !important; height: 100% !important; }
+.chart-empty {
+  min-height: 260px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted); font-family: var(--mono); font-size: 12px;
+  border: 1px dashed var(--border); border-radius: 10px;
 }
-.bcs-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
-.bcs-tab { text-decoration:none; padding:6px 10px; border-radius:999px; border:1px solid var(--border); color:var(--text2); font-family:var(--mono); font-size:11px; }
-.bcs-tab.active { background: rgba(13,122,94,.12); color: var(--accent); border-color: rgba(13,122,94,.35); }
+
+.ind-viewer {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+@media (max-width: 1080px) { .ind-viewer { grid-template-columns: 1fr; } }
+
+.ind-photo-wrap {
+  width: 100%;
+  height: min(60vh, 540px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surf2);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  position: relative;
+}
+.ind-photo-wrap img { width: 100%; height: 100%; object-fit: contain; cursor: zoom-in; }
+.ind-photo-empty {
+  color: var(--muted); font-family: var(--mono); font-size: 12px;
+}
+.ind-photo-overlay {
+  position: absolute;
+  bottom: 10px; left: 10px;
+  background: rgba(12,22,34,.78); color: #eaf8ff;
+  padding: 4px 10px; border-radius: 8px;
+  font-family: var(--mono); font-size: 11px;
+}
+
+.ind-carousel-controls {
+  margin-top: 12px;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+}
+.ind-carousel-counter {
+  font-family: var(--mono); font-size: 11px; color: var(--text2);
+}
+
+.ind-metric-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+}
+.ind-metric {
+  border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px; background: var(--surf2);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.ind-metric .k {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 1.4px;
+  text-transform: uppercase; color: var(--muted);
+}
+.ind-metric .v {
+  font-family: var(--mono); font-size: 26px; font-weight: 700; color: var(--text);
+  line-height: 1.05;
+}
+.ind-metric.accent .v { color: var(--accent); }
+.ind-metric.blue .v { color: var(--accent2); }
+
+.ind-meta-list {
+  margin-top: 12px; display: grid; gap: 6px;
+  font-family: var(--mono); font-size: 11.5px; color: var(--text2);
+}
+.ind-meta-list .row { display: flex; gap: 8px; }
+.ind-meta-list .row b { color: var(--text); min-width: 70px; }
+
+.ind-score-bar-wrap { margin-top: 14px; }
+.ind-score-scale-head {
+  display: flex; justify-content: space-between;
+  font-family: var(--mono); color: var(--text2); font-size: 10px;
+  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px;
+}
+.ind-score-bar {
+  position: relative; height: 12px; border-radius: 999px;
+  border: 1px solid var(--border);
+  background: linear-gradient(90deg, #c62841 0%, #d9782b 28%, #0d7a5e 50%, #d9782b 72%, #c62841 100%);
+}
+.ind-score-marker {
+  position: absolute; top: -4px; width: 3px; height: 20px;
+  background: #ffffff; box-shadow: 0 0 0 1px rgba(0,0,0,.35);
+  transform: translateX(-50%); left: 50%;
+}
+.ind-score-desc {
+  margin-top: 10px;
+  font-family: var(--mono); font-size: 12px; color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; background: var(--surf2);
+}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="page-header">
-  <div>
-    <div class="page-title">🐂 <span>Perspicuus BCS</span> <span style="color:var(--accent)">análise individual</span></div>
-    <div class="page-sub">Evolução do escore de um mesmo animal ao longo do tempo</div>
+<div class="bcs-hero">
+  <div class="bcs-hero-top">
+    <div>
+      <div class="bcs-hero-eyebrow">Perspicuus BCS · análise</div>
+      <h1 class="bcs-hero-title">Análise <em>individual</em> · brinco no tempo</h1>
+      <p class="bcs-hero-sub">
+        Evolução do escore (1–5, passo 0.25) com galeria de fotos sincronizada e descrição da faixa.
+      </p>
+    </div>
+    <div class="bcs-hero-actions">
+      <a href="{{ url_for('ecc_analise_rebanho') }}" class="btn btn-ghost btn-sm">← Análise rebanho</a>
+    </div>
   </div>
-  <div class="flex gap-8">
-    <span class="pill pill-blue">{{ stats.total_records }} registros</span>
-    <span class="pill pill-orange">{{ stats.farms }} fazenda(s)</span>
-    <span class="pill pill-green">{{ stats.animals }} animal(is)</span>
+
+  <div class="bcs-kpi-strip">
+    <div class="bcs-kpi accent">
+      <div class="lbl"><span class="ico">📚</span> Registros totais</div>
+      <div class="val">{{ stats.total_records }}</div>
+    </div>
+    <div class="bcs-kpi blue">
+      <div class="lbl"><span class="ico">🏡</span> Fazendas</div>
+      <div class="val">{{ stats.farms }}</div>
+    </div>
+    <div class="bcs-kpi orange">
+      <div class="lbl"><span class="ico">🐂</span> Animais</div>
+      <div class="val">{{ stats.animals }}</div>
+    </div>
   </div>
-</div>
-<div class="bcs-tabs">
-  <a class="bcs-tab" href="{{ url_for('ecc_importar') }}">Importar</a>
-  <a class="bcs-tab" href="{{ url_for('ecc_calibragem') }}">Calibragem</a>
-  <a class="bcs-tab" href="{{ url_for('ecc_analise_rebanho') }}">Análise rebanho</a>
-  <a class="bcs-tab active" href="{{ url_for('ecc_analise_individual') }}">Análise individual</a>
-  <a class="bcs-tab" href="{{ url_for('ecc_pontos_atencao') }}">Pontos de atenção</a>
 </div>
 
-<div class="card mb-16">
-  <form method="get" class="filters-row">
-    <div class="field" style="margin:0">
-      <label>Fazenda</label>
-      <select name="farm">
-        <option value="">Todas</option>
-        {% for f in farms %}
-        <option value="{{ f }}" {% if farm_filter == f %}selected{% endif %}>{{ f }}</option>
+{{ bcs_tabs('individual') }}
+
+<div class="bcs-section">
+  <div class="bcs-section-head">
+    <div class="bcs-section-title"><span class="ico">🔎</span> Selecionar animal</div>
+    <div class="bcs-section-sub">{{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
+  </div>
+  <div class="bcs-section-body">
+    <form method="get" class="bcs-filter-row">
+      <div class="field">
+        <label>Fazenda</label>
+        <select name="farm">
+          <option value="">Todas</option>
+          {% for f in farms %}
+          <option value="{{ f }}" {% if farm_filter == f %}selected{% endif %}>{{ f }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label>Brinco</label>
+        <select name="animal">
+          <option value="">Todos</option>
+          {% for a in animals %}
+          <option value="{{ a }}" {% if animal_filter == a %}selected{% endif %}>{{ a }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field" style="min-width:220px">
+        <label>Busca</label>
+        <input name="q" value="{{ q_filter }}" placeholder="fazenda ou brinco">
+      </div>
+      <div class="flex gap-8">
+        <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
+        <a href="{{ url_for('ecc_analise_individual') }}" class="btn btn-ghost btn-sm">Limpar</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="bcs-section">
+  <div class="bcs-section-head">
+    <div class="bcs-section-title"><span class="ico">📈</span> Evolução do escore</div>
+    <div class="bcs-section-sub">1 ponto por dia (última inferência)</div>
+  </div>
+  <div class="bcs-section-body">
+    <div class="chart-wrap" id="ch-animal-wrap"><canvas id="ch-animal"></canvas></div>
+  </div>
+</div>
+
+<div class="ind-viewer">
+  <div class="bcs-section" style="margin-bottom:0">
+    <div class="bcs-section-head">
+      <div class="bcs-section-title"><span class="ico blue">🖼</span> Imagens do animal</div>
+      <div class="bcs-section-sub">com bbox quando disponível</div>
+    </div>
+    <div class="bcs-section-body">
+      <div class="ind-photo-wrap">
+        <img id="ecc-carousel-image" alt="Imagem ECC do animal" style="display:none">
+        <div id="ecc-carousel-empty" class="ind-photo-empty">Sem imagens para este animal.</div>
+        <div id="ecc-photo-overlay" class="ind-photo-overlay" style="display:none"></div>
+      </div>
+      <div class="ind-carousel-controls">
+        <button id="ecc-prev" class="btn btn-ghost btn-sm" type="button">← Anterior</button>
+        <div id="ecc-counter" class="ind-carousel-counter">0 / 0</div>
+        <button id="ecc-next" class="btn btn-ghost btn-sm" type="button">Próxima →</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="bcs-section" style="margin-bottom:0">
+    <div class="bcs-section-head">
+      <div class="bcs-section-title"><span class="ico">🎯</span> Escores da imagem</div>
+      <div id="ecc-score-date" class="bcs-section-sub">—</div>
+    </div>
+    <div class="bcs-section-body">
+      <div class="ind-metric-grid">
+        <div class="ind-metric blue">
+          <div class="k">Raw</div>
+          <div id="ecc-raw-value" class="v">—</div>
+        </div>
+        <div class="ind-metric accent">
+          <div class="k">ECC (1–5)</div>
+          <div id="ecc-score-value" class="v">—</div>
+        </div>
+      </div>
+
+      <div class="ind-score-bar-wrap">
+        <div class="ind-score-scale-head"><span>1.00</span><span>3.00</span><span>5.00</span></div>
+        <div class="ind-score-bar">
+          <div id="ecc-score-marker" class="ind-score-marker"></div>
+        </div>
+        <div id="ecc-score-desc" class="ind-score-desc">Descrição do escore: —</div>
+      </div>
+
+      <div class="ind-meta-list">
+        <div class="row"><b>ID:</b> <span id="ecc-record-id">—</span></div>
+        <div class="row"><b>Arquivo:</b> <span id="ecc-filename">—</span></div>
+        <div class="row"><b>Status:</b> <span id="ecc-status">—</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="bcs-section">
+  <div class="bcs-section-head">
+    <div class="bcs-section-title"><span class="ico">🗂</span> Registros do filtro</div>
+    <div class="bcs-section-sub">brinco · data · escore</div>
+  </div>
+  <div class="bcs-section-body tight">
+    <div class="bcs-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Data</th>
+            <th>Fazenda</th>
+            <th>Brinco</th>
+            <th class="num">ECC</th>
+            <th class="num">Raw</th>
+            <th>Trait</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for r in records %}
+        <tr>
+          <td class="mono">{{ r.inference_date }}</td>
+          <td>{{ r.farm_id }}</td>
+          <td class="mono"><strong>{{ r.animal_tag }}</strong></td>
+          <td class="num">{{ '%.2f' % r.ecc_score if r.ecc_score is not none else '—' }}</td>
+          <td class="num">{{ '%.4f' % r.raw_score if r.raw_score is not none else '—' }}</td>
+          <td class="mono">{{ r.trait_name or '—' }}</td>
+          <td>
+            {% if r.error_text %}
+            <span class="bcs-status-pill err">{{ r.error_text }}</span>
+            {% else %}
+            <span class="bcs-status-pill ok">ok</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7"><div class="bcs-empty"><div class="icon">📈</div>Sem dados.</div></td></tr>
         {% endfor %}
-      </select>
+        </tbody>
+      </table>
     </div>
-    <div class="field" style="margin:0">
-      <label>Brinco</label>
-      <select name="animal">
-        <option value="">Todos</option>
-        {% for a in animals %}
-        <option value="{{ a }}" {% if animal_filter == a %}selected{% endif %}>{{ a }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="field" style="margin:0; min-width:220px">
-      <label>Busca</label>
-      <input name="q" value="{{ q_filter }}" placeholder="fazenda ou brinco">
-    </div>
-    <div class="flex gap-8">
-      <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
-      <a href="{{ url_for('ecc_analise_individual') }}" class="btn btn-ghost btn-sm">Limpar</a>
-    </div>
-  </form>
-</div>
-
-<div class="chart-card-ecc">
-  <div class="chart-head">
-    <div class="chart-title">Evolução do escore por animal</div>
-    <div class="chart-sub">{{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
-  </div>
-  <div class="chart-canvas-wrap" id="ch-animal-wrap"><canvas id="ch-animal"></canvas></div>
-</div>
-
-<div class="ecc-animal-viewer">
-  <div class="ecc-photo-card">
-    <div class="chart-head">
-      <div class="chart-title">Imagens do animal</div>
-      <div class="chart-sub">Preferência: bbox Obj Id</div>
-    </div>
-    <div class="ecc-photo-wrap">
-      <img id="ecc-carousel-image" alt="Imagem ECC do animal" style="display:none">
-      <div id="ecc-carousel-empty" class="ecc-photo-empty">Sem imagens para este animal.</div>
-    </div>
-    <div class="ecc-carousel-controls">
-      <button id="ecc-prev" class="btn btn-ghost btn-sm" type="button">Anterior</button>
-      <div id="ecc-counter" class="ecc-carousel-counter">0 / 0</div>
-      <button id="ecc-next" class="btn btn-ghost btn-sm" type="button">Próxima</button>
-    </div>
-  </div>
-  <div class="ecc-score-card">
-    <div class="chart-head">
-      <div class="chart-title">Escores da imagem</div>
-      <div id="ecc-score-date" class="chart-sub">—</div>
-    </div>
-    <div class="ecc-metric-grid">
-      <div class="ecc-metric">
-        <div class="k">Raw</div>
-        <div id="ecc-raw-value" class="v">—</div>
-      </div>
-      <div class="ecc-metric">
-        <div class="k">ECC (1..5)</div>
-        <div id="ecc-score-value" class="v">—</div>
-      </div>
-    </div>
-    <div class="ecc-score-extra">
-      <div><strong>ID:</strong> <span id="ecc-record-id">—</span></div>
-      <div><strong>Arquivo:</strong> <span id="ecc-filename">—</span></div>
-      <div><strong>Status:</strong> <span id="ecc-status">—</span></div>
-    </div>
-    <div class="ecc-score-bar-wrap">
-      <div class="ecc-score-scale-head"><span>1.00</span><span>3.00</span><span>5.00</span></div>
-      <div class="ecc-score-bar">
-        <div id="ecc-score-marker" class="ecc-score-marker"></div>
-      </div>
-      <div id="ecc-score-desc" class="ecc-score-desc">Descrição do escore: —</div>
-    </div>
-  </div>
-</div>
-
-<div class="card">
-  <div class="card-title">Registros recentes filtrados</div>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Data</th><th>Fazenda</th><th>Brinco</th><th>ECC</th><th>Raw</th><th>Trait</th><th>Status</th></tr></thead>
-      <tbody>
-      {% for r in records %}
-      <tr>
-        <td class="mono">{{ r.inference_date }}</td><td>{{ r.farm_id }}</td><td class="mono">{{ r.animal_tag }}</td>
-        <td class="mono">{{ '%.2f' % r.ecc_score if r.ecc_score is not none else '—' }}</td>
-        <td class="mono">{{ '%.4f' % r.raw_score if r.raw_score is not none else '—' }}</td>
-        <td class="mono">{{ r.trait_name or '—' }}</td>
-        <td class="mono">{{ r.error_text or 'ok' }}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="7"><div class="empty-state"><div class="icon">📈</div>Sem dados</div></td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
   </div>
 </div>
 {% endblock %}
@@ -170,6 +288,7 @@
 <script>
 const ANIMAL_POINTS = {{ animal_points | tojson }};
 const ANIMAL_IMAGES = {{ animal_images | tojson }};
+
 function normInfDay(d) {
   if (d == null || d === '') return '';
   const s = String(d).trim();
@@ -177,7 +296,6 @@ function normInfDay(d) {
   return s;
 }
 
-/** Uma curva por dia: em várias fotos no mesmo dia, fica a de maior `id` (mais recente). */
 function buildIndividualTimeSeries(points) {
   const arr = [...(points || [])].sort((a, b) => {
     const da = String(a.inference_date || '').localeCompare(String(b.inference_date || ''));
@@ -213,6 +331,7 @@ const ECC_LABELS = {
   '4.75': 'Obesa',
   '5.00': 'Obesa severa',
 };
+
 function buildAnimalChart() {
   const wrap = document.getElementById('ch-animal-wrap');
   const c = document.getElementById('ch-animal');
@@ -220,7 +339,7 @@ function buildAnimalChart() {
   const { labels, rowAt } = buildIndividualTimeSeries(ANIMAL_POINTS);
   if (!labels.length) {
     if (wrap) {
-      wrap.innerHTML = '<div class="chart-empty-ecc">Sem evolução ECC: selecione fazenda e brinco com registo, ou ainda sem pontos com escore.</div>';
+      wrap.innerHTML = '<div class="chart-empty">Sem evolução ECC: selecione fazenda e brinco com registo, ou ainda sem pontos com escore.</div>';
     }
     return;
   }
@@ -232,13 +351,14 @@ function buildAnimalChart() {
       labels,
       datasets: [
         {
-          label: 'ECC (1-5, passo 0.25)',
+          label: 'ECC (1–5, passo 0.25)',
           data,
-          borderColor: '#00e5a0',
-          backgroundColor: 'rgba(0,229,160,.18)',
-          borderWidth: 2.4,
+          borderColor: '#0d7a5e',
+          backgroundColor: 'rgba(13,122,94,.18)',
+          borderWidth: 2.6,
           pointRadius: 4,
-          tension: 0.2,
+          pointHoverRadius: 6,
+          tension: 0.22,
           fill: true,
           spanGaps: true,
         },
@@ -264,17 +384,8 @@ function buildAnimalChart() {
         },
       },
       scales: {
-        x: {
-          type: 'category',
-          ticks: { color: '#5a6f82', maxRotation: 40, minRotation: 0, maxTicksLimit: 24 },
-          grid: { color: '#dde4ed' },
-        },
-        y: {
-          min: 1,
-          max: 5,
-          ticks: { color: '#5a6f82', stepSize: 0.25 },
-          grid: { color: '#dde4ed' },
-        },
+        x: { type: 'category', ticks: { color: '#5a6f82', maxRotation: 40, maxTicksLimit: 24 }, grid: { color: '#dde4ed' } },
+        y: { min: 1, max: 5, ticks: { color: '#5a6f82', stepSize: 0.25 }, grid: { color: '#dde4ed' } },
       },
     },
   });
@@ -286,20 +397,16 @@ function fmtNum(v, d) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toFixed(d) : '—';
 }
-
-function clamp(v, lo, hi) {
-  return Math.max(lo, Math.min(hi, v));
-}
-
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function quarterKey(v) {
   if (v === null || v === undefined || v === '' || Number.isNaN(Number(v))) return null;
-  const q = Math.round(Number(v) * 4) / 4;
-  return q.toFixed(2);
+  return (Math.round(Number(v) * 4) / 4).toFixed(2);
 }
 
 function initAnimalCarousel() {
   const imgEl = document.getElementById('ecc-carousel-image');
   const emptyEl = document.getElementById('ecc-carousel-empty');
+  const overlayEl = document.getElementById('ecc-photo-overlay');
   const prevBtn = document.getElementById('ecc-prev');
   const nextBtn = document.getElementById('ecc-next');
   const counter = document.getElementById('ecc-counter');
@@ -324,6 +431,7 @@ function initAnimalCarousel() {
     if (!n) {
       imgEl.style.display = 'none';
       emptyEl.style.display = 'block';
+      overlayEl.style.display = 'none';
       rawEl.textContent = '—';
       scoreEl.textContent = '—';
       dateEl.textContent = '—';
@@ -345,8 +453,10 @@ function initAnimalCarousel() {
       imgEl.style.display = 'none';
       emptyEl.style.display = 'block';
     }
-    rawEl.textContent = fmtNum(r.raw_score, 4);
     const eccFmt = fmtNum(r.ecc_score, 2);
+    overlayEl.textContent = `${r.inference_date || '—'} · ECC ${eccFmt}`;
+    overlayEl.style.display = 'block';
+    rawEl.textContent = fmtNum(r.raw_score, 4);
     scoreEl.textContent = eccFmt;
     dateEl.textContent = r.inference_date || '—';
     idEl.textContent = r.id != null ? String(r.id) : '—';
@@ -362,7 +472,7 @@ function initAnimalCarousel() {
     if (descEl) {
       const key = quarterKey(r.ecc_score);
       const label = key ? (ECC_LABELS[key] || 'Sem classificação') : '—';
-      descEl.textContent = `Descrição do escore (${key || '—'}): ${label}`;
+      descEl.textContent = `Faixa (${key || '—'}): ${label}`;
     }
   }
 
@@ -375,6 +485,10 @@ function initAnimalCarousel() {
     if (!rows.length) return;
     idx = (idx + 1) % rows.length;
     render();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'ArrowLeft') prevBtn.click();
+    if (ev.key === 'ArrowRight') nextBtn.click();
   });
   render();
 }
