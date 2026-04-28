@@ -17,14 +17,17 @@
 .batch-progress-bar { width:100%; height:10px; border-radius:999px; background:var(--surf3); border:1px solid var(--border); overflow:hidden; margin:6px 0; }
 .batch-progress-fill { height:100%; width:0%; background:linear-gradient(90deg,#00e5a0,#00b9ff); transition:width .2s ease; }
 .batch-progress-meta { display:flex; justify-content:space-between; gap:10px; font-family:var(--mono); font-size:11px; color:var(--text2); }
+.bcs-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+.bcs-tab { text-decoration:none; padding:6px 10px; border-radius:999px; border:1px solid var(--border); color:var(--text2); font-family:var(--mono); font-size:11px; }
+.bcs-tab.active { background: rgba(13,122,94,.12); color: var(--accent); border-color: rgba(13,122,94,.35); }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="page-header">
   <div>
-    <div class="page-title">📥 <span>ECC</span> <span style="color:var(--accent)">importar</span></div>
-    <div class="page-sub">Upload único/lote para pipeline ECC posterior (YOLO + ONNX)</div>
+    <div class="page-title">📥 <span>Perspicuus BCS</span> <span style="color:var(--accent)">importar</span></div>
+    <div class="page-sub">Entrada operacional de imagens e execução de inferência BCS (vista posterior)</div>
   </div>
   <div class="flex gap-8" style="flex-wrap:wrap;align-items:center">
     <span class="pill pill-blue">{{ stats.total_records }} registros</span>
@@ -32,6 +35,13 @@
     <span class="pill pill-green">{{ stats.animals }} animal(is)</span>
     <button type="button" class="btn btn-ghost btn-sm" id="ecc-recalc-header-btn" title="Reaplica inferência em todas as imagens ECC guardadas">↻ Recalcular todos os ECC</button>
   </div>
+</div>
+<div class="bcs-tabs">
+  <a class="bcs-tab active" href="{{ url_for('ecc_importar') }}">Importar</a>
+  <a class="bcs-tab" href="{{ url_for('ecc_calibragem') }}">Calibragem</a>
+  <a class="bcs-tab" href="{{ url_for('ecc_analise_rebanho') }}">Análise rebanho</a>
+  <a class="bcs-tab" href="{{ url_for('ecc_analise_individual') }}">Análise individual</a>
+  <a class="bcs-tab" href="{{ url_for('ecc_pontos_atencao') }}">Pontos de atenção</a>
 </div>
 
 {% with messages = get_flashed_messages(with_categories=true) %}
@@ -104,7 +114,7 @@
 
 <div class="form-card" style="margin-bottom:16px">
   <div class="card-title">Recalcular condição corporal (ECC)</div>
-  <p class="form-sub">Reexecuta o pipeline posterior (YOLO + ONNX) em <strong>cada imagem já guardada</strong>, atualizando escore ECC (1–5), raw, traits, miniatura, imagem com bbox e mensagem de erro. Pode demorar se existirem muitos registros (limite configurável no servidor via <span class="mono">ECC_RECALC_MAX</span>).</p>
+  <p class="form-sub">Reexecuta o pipeline posterior em <strong>cada imagem já guardada</strong>, atualizando escore ECC (1–5), raw, traits, miniatura, imagem com bbox e mensagem de erro. Pode demorar se existirem muitos registros (limite configurável no servidor via <span class="mono">ECC_RECALC_MAX</span>).</p>
   <div class="row-2">
     <div class="field">
       <label>Limitar por fazenda (opcional)</label>
@@ -122,7 +132,7 @@
 </div>
 
 <div class="card">
-  <div class="card-title">Últimos registros ECC</div>
+  <div class="card-title">Últimos registros BCS</div>
   <div class="table-wrap">
     <table>
       <thead>

@@ -32,13 +32,16 @@
   .ecc-animal-viewer { grid-template-columns: 1fr; }
   .ecc-photo-wrap { height:min(52vh,420px); }
 }
+.bcs-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+.bcs-tab { text-decoration:none; padding:6px 10px; border-radius:999px; border:1px solid var(--border); color:var(--text2); font-family:var(--mono); font-size:11px; }
+.bcs-tab.active { background: rgba(13,122,94,.12); color: var(--accent); border-color: rgba(13,122,94,.35); }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="page-header">
   <div>
-    <div class="page-title">🐂 <span>ECC</span> <span style="color:var(--accent)">análise individual</span></div>
+    <div class="page-title">🐂 <span>Perspicuus BCS</span> <span style="color:var(--accent)">análise individual</span></div>
     <div class="page-sub">Evolução do escore de um mesmo animal ao longo do tempo</div>
   </div>
   <div class="flex gap-8">
@@ -46,6 +49,13 @@
     <span class="pill pill-orange">{{ stats.farms }} fazenda(s)</span>
     <span class="pill pill-green">{{ stats.animals }} animal(is)</span>
   </div>
+</div>
+<div class="bcs-tabs">
+  <a class="bcs-tab" href="{{ url_for('ecc_importar') }}">Importar</a>
+  <a class="bcs-tab" href="{{ url_for('ecc_calibragem') }}">Calibragem</a>
+  <a class="bcs-tab" href="{{ url_for('ecc_analise_rebanho') }}">Análise rebanho</a>
+  <a class="bcs-tab active" href="{{ url_for('ecc_analise_individual') }}">Análise individual</a>
+  <a class="bcs-tab" href="{{ url_for('ecc_pontos_atencao') }}">Pontos de atenção</a>
 </div>
 
 <div class="card mb-16">
@@ -91,7 +101,7 @@
   <div class="ecc-photo-card">
     <div class="chart-head">
       <div class="chart-title">Imagens do animal</div>
-      <div class="chart-sub">Preferência: bbox YOLO</div>
+      <div class="chart-sub">Preferência: bbox Obj Id</div>
     </div>
     <div class="ecc-photo-wrap">
       <img id="ecc-carousel-image" alt="Imagem ECC do animal" style="display:none">

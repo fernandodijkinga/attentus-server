@@ -28,6 +28,9 @@
 .cal-body { padding: 8px 10px; }
 .cal-row { display:flex; justify-content:space-between; gap:8px; font-family: var(--mono); font-size:11px; margin-bottom: 4px; }
 .cal-row strong { color: var(--accent2); }
+.bcs-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+.bcs-tab { text-decoration:none; padding:6px 10px; border-radius:999px; border:1px solid var(--border); color:var(--text2); font-family:var(--mono); font-size:11px; }
+.bcs-tab.active { background: rgba(13,122,94,.12); color: var(--accent); border-color: rgba(13,122,94,.35); }
 </style>
 {% endblock %}
 
@@ -42,6 +45,13 @@
     <span class="pill pill-orange">{{ stats.calibration_rows }} usados na calibração</span>
     <span class="pill pill-green">atual: {{ '%.2f'|format(calibration.raw_min) }} → {{ '%.2f'|format(calibration.raw_max) }}</span>
   </div>
+</div>
+<div class="bcs-tabs">
+  <a class="bcs-tab" href="{{ url_for('ecc_importar') }}">Importar</a>
+  <a class="bcs-tab active" href="{{ url_for('ecc_calibragem') }}">Calibragem</a>
+  <a class="bcs-tab" href="{{ url_for('ecc_analise_rebanho') }}">Análise rebanho</a>
+  <a class="bcs-tab" href="{{ url_for('ecc_analise_individual') }}">Análise individual</a>
+  <a class="bcs-tab" href="{{ url_for('ecc_pontos_atencao') }}">Pontos de atenção</a>
 </div>
 
 <div class="card mb-16">
