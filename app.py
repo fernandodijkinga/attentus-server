@@ -55,6 +55,7 @@ from ecc_module import (
     save_ecc_bbox_overlay,
     ecc_farm_time_series,
     ecc_attention_ranking,
+    rescale_ecc_1_to_5_quarter,
 )
 from perspicuus_scoring import rescale_perspicuus_trait_score
 
@@ -122,6 +123,13 @@ log.info(f"DATA_DIR={DATA_DIR}")
 # Autenticação de usuário web
 ADMIN_USER      = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS_HASH = generate_password_hash(os.environ.get('ADMIN_PASS', 'attentus2024'))
+ALL_ENVIRONMENTS = {'weather', 'perspicuus', 'calves', 'bcs'}
+ENV_LABELS = {
+    'weather': 'Attentus Weather',
+    'perspicuus': 'Perspicuus',
+    'calves': 'Attentus Calves',
+    'bcs': 'Perspicuus BCS',
+}
 
 # Chave de API para dispositivos (vazio = sem restrição)
 API_KEY = os.environ.get('API_KEY', '')
@@ -134,6 +142,184 @@ PERSPICUUS_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
 ECC_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
 ECC_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'ecc')
 os.makedirs(ECC_UPLOADS_DIR, exist_ok=True)
+
+
+def _normalize_env_access(raw: Any) -> set[str]:
+    if raw is None:
+        return set()
+    parts: list[str] = []
+    if isinstance(raw, str):
+        parts = [p.strip().lower() for p in re.split(r'[,\s;]+', raw) if p.strip()]
+    elif isinstance(raw, (list, tuple, set)):
+        parts = [str(p).strip().lower() for p in raw if str(p).strip()]
+    out = {p for p in parts if p in ALL_ENVIRONMENTS}
+    if 'all' in parts:
+        return set(ALL_ENVIRONMENTS)
+    return out
+
+
+def _build_auth_users() -> dict[str, dict[str, Any]]:
+    users: dict[str, dict[str, Any]] = {
+        ADMIN_USER: {
+            'pass_hash': ADMIN_PASS_HASH,
+            'envs': set(ALL_ENVIRONMENTS),
+            'is_admin': True,
+        }
+    }
+
+    # Opcional: JSON de usuários extras
+    # Exemplo:
+    # ATTENTUS_USERS_JSON='[{"username":"meteo","password":"123","envs":["weather"]}]'
+    raw_json = os.environ.get('ATTENTUS_USERS_JSON', '').strip()
+    if raw_json:
+        try:
+            arr = json.loads(raw_json)
+            if isinstance(arr, list):
+                for item in arr:
+                    if not isinstance(item, dict):
+                        continue
+                    username = str(item.get('username', '')).strip()
+                    if not username:
+                        continue
+                    envs = _normalize_env_access(item.get('envs'))
+                    if not envs:
+                        continue
+                    pass_hash = str(item.get('password_hash') or '').strip()
+                    plain = str(item.get('password') or '').strip()
+                    if not pass_hash and plain:
+                        pass_hash = generate_password_hash(plain)
+                    if not pass_hash:
+                        continue
+                    users[username] = {
+                        'pass_hash': pass_hash,
+                        'envs': envs,
+                        'is_admin': False,
+                    }
+        except json.JSONDecodeError:
+            log.warning('ATTENTUS_USERS_JSON inválido; ignorando usuários extras.')
+
+    # Atalhos por ambiente (usuário/senha específicos)
+    env_shortcuts = {
+        'weather': ('WEATHER_USER', 'WEATHER_PASS'),
+        'perspicuus': ('PERSPICUUS_USER', 'PERSPICUUS_PASS'),
+        'calves': ('CALVES_USER', 'CALVES_PASS'),
+        'bcs': ('BCS_USER', 'BCS_PASS'),
+    }
+    for env_name, (user_key, pass_key) in env_shortcuts.items():
+        uname = os.environ.get(user_key, '').strip()
+        pwd = os.environ.get(pass_key, '')
+        if not uname or not pwd:
+            continue
+        users[uname] = {
+            'pass_hash': generate_password_hash(pwd),
+            'envs': {env_name},
+            'is_admin': False,
+        }
+
+    return users
+
+
+AUTH_USERS = _build_auth_users()
+
+
+def _session_allowed_envs() -> set[str]:
+    envs = session.get('allowed_envs') or []
+    return _normalize_env_access(envs)
+
+
+def _session_can_access(env_name: str) -> bool:
+    if session.get('is_admin'):
+        return True
+    return env_name in _session_allowed_envs()
+
+
+def _environment_for_request() -> str | None:
+    ep = request.endpoint or ''
+    if ep == 'database':
+        tab = request.args.get('tab', 'weather').strip().lower()
+        return {
+            'weather': 'weather',
+            'images': 'calves',
+            'perspicuus': 'perspicuus',
+            'ecc': 'bcs',
+        }.get(tab, 'weather')
+
+    weather_eps = {
+        'weather', 'weather_data', 'delete_weather', 'edit_weather', 'download_weather',
+    }
+    calves_eps = {
+        'calf_monitor', 'cameras', 'calf_monitor_latest', 'serve_image',
+        'delete_image', 'edit_image_notes', 'download_images',
+    }
+    perspicuus_eps = {
+        'perspicuus', 'perspicuus_animais', 'perspicuus_inferencias',
+        'perspicuus_analise_rebanho', 'perspicuus_modelos', 'serve_perspicuus_media',
+        'get_perspicuus_record', 'patch_perspicuus_record',
+        'delete_perspicuus_record', 'infer_perspicuus_record_api',
+        'download_perspicuus', 'download_perspicuus_event',
+    }
+    bcs_eps = {
+        'serve_ecc_media', 'ecc_analise', 'ecc_importar', 'api_ecc_upload_one',
+        'api_ecc_recalculate_all', 'api_ecc_calibragem_apply', 'ecc_calibragem',
+        'ecc_analise_rebanho', 'ecc_analise_individual',
+        'ecc_pontos_atencao', 'delete_ecc_record', 'edit_ecc_record',
+    }
+    if ep in weather_eps:
+        return 'weather'
+    if ep in calves_eps:
+        return 'calves'
+    if ep in perspicuus_eps:
+        return 'perspicuus'
+    if ep in bcs_eps:
+        return 'bcs'
+    return None
+
+
+def _first_allowed_endpoint() -> str:
+    if _session_can_access('weather'):
+        return url_for('weather')
+    if _session_can_access('perspicuus'):
+        return url_for('perspicuus')
+    if _session_can_access('calves'):
+        return url_for('calf_monitor')
+    if _session_can_access('bcs'):
+        return url_for('ecc_importar')
+    return url_for('logout')
+
+
+@app.before_request
+def _enforce_environment_access():
+    if not session.get('logged_in'):
+        return None
+    # dashboard mistura dados de vários ambientes: manter para admin somente
+    if request.endpoint == 'index' and not session.get('is_admin'):
+        return redirect(_first_allowed_endpoint())
+
+    env_name = _environment_for_request()
+    if not env_name or _session_can_access(env_name):
+        return None
+
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'forbidden', 'message': 'Acesso negado a este ambiente'}), 403
+
+    flash(f"Acesso negado ao ambiente {ENV_LABELS.get(env_name, env_name)}.", 'error')
+    return redirect(_first_allowed_endpoint())
+
+
+@app.context_processor
+def inject_auth_flags():
+    allowed = _session_allowed_envs()
+    is_admin = bool(session.get('is_admin'))
+
+    def can_access(env_name: str) -> bool:
+        return is_admin or env_name in allowed
+
+    env_labels = [ENV_LABELS[e] for e in ('weather', 'perspicuus', 'calves', 'bcs') if can_access(e)]
+    return {
+        'is_admin_user': is_admin,
+        'can_access_env': can_access,
+        'current_user_role': 'admin' if is_admin else (' | '.join(env_labels) if env_labels else 'restricted'),
+    }
 
 
 def _perspicuus_media_url_from_path(path):
@@ -517,6 +703,13 @@ def init_db():
         meta_json      TEXT    NOT NULL DEFAULT '{}',
         error_text     TEXT
     );
+    CREATE TABLE IF NOT EXISTS ecc_bcs_calibration (
+        id          INTEGER PRIMARY KEY CHECK (id = 1),
+        raw_min     REAL    NOT NULL DEFAULT -4.0,
+        raw_max     REAL    NOT NULL DEFAULT 4.0,
+        updated_at  TEXT    NOT NULL,
+        updated_by  TEXT    NOT NULL DEFAULT 'system'
+    );
 
     CREATE INDEX IF NOT EXISTS idx_weather_received ON weather(received_at);
     CREATE INDEX IF NOT EXISTS idx_weather_device   ON weather(device_name);
@@ -558,6 +751,19 @@ def init_db():
         db.commit()
     except sqlite3.OperationalError as e:
         log.warning("Migração ecc thumb_path: %s", e)
+    try:
+        row = db.execute("SELECT id FROM ecc_bcs_calibration WHERE id = 1").fetchone()
+        if not row:
+            db.execute(
+                """
+                INSERT INTO ecc_bcs_calibration (id, raw_min, raw_max, updated_at, updated_by)
+                VALUES (1, -4.0, 4.0, ?, 'system')
+                """,
+                (datetime.utcnow().isoformat() + 'Z',),
+            )
+        db.commit()
+    except sqlite3.OperationalError as e:
+        log.warning("Migração ecc calibration: %s", e)
     db.close()
     log.info("DB inicializado OK")
 
@@ -649,10 +855,14 @@ def login():
     if request.method == 'POST':
         user = request.form.get('username', '').strip()
         pw   = request.form.get('password', '')
-        if user == ADMIN_USER and check_password_hash(ADMIN_PASS_HASH, pw):
+        account = AUTH_USERS.get(user)
+        if account and check_password_hash(account['pass_hash'], pw):
             session['logged_in'] = True
             session['username']  = user
-            next_url = request.args.get('next', url_for('index'))
+            session['is_admin'] = bool(account.get('is_admin'))
+            session['allowed_envs'] = sorted(list(account.get('envs') or []))
+
+            next_url = request.args.get('next') or (url_for('index') if session.get('is_admin') else _first_allowed_endpoint())
             return redirect(next_url)
         error = 'Usuário ou senha incorretos.'
     return render_template('login.html', error=error)
@@ -1569,6 +1779,58 @@ def _ecc_abs_path_from_web_path(web_path: str) -> str | None:
     return filepath
 
 
+def _ecc_get_calibration(db) -> dict[str, Any]:
+    row = db.execute(
+        "SELECT raw_min, raw_max, updated_at, updated_by FROM ecc_bcs_calibration WHERE id = 1"
+    ).fetchone()
+    if not row:
+        return {'raw_min': -4.0, 'raw_max': 4.0, 'updated_at': None, 'updated_by': 'system'}
+    return {
+        'raw_min': float(row['raw_min']),
+        'raw_max': float(row['raw_max']),
+        'updated_at': row['updated_at'],
+        'updated_by': row['updated_by'],
+    }
+
+
+def _ecc_rescale_with_calibration(raw_score: float | None, cal: dict[str, Any]) -> float | None:
+    if raw_score is None:
+        return None
+    try:
+        x = float(raw_score)
+    except (TypeError, ValueError):
+        return None
+    raw_min = float(cal.get('raw_min', -4.0))
+    raw_max = float(cal.get('raw_max', 4.0))
+    if raw_max <= raw_min:
+        return rescale_ecc_1_to_5_quarter(x)
+    t = (x - raw_min) / (raw_max - raw_min)
+    y = 1.0 + max(0.0, min(1.0, t)) * 4.0
+    y = max(1.0, min(5.0, y))
+    return round(y * 4.0) / 4.0
+
+
+def _ecc_apply_calibration_to_all_scores(db, cal: dict[str, Any], farm_id: str = '') -> int:
+    cond = "raw_score IS NOT NULL"
+    params: list[Any] = []
+    if farm_id:
+        cond += " AND farm_id = ?"
+        params.append(farm_id)
+    rows = db.execute(
+        f"SELECT id, raw_score FROM ecc_bcs_records WHERE {cond}",
+        params,
+    ).fetchall()
+    n = 0
+    for r in rows:
+        val = _ecc_rescale_with_calibration(r['raw_score'], cal)
+        db.execute(
+            "UPDATE ecc_bcs_records SET ecc_score = ? WHERE id = ?",
+            (val, int(r['id'])),
+        )
+        n += 1
+    return n
+
+
 def _ecc_reinfer_record_by_id(db, rid: int) -> dict:
     """
     Reexecuta infer_ecc_posterior na imagem original do registro e atualiza
@@ -1606,6 +1868,8 @@ def _ecc_reinfer_record_by_id(db, rid: int) -> dict:
             if save_ecc_bbox_overlay(dest, bbox, box_abs, yolo_conf=yconf):
                 bbox_web = f'/api/ecc/media/{farm_seg}/{day_seg}/{box_name}'
 
+    cal = _ecc_get_calibration(db)
+    corrected_ecc = _ecc_rescale_with_calibration(inf.get('raw_score'), cal)
     db.execute(
         """
         UPDATE ecc_bcs_records SET
@@ -1616,7 +1880,7 @@ def _ecc_reinfer_record_by_id(db, rid: int) -> dict:
         (
             inf.get('trait_name') or '',
             inf.get('raw_score'),
-            inf.get('ecc_score'),
+            corrected_ecc,
             json.dumps(inf.get('traits') or {}, ensure_ascii=False),
             json.dumps(inf.get('meta') or {}, ensure_ascii=False),
             inf.get('error'),
@@ -1662,6 +1926,8 @@ def _ecc_save_one(db, now_iso: str, farm_id: str, inference_date: str, animal_ta
         box_abs = os.path.join(folder, box_name)
         if save_ecc_bbox_overlay(dest, bbox, box_abs, yolo_conf=yconf):
             bbox_web = f"/api/ecc/media/{safe_farm}/{safe_day}/{box_name}"
+    cal = _ecc_get_calibration(db)
+    corrected_ecc = _ecc_rescale_with_calibration(inf.get('raw_score'), cal)
     db.execute(
         """
         INSERT INTO ecc_bcs_records (
@@ -1672,7 +1938,7 @@ def _ecc_save_one(db, now_iso: str, farm_id: str, inference_date: str, animal_ta
         (
             now_iso, farm_id, inference_date, animal_tag, 'posterior', final_name, web_path, thumb_web,
             bbox_web,
-            inf.get('trait_name') or '', inf.get('raw_score'), inf.get('ecc_score'),
+            inf.get('trait_name') or '', inf.get('raw_score'), corrected_ecc,
             json.dumps(inf.get('traits') or {}, ensure_ascii=False),
             json.dumps(inf.get('meta') or {}, ensure_ascii=False),
             inf.get('error'),
@@ -1783,6 +2049,70 @@ def ecc_importar():
     )
 
 
+@app.route('/ecc/calibragem')
+@login_required
+def ecc_calibragem():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    cal = _ecc_get_calibration(db)
+    cond = ["raw_score IS NOT NULL"]
+    params: list[Any] = []
+    if farm_filter:
+        cond.append("farm_id = ?")
+        params.append(farm_filter)
+    where = " AND ".join(cond)
+    rows = db.execute(
+        f"""
+        SELECT id, farm_id, animal_tag, raw_score, ecc_score, image_path, thumb_path, bbox_path
+        FROM ecc_bcs_records
+        WHERE {where}
+        ORDER BY raw_score ASC, id DESC
+        LIMIT 5000
+        """,
+        params,
+    ).fetchall()
+
+    buckets: dict[float, dict[str, Any]] = {}
+    for r in rows:
+        raw = float(r['raw_score'])
+        b = round(raw * 2.0) / 2.0
+        if b not in buckets:
+            buckets[b] = {
+                'raw_bucket': b,
+                'raw_min': b - 0.25,
+                'raw_max': b + 0.25,
+                'count': 0,
+                'sample': None,
+                'suggested_ecc': _ecc_rescale_with_calibration(b, cal),
+            }
+        buckets[b]['count'] += 1
+        if not buckets[b]['sample']:
+            buckets[b]['sample'] = {
+                'id': int(r['id']),
+                'farm_id': r['farm_id'],
+                'animal_tag': r['animal_tag'],
+                'raw_score': raw,
+                'ecc_score': r['ecc_score'],
+                'image_path': r['image_path'],
+                'thumb_path': r['thumb_path'],
+                'bbox_path': r['bbox_path'],
+            }
+    bucket_rows = [buckets[k] for k in sorted(buckets.keys())]
+    farms, _, stats = _ecc_base_lists(db)
+    stats['calibration_rows'] = db.execute(
+        f"SELECT COUNT(*) FROM ecc_bcs_records WHERE {where}",
+        params,
+    ).fetchone()[0]
+    return render_template(
+        'ecc_calibragem.html',
+        farms=farms,
+        farm_filter=farm_filter,
+        stats=stats,
+        calibration=cal,
+        bucket_rows=bucket_rows,
+    )
+
+
 @app.route('/api/ecc/upload-one', methods=['POST'])
 @login_required
 def api_ecc_upload_one():
@@ -1804,6 +2134,46 @@ def api_ecc_upload_one():
         return jsonify({'status': 'ok', 'animal_tag': animal_tag}), 201
     db.rollback()
     return jsonify({'error': msg, 'animal_tag': animal_tag}), 400
+
+
+@app.route('/api/ecc/calibragem/apply', methods=['POST'])
+@login_required
+def api_ecc_calibragem_apply():
+    data = request.get_json(silent=True) or {}
+    try:
+        raw_min = float(data.get('raw_min'))
+        raw_max = float(data.get('raw_max'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'raw_min e raw_max são obrigatórios (numéricos).'}), 400
+    if raw_max <= raw_min:
+        return jsonify({'error': 'raw_max deve ser maior que raw_min.'}), 400
+    if (raw_max - raw_min) < 0.5:
+        return jsonify({'error': 'Intervalo muito estreito; use ao menos 0.5.'}), 400
+
+    farm = str(data.get('farm_id') or '').strip()
+    db = get_db()
+    now_iso = datetime.utcnow().isoformat() + 'Z'
+    db.execute(
+        """
+        INSERT INTO ecc_bcs_calibration (id, raw_min, raw_max, updated_at, updated_by)
+        VALUES (1, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            raw_min = excluded.raw_min,
+            raw_max = excluded.raw_max,
+            updated_at = excluded.updated_at,
+            updated_by = excluded.updated_by
+        """,
+        (raw_min, raw_max, now_iso, str(session.get('username') or 'unknown')),
+    )
+    cal = _ecc_get_calibration(db)
+    updated = _ecc_apply_calibration_to_all_scores(db, cal, farm_id=farm)
+    db.commit()
+    return jsonify({
+        'status': 'ok',
+        'updated': updated,
+        'farm_id_filter': farm or None,
+        'calibration': cal,
+    })
 
 
 @app.route('/api/ecc/recalculate-all', methods=['POST'])
@@ -1971,6 +2341,17 @@ def database():
     tab     = request.args.get('tab', 'weather')
     if tab not in ('weather', 'images', 'perspicuus', 'ecc'):
         tab = 'weather'
+    tab_env = {
+        'weather': 'weather',
+        'images': 'calves',
+        'perspicuus': 'perspicuus',
+        'ecc': 'bcs',
+    }
+    if not _session_can_access(tab_env[tab]):
+        for t in ('weather', 'images', 'perspicuus', 'ecc'):
+            if _session_can_access(tab_env[t]):
+                tab = t
+                break
     page    = max(1, int(request.args.get('page', 1)))
     per_page = 30
     offset  = (page - 1) * per_page

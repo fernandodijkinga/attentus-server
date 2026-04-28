@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}ECC - calibragem{% endblock %}
+
+{% block head %}
+<style>
+.cal-top { display:grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; }
+@media (max-width: 920px) { .cal-top { grid-template-columns: 1fr; } }
+.cal-form { display:grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items:end; }
+@media (max-width: 920px) { .cal-form { grid-template-columns: 1fr; } }
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+.cal-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surf);
+  overflow: hidden;
+}
+.cal-img {
+  width: 100%;
+  height: 130px;
+  object-fit: cover;
+  display: block;
+  border-bottom: 1px solid var(--border);
+}
+.cal-body { padding: 8px 10px; }
+.cal-row { display:flex; justify-content:space-between; gap:8px; font-family: var(--mono); font-size:11px; margin-bottom: 4px; }
+.cal-row strong { color: var(--accent2); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">⚖️ <span>Perspicuus BCS</span> <span style="color:var(--accent)">calibragem</span></div>
+    <div class="page-sub">Ajuste dinâmico do reescalonamento 1–5 a partir do raw (faixas de 0.5).</div>
+  </div>
+  <div class="flex gap-8" style="flex-wrap:wrap">
+    <span class="pill pill-blue">{{ stats.with_score }} com score</span>
+    <span class="pill pill-orange">{{ stats.calibration_rows }} usados na calibração</span>
+    <span class="pill pill-green">atual: {{ '%.2f'|format(calibration.raw_min) }} → {{ '%.2f'|format(calibration.raw_max) }}</span>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <div class="cal-top">
+    <div class="field" style="margin:0;max-width:320px">
+      <label>Fazenda (opcional)</label>
+      <form method="get" action="{{ url_for('ecc_calibragem') }}">
+        <div class="flex gap-8">
+          <select name="farm">
+            <option value="">Todas</option>
+            {% for f in farms %}
+            <option value="{{ f }}" {% if farm_filter == f %}selected{% endif %}>{{ f }}</option>
+            {% endfor %}
+          </select>
+          <button class="btn btn-ghost btn-sm" type="submit">Filtrar</button>
+        </div>
+      </form>
+    </div>
+    <div class="mono text-muted" style="font-size:11px">
+      Atualizado por {{ calibration.updated_by }} em {{ calibration.updated_at|br_dt if calibration.updated_at else '—' }}
+    </div>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-title">Parâmetros de reescalonamento (global BCS)</div>
+  <p class="text-muted mono" style="font-size:11px;margin-bottom:10px">
+    Fórmula: clamp[1..5] de <span class="text-accent">1 + 4 * (raw - raw_min) / (raw_max - raw_min)</span>, com passo 0.25.
+  </p>
+  <div class="cal-form">
+    <div class="field" style="margin:0">
+      <label>Raw mínimo (vira 1.00)</label>
+      <input id="ecc-cal-raw-min" type="number" step="0.1" value="{{ '%.2f'|format(calibration.raw_min) }}">
+    </div>
+    <div class="field" style="margin:0">
+      <label>Raw máximo (vira 5.00)</label>
+      <input id="ecc-cal-raw-max" type="number" step="0.1" value="{{ '%.2f'|format(calibration.raw_max) }}">
+    </div>
+    <button id="ecc-cal-apply" class="btn btn-accent btn-sm" type="button">Aplicar e corrigir BCS</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Faixas raw (0.5) — imagem representativa da esquerda para a direita</div>
+  {% if bucket_rows %}
+  <div class="cal-grid">
+    {% for b in bucket_rows %}
+    <div class="cal-card" data-raw="{{ '%.2f'|format(b.raw_bucket) }}">
+      {% set s = b.sample %}
+      {% if s and (s.thumb_path or s.image_path) %}
+      <img class="cal-img" src="{{ s.thumb_path or s.image_path }}" alt="raw {{ '%.2f'|format(b.raw_bucket) }}" onclick="window.open('{{ s.bbox_path or s.image_path }}')">
+      {% else %}
+      <div class="empty-state" style="padding:28px 8px">Sem imagem</div>
+      {% endif %}
+      <div class="cal-body">
+        <div class="cal-row"><span>Raw faixa</span><strong>{{ '%.2f'|format(b.raw_bucket) }}</strong></div>
+        <div class="cal-row"><span>Amostras</span><span>{{ b.count }}</span></div>
+        <div class="cal-row"><span>BCS previsto</span><strong class="js-cal-out">{{ '%0.2f'|format(b.suggested_ecc or 0) }}</strong></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="icon">📉</div>
+    Não há registros com raw_score para esta seleção.
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ECC_CAL_APPLY_URL = {{ url_for('api_ecc_calibragem_apply') | tojson }};
+const ECC_FARM_FILTER = {{ farm_filter | tojson }};
+
+function calcBCS(raw, rawMin, rawMax) {
+  const x = Number(raw);
+  const mn = Number(rawMin);
+  const mx = Number(rawMax);
+  if (!Number.isFinite(x) || !Number.isFinite(mn) || !Number.isFinite(mx) || mx <= mn) return null;
+  const t = Math.max(0, Math.min(1, (x - mn) / (mx - mn)));
+  const y = 1 + (4 * t);
+  return Math.round(y * 4) / 4;
+}
+
+function refreshPreview() {
+  const rawMin = Number(document.getElementById('ecc-cal-raw-min')?.value);
+  const rawMax = Number(document.getElementById('ecc-cal-raw-max')?.value);
+  document.querySelectorAll('.cal-card').forEach((card) => {
+    const raw = Number(card.dataset.raw);
+    const out = card.querySelector('.js-cal-out');
+    const val = calcBCS(raw, rawMin, rawMax);
+    if (out) out.textContent = Number.isFinite(val) ? val.toFixed(2) : '—';
+  });
+}
+
+async function applyCalibration() {
+  const rawMin = Number(document.getElementById('ecc-cal-raw-min')?.value);
+  const rawMax = Number(document.getElementById('ecc-cal-raw-max')?.value);
+  if (!Number.isFinite(rawMin) || !Number.isFinite(rawMax) || rawMax <= rawMin) {
+    toast('Parâmetros inválidos: raw_max deve ser maior que raw_min.', false);
+    return;
+  }
+  if (!confirm('Aplicar esta calibração e corrigir os escores BCS já gravados?')) return;
+  const btn = document.getElementById('ecc-cal-apply');
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch(ECC_CAL_APPLY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ raw_min: rawMin, raw_max: rawMax, farm_id: ECC_FARM_FILTER || '' }),
+    });
+    const payload = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      toast(payload.error || ('HTTP ' + resp.status), false);
+      return;
+    }
+    toast(`Calibração aplicada. ${payload.updated} registro(s) corrigidos.`);
+    setTimeout(() => window.location.reload(), 700);
+  } catch (err) {
+    toast('Falha de rede ao aplicar calibração.', false);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+document.getElementById('ecc-cal-raw-min')?.addEventListener('input', refreshPreview);
+document.getElementById('ecc-cal-raw-max')?.addEventListener('input', refreshPreview);
+document.getElementById('ecc-cal-apply')?.addEventListener('click', applyCalibration);
+refreshPreview();
+</script>
+{% endblock %}

@@ -414,17 +414,27 @@ select { cursor: pointer; }
   </div>
 
   <div class="sidebar-nav" id="sidebarNav">
+    {% if is_admin_user %}
     <div class="nav-section">Principal</div>
     <a href="{{ url_for('index') }}"    class="nav-link {% if request.endpoint == 'index' %}active{% endif %}">
       <span class="icon">⬡</span> Dashboard
     </a>
+    {% endif %}
+    {% if can_access_env('weather') or can_access_env('calves') %}
+    <div class="nav-section">Attentus</div>
+    {% endif %}
+    {% if can_access_env('weather') %}
     <a href="{{ url_for('weather') }}"  class="nav-link {% if request.endpoint == 'weather' %}active{% endif %}">
       <span class="icon">🌡</span> Weather
     </a>
+    {% endif %}
+    {% if can_access_env('calves') %}
     <a href="{{ url_for('calf_monitor') }}"  class="nav-link {% if request.endpoint in ['calf_monitor', 'cameras'] %}active{% endif %}">
       <span class="icon">🐄</span> Calf Monitor
     </a>
+    {% endif %}
 
+    {% if can_access_env('perspicuus') %}
     <div class="nav-section">Perspicuus</div>
     <a href="{{ url_for('perspicuus') }}"  class="nav-link {% if request.endpoint in ['perspicuus', 'perspicuus_animais', 'perspicuus_inferencias', 'perspicuus_modelos', 'perspicuus_analise_rebanho'] %}active{% endif %}">
       <span class="icon">🧠</span> Perspicuus
@@ -441,12 +451,17 @@ select { cursor: pointer; }
     <a href="{{ url_for('perspicuus_modelos') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_modelos' %}active{% endif %}">
       <span class="icon">•</span> Modelos
     </a>
+    {% endif %}
 
+    {% if can_access_env('bcs') %}
     <a href="{{ url_for('ecc_importar') }}" class="nav-link {% if request.endpoint in ['ecc_importar', 'ecc_analise_rebanho', 'ecc_analise_individual', 'ecc_pontos_atencao', 'ecc_analise'] %}active{% endif %}">
       <span class="icon">📈</span> ECC
     </a>
     <a href="{{ url_for('ecc_importar') }}" class="nav-link nav-sub {% if request.endpoint in ['ecc_importar', 'ecc_analise'] %}active{% endif %}">
       <span class="icon">•</span> importar
+    </a>
+    <a href="{{ url_for('ecc_calibragem') }}" class="nav-link nav-sub {% if request.endpoint == 'ecc_calibragem' %}active{% endif %}">
+      <span class="icon">•</span> calibragem BCS
     </a>
     <a href="{{ url_for('ecc_analise_rebanho') }}" class="nav-link nav-sub {% if request.endpoint == 'ecc_analise_rebanho' %}active{% endif %}">
       <span class="icon">•</span> análise rebanho
@@ -457,33 +472,64 @@ select { cursor: pointer; }
     <a href="{{ url_for('ecc_pontos_atencao') }}" class="nav-link nav-sub {% if request.endpoint == 'ecc_pontos_atencao' %}active{% endif %}">
       <span class="icon">•</span> pontos de atenção
     </a>
+    {% endif %}
 
+    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') or can_access_env('bcs') %}
     <div class="nav-section">Dados</div>
+    {% endif %}
+    {% if can_access_env('weather') %}
     <a href="{{ url_for('database') }}"         class="nav-link {% if request.endpoint == 'database' and request.args.get('tab','weather')=='weather' %}active{% endif %}">
       <span class="icon">☁</span> Weather DB
     </a>
+    {% endif %}
+    {% if can_access_env('calves') %}
     <a href="{{ url_for('database', tab='images') }}" class="nav-link {% if request.endpoint == 'database' and request.args.get('tab')=='images' %}active{% endif %}">
       <span class="icon">🗂</span> Imagens DB
     </a>
+    {% endif %}
+    {% if can_access_env('perspicuus') %}
     <a href="{{ url_for('database', tab='perspicuus') }}" class="nav-link {% if request.endpoint == 'database' and request.args.get('tab')=='perspicuus' %}active{% endif %}">
       <span class="icon">◆</span> Perspicuus DB
     </a>
+    {% endif %}
+    {% if can_access_env('bcs') %}
+    <a href="{{ url_for('database', tab='ecc') }}" class="nav-link {% if request.endpoint == 'database' and request.args.get('tab')=='ecc' %}active{% endif %}">
+      <span class="icon">◈</span> BCS DB
+    </a>
+    {% endif %}
 
+    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') %}
     <div class="nav-section">Export</div>
+    {% endif %}
+    {% if can_access_env('weather') %}
     <a href="{{ url_for('download_weather') }}" class="nav-link">
       <span class="icon">↓</span> CSV Weather
     </a>
+    {% endif %}
+    {% if can_access_env('calves') %}
     <a href="{{ url_for('download_images') }}" class="nav-link">
       <span class="icon">↓</span> ZIP Imagens
     </a>
+    {% endif %}
+    {% if can_access_env('perspicuus') %}
+    <a href="{{ url_for('download_perspicuus') }}" class="nav-link">
+      <span class="icon">↓</span> ZIP Perspicuus
+    </a>
+    {% endif %}
 
+    {% if can_access_env('weather') or can_access_env('perspicuus') %}
     <div class="nav-section">API</div>
+    {% endif %}
+    {% if can_access_env('weather') %}
     <a href="/api/weather/data" target="_blank" class="nav-link">
       <span class="icon">⟨⟩</span> /api/weather
     </a>
+    {% endif %}
+    {% if can_access_env('perspicuus') %}
     <a href="/api/perspicuus/events" target="_blank" class="nav-link">
       <span class="icon">⟨⟩</span> /api/perspicuus
     </a>
+    {% endif %}
   </div>
 
   <div class="sidebar-footer">
@@ -491,7 +537,7 @@ select { cursor: pointer; }
       <div class="user-avatar">{{ session.username[0]|upper }}</div>
       <div>
         <div class="user-name">{{ session.username }}</div>
-        <div class="user-role">admin</div>
+        <div class="user-role">{{ current_user_role }}</div>
       </div>
       <a href="{{ url_for('logout') }}" class="logout-btn" title="Sair">⏻</a>
     </div>
