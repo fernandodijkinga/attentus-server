@@ -119,6 +119,9 @@ PERSPICUUS_MODEL_ROLE_EXT = {
     'posterior': {'.onnx'},
     'lateral_meta': {'.json'},
     'posterior_meta': {'.json'},
+    'angus_yolo': {'.onnx'},
+    'angus_lateral': {'.onnx'},
+    'angus_lateral_meta': {'.json'},
 }
 log.info(f"DATA_DIR={DATA_DIR}")
 
@@ -1889,7 +1892,14 @@ def perspicuus_modelos():
         get_engine,
     )
 
-    roles = list(ROLE_TO_ENV.keys())
+    roles = ['yolo', 'lateral', 'posterior', 'lateral_meta', 'posterior_meta']
+    role_labels = {
+        'yolo': 'YOLO (deteção / crop)',
+        'lateral': 'iudicium — vista lateral',
+        'posterior': 'iudicium — vista posterior',
+        'lateral_meta': 'Metadata JSON — lateral',
+        'posterior_meta': 'Metadata JSON — posterior',
+    }
     if request.method == 'POST':
         action = request.form.get('action', 'upload')
         if action == 'clear':
@@ -1979,6 +1989,7 @@ def perspicuus_modelos():
         ml_models_dir=ML_MODELS_DIR,
         inference_engine_ready=get_engine().is_ready(),
         role_ext=PERSPICUUS_MODEL_ROLE_EXT,
+        role_labels=role_labels,
     )
 
 
@@ -2009,7 +2020,9 @@ def _angus_save_one(db, now_iso: str, farm_id: str, inference_date: str, animal_
     dest = os.path.join(folder, local_name)
     fs.save(dest)
 
-    eng = get_engine()
+    eng = get_engine('angus')
+    if not eng.is_ready():
+        return False, 'Modelos Angus não configurados (ANGUS_YOLO_ONNX + ANGUS_LATERAL_ONNX).'
     img = cv2.imread(dest)
     if img is None:
         return False, 'Falha ao abrir imagem lateral.'
@@ -2292,7 +2305,12 @@ def perspicuus_angus_modelos():
         ROLE_TO_ENV,
         get_engine,
     )
-    roles = ['yolo', 'lateral', 'lateral_meta']
+    roles = ['angus_yolo', 'angus_lateral', 'angus_lateral_meta']
+    role_labels = {
+        'angus_yolo': 'YOLO Angus (deteção / crop)',
+        'angus_lateral': 'iudicium Angus — lateral',
+        'angus_lateral_meta': 'Metadata Angus — lateral',
+    }
     if request.method == 'POST':
         action = request.form.get('action', 'upload')
         role = request.form.get('role', '').strip()
@@ -2343,8 +2361,9 @@ def perspicuus_angus_modelos():
         slots=slots,
         max_mb=MAX_MODEL_UPLOAD_BYTES // (1024 * 1024),
         ml_models_dir=ML_MODELS_DIR,
-        inference_engine_ready=get_engine().is_ready(),
+        inference_engine_ready=get_engine('angus').is_ready(),
         role_ext=PERSPICUUS_MODEL_ROLE_EXT,
+        role_labels=role_labels,
     )
 
 

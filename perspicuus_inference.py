@@ -60,6 +60,9 @@ ROLE_TO_ENV: Dict[str, str] = {
     "posterior": "PERSPICUUS_POSTERIOR_ONNX",
     "lateral_meta": "PERSPICUUS_LATERAL_METADATA_JSON",
     "posterior_meta": "PERSPICUUS_POSTERIOR_METADATA_JSON",
+    "angus_yolo": "ANGUS_YOLO_ONNX",
+    "angus_lateral": "ANGUS_LATERAL_ONNX",
+    "angus_lateral_meta": "ANGUS_LATERAL_METADATA_JSON",
 }
 REGISTRY_FILENAME = "registry.json"
 
@@ -320,26 +323,32 @@ class PerspicuusInferenceEngine:
 
     VIEWS = ("lateral", "posterior")
 
-    def __init__(self):
+    def __init__(self, *, role_prefix: str = "", views: Optional[Tuple[str, ...]] = None):
+        self._role_prefix = (role_prefix or "").strip().lower()
+        self.VIEWS = tuple(views or ("lateral", "posterior"))
         self._yolo_sess = None
         self._yolo_in_name = "images"
         self._yolo_fp16 = False
         self._heads: Dict[str, _HeadState] = {v: _HeadState() for v in self.VIEWS}
 
+    def _role_name(self, base_role: str) -> str:
+        if self._role_prefix:
+            return f"{self._role_prefix}_{base_role}"
+        return base_role
+
     def is_ready(self) -> bool:
-        yolo = resolve_model_path("yolo")
-        lat = resolve_model_path("lateral")
-        post = resolve_model_path("posterior")
-        return bool(yolo and ((lat) or (post)))
+        yolo = resolve_model_path(self._role_name("yolo"))
+        any_head = any(resolve_model_path(self._role_name(v)) for v in self.VIEWS)
+        return bool(yolo and any_head)
 
     def onnx_path_for(self, view: str) -> Optional[str]:
-        role = "lateral" if view == "lateral" else "posterior"
+        role = self._role_name("lateral" if view == "lateral" else "posterior")
         return resolve_model_path(role)
 
     def _load_yolo(self) -> None:
         if self._yolo_sess is not None:
             return
-        path = resolve_model_path("yolo")
+        path = resolve_model_path(self._role_name("yolo"))
         if not path:
             raise FileNotFoundError("YOLO ONNX não encontrado (env ou upload em ml_models)")
         self._yolo_sess = ort.InferenceSession(path, providers=_providers())
@@ -354,8 +363,8 @@ class PerspicuusInferenceEngine:
         st = self._heads[view]
         if st.sess is not None:
             return st
-        role_onnx = "lateral" if view == "lateral" else "posterior"
-        role_meta = "lateral_meta" if view == "lateral" else "posterior_meta"
+        role_onnx = self._role_name("lateral" if view == "lateral" else "posterior")
+        role_meta = self._role_name("lateral_meta" if view == "lateral" else "posterior_meta")
         onnx_path = resolve_model_path(role_onnx)
         if not onnx_path:
             raise FileNotFoundError(
@@ -462,20 +471,28 @@ class PerspicuusInferenceEngine:
         }
 
 
-_ENGINE: Optional[PerspicuusInferenceEngine] = None
+_ENGINES: Dict[str, PerspicuusInferenceEngine] = {}
 
 
-def get_engine() -> PerspicuusInferenceEngine:
-    global _ENGINE
-    if _ENGINE is None:
-        _ENGINE = PerspicuusInferenceEngine()
-    return _ENGINE
+def get_engine(kind: str = "default") -> PerspicuusInferenceEngine:
+    k = (kind or "default").strip().lower()
+    eng = _ENGINES.get(k)
+    if eng is not None:
+        return eng
+    if k == "angus":
+        eng = PerspicuusInferenceEngine(role_prefix="angus", views=("lateral",))
+    else:
+        eng = PerspicuusInferenceEngine()
+    _ENGINES[k] = eng
+    return eng
 
 
-def reset_engine() -> None:
+def reset_engine(kind: Optional[str] = None) -> None:
     """Após alterar modelos no disco/registry, força recarregar sessões ONNX."""
-    global _ENGINE
-    _ENGINE = None
+    if kind:
+        _ENGINES.pop((kind or "").strip().lower(), None)
+    else:
+        _ENGINES.clear()
 
 
 def traits_mean_from_frames(rows: List[Dict[str, Any]]) -> Dict[str, float]:

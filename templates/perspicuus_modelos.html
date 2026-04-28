@@ -38,7 +38,7 @@
 </style>
 {% endblock %}
 
-{% set role_labels = {
+{% set role_labels_map = role_labels if role_labels is defined else {
   'yolo': 'YOLO (deteção / crop)',
   'lateral': 'iudicium — vista lateral',
   'posterior': 'iudicium — vista posterior',
@@ -98,7 +98,7 @@
   {% for s in slots %}
   <div class="role-card">
     <div>
-      <div class="role-title">{{ role_labels.get(s.role, s.role) }}</div>
+      <div class="role-title">{{ role_labels_map.get(s.role, s.role) }}</div>
       <div class="role-meta">
         <strong>Variável:</strong> {{ s.env_var }}<br>
         <strong>Ficheiro activo:</strong> {{ s.path or '—' }}<br>
