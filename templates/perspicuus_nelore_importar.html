@@ -5,6 +5,14 @@
 .grid-2a{display:grid;grid-template-columns:1fr 1fr;gap:16px}.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 @media (max-width:980px){.grid-2a,.row2{grid-template-columns:1fr}}
 .thumb{width:68px;height:52px;object-fit:cover;border:1px solid var(--border);border-radius:6px;cursor:zoom-in}
+.batch-progress-wrap{margin-top:12px;display:none}
+.batch-progress-wrap.visible{display:block}
+.batch-progress-track{height:10px;border-radius:999px;background:var(--surf2);border:1px solid var(--border);overflow:hidden}
+.batch-progress-bar{height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--accent));transition:width .2s ease}
+.batch-progress-meta{font-family:var(--mono);font-size:11px;color:var(--text2);margin-top:6px}
+.batch-log{max-height:140px;overflow-y:auto;margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-family:var(--mono);font-size:10px;line-height:1.45}
+.batch-log .ok{color:var(--accent)}
+.batch-log .err{color:var(--err)}
 </style>
 {% endblock %}
 {% block content %}
@@ -48,23 +56,28 @@
   </div>
   <div class="card">
     <div class="card-title">Upload lote (lateral)</div>
-    <form method="post" enctype="multipart/form-data">
-      <input type="hidden" name="mode" value="batch">
+    <p class="page-sub" style="margin:0 0 10px;font-size:12px">Cada ficheiro é enviado e inferido <strong>um de cada vez</strong>; o brinco vem do nome do ficheiro (ex.: <span class="mono">982000123456789.jpg</span>).</p>
+    <form id="form-nelore-batch" method="post" enctype="multipart/form-data">
       <div class="row2">
-        <div class="field"><label>Fazenda</label><input name="farm_id_batch" required></div>
-        <div class="field"><label>Lote</label><input name="lot_id_batch" placeholder="opcional"></div>
+        <div class="field"><label>Fazenda</label><input name="farm_id_batch" id="nelore_batch_farm" required></div>
+        <div class="field"><label>Lote</label><input name="lot_id_batch" id="nelore_batch_lot" placeholder="opcional"></div>
       </div>
       <div class="row2">
-        <div class="field"><label>Data</label><input type="date" name="inference_date_batch" required></div>
-        <div class="field"><label>Nascimento (aplica ao lote)</label><input type="date" name="birth_date_batch"></div>
+        <div class="field"><label>Data</label><input type="date" name="inference_date_batch" id="nelore_batch_date" value="{{ today_iso }}" required></div>
+        <div class="field"><label>Nascimento (aplica ao lote)</label><input type="date" name="birth_date_batch" id="nelore_batch_birth"></div>
       </div>
       <div class="row2">
-        <div class="field"><label>Sexo (aplica ao lote)</label><select name="sex_batch"><option value="">não informado</option><option value="f">fêmea (f)</option><option value="m">macho (m)</option></select></div>
+        <div class="field"><label>Sexo (aplica ao lote)</label><select name="sex_batch" id="nelore_batch_sex"><option value="">não informado</option><option value="f">fêmea (f)</option><option value="m">macho (m)</option></select></div>
         <div class="field"></div>
       </div>
-      <div class="field"><label>Arquivos (nome = brinco)</label><input type="file" name="images_batch" multiple accept=".jpg,.jpeg,.png,.webp" required></div>
-      <button class="btn btn-accent btn-sm" type="submit">Processar lote</button>
+      <div class="field"><label>Arquivos (nome = brinco)</label><input type="file" name="images_batch" id="nelore_batch_files" multiple accept=".jpg,.jpeg,.png,.webp" required></div>
+      <button class="btn btn-accent btn-sm" type="submit" id="btn-nelore-batch">Processar lote</button>
     </form>
+    <div id="nelore-batch-progress" class="batch-progress-wrap" aria-live="polite">
+      <div class="batch-progress-track"><div id="nelore-batch-progress-bar" class="batch-progress-bar"></div></div>
+      <div id="nelore-batch-progress-meta" class="batch-progress-meta"></div>
+      <div id="nelore-batch-log" class="batch-log"></div>
+    </div>
   </div>
 </div>
 
@@ -91,4 +104,87 @@
     </table>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const form = document.getElementById('form-nelore-batch');
+  const fileInput = document.getElementById('nelore_batch_files');
+  const btn = document.getElementById('btn-nelore-batch');
+  const wrap = document.getElementById('nelore-batch-progress');
+  const bar = document.getElementById('nelore-batch-progress-bar');
+  const meta = document.getElementById('nelore-batch-progress-meta');
+  const logEl = document.getElementById('nelore-batch-log');
+  const apiUrl = {{ url_for('api_perspicuus_nelore_importar_lote_item') | tojson }};
+  if (!form || !fileInput) return;
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const files = fileInput.files;
+    if (!files || !files.length) {
+      toast('Selecione pelo menos uma imagem.', false);
+      return;
+    }
+    const farm = (document.getElementById('nelore_batch_farm') || {}).value.trim();
+    const lot = (document.getElementById('nelore_batch_lot') || {}).value.trim();
+    const date = (document.getElementById('nelore_batch_date') || {}).value.trim();
+    const birth = (document.getElementById('nelore_batch_birth') || {}).value.trim();
+    const sex = (document.getElementById('nelore_batch_sex') || {}).value.trim();
+    if (!farm || !date) {
+      toast('Informe fazenda e data do lote.', false);
+      return;
+    }
+    btn.disabled = true;
+    wrap.classList.add('visible');
+    bar.style.width = '0%';
+    logEl.innerHTML = '';
+    let nOk = 0;
+    let nErr = 0;
+    const total = files.length;
+    for (let i = 0; i < total; i++) {
+      const f = files[i];
+      meta.textContent = 'A processar ' + (i + 1) + ' / ' + total + ' — ' + (f.name || 'ficheiro');
+      const fd = new FormData();
+      fd.append('farm_id', farm);
+      fd.append('lot_id', lot);
+      fd.append('inference_date', date);
+      if (birth) fd.append('birth_date', birth);
+      if (sex) fd.append('sex', sex);
+      fd.append('image', f, f.name);
+      try {
+        const r = await fetch(apiUrl, { method: 'POST', body: fd, credentials: 'same-origin' });
+        let j = {};
+        try { j = await r.json(); } catch (err) {}
+        const tag = j.animal_tag || '';
+        if (r.ok && j.ok) {
+          nOk += 1;
+          const line = document.createElement('div');
+          line.className = 'ok';
+          line.textContent = '✓ ' + (j.filename || f.name) + (tag ? ' · ' + tag : '');
+          logEl.appendChild(line);
+        } else {
+          nErr += 1;
+          const line = document.createElement('div');
+          line.className = 'err';
+          line.textContent = '✗ ' + (f.name) + ' — ' + (j.error || ('HTTP ' + r.status));
+          logEl.appendChild(line);
+        }
+      } catch (err) {
+        nErr += 1;
+        const line = document.createElement('div');
+        line.className = 'err';
+        line.textContent = '✗ ' + (f.name) + ' — rede: ' + (err && err.message ? err.message : String(err));
+        logEl.appendChild(line);
+      }
+      bar.style.width = (((i + 1) / total) * 100).toFixed(1) + '%';
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    meta.textContent = 'Concluído: ' + nOk + ' ok · ' + nErr + ' erro(s) · ' + total + ' ficheiro(s)';
+    btn.disabled = false;
+    toast('Lote Nelore: ' + nOk + ' guardado(s), ' + nErr + ' erro(s).', nErr === 0);
+    if (nOk) window.location.reload();
+  });
+})();
+</script>
 {% endblock %}

@@ -31,7 +31,6 @@ import random
 import sqlite3
 import json
 import threading
-import time
 import zipfile
 import io
 import csv
@@ -160,14 +159,6 @@ os.makedirs(ANGUS_UPLOADS_DIR, exist_ok=True)
 NELORE_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
 NELORE_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'perspicuus_nelore')
 os.makedirs(NELORE_UPLOADS_DIR, exist_ok=True)
-
-# Limites de upload em batch (Perspicuus) — protegem o worker do gunicorn de
-# WORKER TIMEOUT quando o usuário envia muitas fotos numa única requisição.
-PERSPICUUS_BATCH_MAX = max(1, int(os.environ.get('PERSPICUUS_BATCH_MAX', '20')))
-# Deadline em segundos (~85% do --timeout do gunicorn). Override via env.
-PERSPICUUS_BATCH_DEADLINE_S = max(
-    10.0, float(os.environ.get('PERSPICUUS_BATCH_DEADLINE_S', '150.0'))
-)
 
 PERSPICUUS_BREED_TABLE = {
     'angus': 'perspicuus_angus_records',
@@ -3312,46 +3303,6 @@ def perspicuus_angus_importar():
             else:
                 db.rollback(); flash(msg, 'error')
             return redirect(url_for('perspicuus_angus_importar'))
-        if mode == 'batch':
-            farm_id = str(request.form.get('farm_id_batch', '')).strip()
-            date_iso = ecc_parse_iso_day(request.form.get('inference_date_batch', ''))
-            birth_date = str(request.form.get('birth_date_batch', '')).strip()
-            sex = str(request.form.get('sex_batch', '')).strip().lower()
-            files = request.files.getlist('images_batch')
-            if not farm_id or not date_iso or not files:
-                flash('Lote: informe fazenda, data e ficheiros.', 'error')
-                return redirect(url_for('perspicuus_angus_importar'))
-            files_total = len(files)
-            files = files[:PERSPICUUS_BATCH_MAX]
-            n_ok, n_err = 0, 0
-            n_skipped = max(0, files_total - len(files))
-            errs = []
-            deadline_at = time.monotonic() + PERSPICUUS_BATCH_DEADLINE_S
-            for fs in files:
-                if time.monotonic() >= deadline_at:
-                    n_skipped += 1
-                    continue
-                if not fs or not fs.filename:
-                    continue
-                animal_tag = os.path.splitext(os.path.basename(fs.filename))[0].strip()
-                if not animal_tag:
-                    n_err += 1; errs.append(f'Brinco ausente no nome: {fs.filename}'); continue
-                ok, msg = _angus_save_one(db, now_iso, farm_id, date_iso, animal_tag, fs, birth_date=birth_date, sex=sex)
-                if ok:
-                    n_ok += 1; db.commit()
-                else:
-                    n_err += 1; errs.append(f'{fs.filename}: {msg}'); db.rollback()
-            if n_ok:
-                flash(f'Lote Angus: {n_ok} imagem(ns) processada(s).', 'success')
-            if n_err:
-                flash(f'Lote com {n_err} erro(s): ' + '; '.join(errs[:3]), 'error')
-            if n_skipped:
-                flash(
-                    f'{n_skipped} foto(s) não processada(s) neste lote — reenvie em '
-                    f'pacotes de até {PERSPICUUS_BATCH_MAX} imagens.',
-                    'error',
-                )
-            return redirect(url_for('perspicuus_angus_importar'))
         flash('Modo inválido.', 'error')
         return redirect(url_for('perspicuus_angus_importar'))
 
@@ -3943,47 +3894,6 @@ def perspicuus_nelore_importar():
             else:
                 db.rollback(); flash(msg, 'error')
             return redirect(url_for('perspicuus_nelore_importar'))
-        if mode == 'batch':
-            farm_id = str(request.form.get('farm_id_batch', '')).strip()
-            lot_id = str(request.form.get('lot_id_batch', '')).strip()
-            date_iso = ecc_parse_iso_day(request.form.get('inference_date_batch', ''))
-            birth_date = str(request.form.get('birth_date_batch', '')).strip()
-            sex = str(request.form.get('sex_batch', '')).strip().lower()
-            files = request.files.getlist('images_batch')
-            if not farm_id or not date_iso or not files:
-                flash('Lote: informe fazenda, lote, data e ficheiros.', 'error')
-                return redirect(url_for('perspicuus_nelore_importar'))
-            files_total = len(files)
-            files = files[:PERSPICUUS_BATCH_MAX]
-            n_ok, n_err = 0, 0
-            n_skipped = max(0, files_total - len(files))
-            errs = []
-            deadline_at = time.monotonic() + PERSPICUUS_BATCH_DEADLINE_S
-            for fs in files:
-                if time.monotonic() >= deadline_at:
-                    n_skipped += 1
-                    continue
-                if not fs or not fs.filename:
-                    continue
-                animal_tag = os.path.splitext(os.path.basename(fs.filename))[0].strip()
-                if not animal_tag:
-                    n_err += 1; errs.append(f'Brinco ausente no nome: {fs.filename}'); continue
-                ok, msg = _nelore_save_one(db, now_iso, farm_id, lot_id, date_iso, animal_tag, fs, birth_date=birth_date, sex=sex)
-                if ok:
-                    n_ok += 1; db.commit()
-                else:
-                    n_err += 1; errs.append(f'{fs.filename}: {msg}'); db.rollback()
-            if n_ok:
-                flash(f'Lote Nelore: {n_ok} imagem(ns) processada(s).', 'success')
-            if n_err:
-                flash(f'Lote com {n_err} erro(s): ' + '; '.join(errs[:3]), 'error')
-            if n_skipped:
-                flash(
-                    f'{n_skipped} foto(s) não processada(s) neste lote — reenvie em '
-                    f'pacotes de até {PERSPICUUS_BATCH_MAX} imagens.',
-                    'error',
-                )
-            return redirect(url_for('perspicuus_nelore_importar'))
         flash('Modo inválido.', 'error')
         return redirect(url_for('perspicuus_nelore_importar'))
 
@@ -4006,6 +3916,77 @@ def perspicuus_nelore_importar():
         stats=stats,
         today_iso=datetime.now(TZ_BR).date().isoformat(),
     )
+
+
+@app.route('/api/perspicuus-angus/importar-lote-item', methods=['POST'])
+@login_required
+def api_perspicuus_angus_importar_lote_item():
+    """Uma imagem por pedido — o cliente envia o lote em sequência (evita timeout do worker)."""
+    db = get_db()
+    now_iso = datetime.utcnow().isoformat() + 'Z'
+    farm_id = str(request.form.get('farm_id', '')).strip()
+    date_iso = ecc_parse_iso_day(request.form.get('inference_date', ''))
+    birth_date = str(request.form.get('birth_date', '')).strip()
+    sex = str(request.form.get('sex', '')).strip().lower()
+    fs = request.files.get('image')
+    animal_tag = str(request.form.get('animal_tag', '')).strip()
+    if fs and fs.filename and not animal_tag:
+        animal_tag = os.path.splitext(os.path.basename(fs.filename))[0].strip()
+    if not farm_id or not date_iso:
+        return jsonify({'ok': False, 'error': 'Informe fazenda e data.', 'animal_tag': animal_tag}), 400
+    if not fs or not fs.filename:
+        return jsonify({'ok': False, 'error': 'Imagem em falta.', 'animal_tag': animal_tag}), 400
+    if not animal_tag:
+        return jsonify(
+            {
+                'ok': False,
+                'error': 'Brinco ausente: use o nome do ficheiro (ex.: A123.jpg) ou o campo animal_tag.',
+                'animal_tag': '',
+            }
+        ), 400
+    ok, msg = _angus_save_one(db, now_iso, farm_id, date_iso, animal_tag, fs, birth_date=birth_date, sex=sex)
+    if ok:
+        db.commit()
+        return jsonify({'ok': True, 'error': None, 'animal_tag': animal_tag, 'filename': fs.filename})
+    db.rollback()
+    return jsonify({'ok': False, 'error': msg, 'animal_tag': animal_tag, 'filename': fs.filename}), 400
+
+
+@app.route('/api/perspicuus-nelore/importar-lote-item', methods=['POST'])
+@login_required
+def api_perspicuus_nelore_importar_lote_item():
+    """Uma imagem por pedido — o cliente envia o lote em sequência (evita timeout do worker)."""
+    db = get_db()
+    now_iso = datetime.utcnow().isoformat() + 'Z'
+    farm_id = str(request.form.get('farm_id', '')).strip()
+    lot_id = str(request.form.get('lot_id', '')).strip()
+    date_iso = ecc_parse_iso_day(request.form.get('inference_date', ''))
+    birth_date = str(request.form.get('birth_date', '')).strip()
+    sex = str(request.form.get('sex', '')).strip().lower()
+    fs = request.files.get('image')
+    animal_tag = str(request.form.get('animal_tag', '')).strip()
+    if fs and fs.filename and not animal_tag:
+        animal_tag = os.path.splitext(os.path.basename(fs.filename))[0].strip()
+    if not farm_id or not date_iso:
+        return jsonify({'ok': False, 'error': 'Informe fazenda e data.', 'animal_tag': animal_tag}), 400
+    if not fs or not fs.filename:
+        return jsonify({'ok': False, 'error': 'Imagem em falta.', 'animal_tag': animal_tag}), 400
+    if not animal_tag:
+        return jsonify(
+            {
+                'ok': False,
+                'error': 'Brinco ausente: use o nome do ficheiro (ex.: A123.jpg) ou o campo animal_tag.',
+                'animal_tag': '',
+            }
+        ), 400
+    ok, msg = _nelore_save_one(
+        db, now_iso, farm_id, lot_id, date_iso, animal_tag, fs, birth_date=birth_date, sex=sex
+    )
+    if ok:
+        db.commit()
+        return jsonify({'ok': True, 'error': None, 'animal_tag': animal_tag, 'filename': fs.filename})
+    db.rollback()
+    return jsonify({'ok': False, 'error': msg, 'animal_tag': animal_tag, 'filename': fs.filename}), 400
 
 
 @app.route('/perspicuus-nelore/analise-individual')
