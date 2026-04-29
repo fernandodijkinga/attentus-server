@@ -275,5 +275,5 @@ Os dados serão salvos em `./data/` (criado automaticamente).
 # ATUALIZAR GITHUB
 # cd /Users/fernandojeandijkinga/codigos/Render-Attentus/attentus-server
 # git add -A
-# git commit -m "Controle de dataset para nelore e angus"
+# git commit -m "Atualizacao de html para individuos e rebanhos"
 # git push origin main

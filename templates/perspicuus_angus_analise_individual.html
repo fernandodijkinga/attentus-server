@@ -3,10 +3,13 @@
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
-.animal-card-grid{display:grid;grid-template-columns:340px 1fr;gap:16px}
+.animal-card-grid{display:grid;grid-template-columns:360px 1fr;gap:16px}
 .animal-cover{width:100%;height:220px;object-fit:cover;border:1px solid var(--border);border-radius:10px;background:var(--surf2)}
 .traits-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin-top:8px}
 .trait-pill{font-family:var(--mono);font-size:11px;color:var(--text2);background:var(--surf2);border:1px solid var(--border);border-radius:6px;padding:4px 6px}
+.animal-plot-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.animal-plot-panel{min-height:260px}
+@media (max-width:1200px){.animal-plot-grid{grid-template-columns:1fr}}
 @media (max-width:980px){.animal-card-grid{grid-template-columns:1fr}}
 </style>
 {% endblock %}
@@ -29,8 +32,8 @@
 <div class="animal-card-grid mb-16">
   <div class="card">
     <div class="card-title">Card do animal</div>
-    {% if featured and featured.image_path %}
-    <img src="{{ featured.image_path }}" class="animal-cover" onclick="window.open('{{ featured.image_path }}')">
+    {% if featured and (featured.thumb_path or featured.image_path) %}
+    <img src="{{ featured.thumb_path or featured.image_path }}" class="animal-cover" onclick="window.open('{{ featured.bbox_path or featured.image_path }}')">
     {% else %}
     <div class="empty-state" style="padding:24px 12px">Sem imagem para o animal selecionado.</div>
     {% endif %}
@@ -49,13 +52,32 @@
       <div class="trait-pill">{{ tname }} · raw {{ '%.4f'|format(tval) }} · escore {{ '%g'|format(tval|perspicuus_rescaled) if (tval|perspicuus_rescaled) is not none else '—' }}</div>
       {% endfor %}
     </div>
+    <div style="height:220px;margin-top:10px"><canvas id="angus-traits-bars"></canvas></div>
     {% else %}
     <div class="text-muted mono" style="margin-top:6px">Sem traits disponíveis no registro de referência.</div>
     {% endif %}
   </div>
-  <div class="card">
-    <div class="card-title">Curva do animal — {{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
-    <div style="height:320px"><canvas id="angus-ind"></canvas></div>
+  <div class="animal-plot-grid">
+    <div class="card animal-plot-panel">
+      <div class="card-title">Imagem do animal</div>
+      {% if featured and (featured.thumb_path or featured.image_path) %}
+      <img src="{{ featured.thumb_path or featured.image_path }}" class="animal-cover" onclick="window.open('{{ featured.bbox_path or featured.image_path }}')">
+      {% else %}
+      <div class="empty-state" style="padding:24px 12px">Sem imagem para o animal selecionado.</div>
+      {% endif %}
+    </div>
+    <div class="card animal-plot-panel">
+      <div class="card-title">Raw score — {{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
+      <div style="height:260px"><canvas id="angus-raw"></canvas></div>
+    </div>
+    <div class="card animal-plot-panel">
+      <div class="card-title">Escore lote — {{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
+      <div style="height:260px"><canvas id="angus-lot"></canvas></div>
+    </div>
+    <div class="card animal-plot-panel">
+      <div class="card-title">Escore global — {{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
+      <div style="height:260px"><canvas id="angus-global"></canvas></div>
+    </div>
   </div>
 </div>
 <div class="card">
@@ -76,20 +98,34 @@
 {% block scripts %}
 <script>
 const PTS={{ points|tojson }};
-const c=document.getElementById('angus-ind');
-if(c){
-  const rows=(Array.isArray(PTS)?PTS:[]).filter(r=>r&&(r.raw_score!=null||r.score_lot!=null||r.score_global!=null)).sort((a,b)=>String(a.inference_date).localeCompare(String(b.inference_date))||((a.id||0)-(b.id||0)));
-  if(rows.length){
-    new Chart(c.getContext('2d'),{
-      type:'line',
-      data:{labels:rows.map(r=>r.inference_date),datasets:[
-        {label:'Raw score',data:rows.map(r=>r.raw_score!=null?Number(r.raw_score):null),borderColor:'#d9782b',tension:.2,yAxisID:'yRaw'},
-        {label:'Escore lote',data:rows.map(r=>r.score_lot!=null?Number(r.score_lot):null),borderColor:'#0d7a5e',tension:.2,yAxisID:'yScore'},
-        {label:'Escore global',data:rows.map(r=>r.score_global!=null?Number(r.score_global):null),borderColor:'#1a6fd4',backgroundColor:'rgba(26,111,212,.12)',fill:false,tension:.2,yAxisID:'yScore'}
-      ]},
-      options:{responsive:true,maintainAspectRatio:false,scales:{yRaw:{position:'left'},yScore:{position:'right',min:1,max:9,grid:{drawOnChartArea:false}}}}
-    });
-  }
+const FEATURED={{ (featured or {})|tojson }};
+const rows=(Array.isArray(PTS)?PTS:[]).filter(r=>r&&(r.raw_score!=null||r.score_lot!=null||r.score_global!=null)).sort((a,b)=>String(a.inference_date).localeCompare(String(b.inference_date))||((a.id||0)-(b.id||0)));
+const labels=rows.map(r=>r.inference_date);
+function renderLine(canvasId, data, label, color, minY=null, maxY=null){
+  const c=document.getElementById(canvasId); if(!c) return;
+  if(!rows.length) return;
+  const opts={responsive:true,maintainAspectRatio:false,scales:{y:{}}};
+  if(minY!==null) opts.scales.y.min=minY;
+  if(maxY!==null) opts.scales.y.max=maxY;
+  new Chart(c.getContext('2d'),{type:'line',data:{labels,datasets:[{label,data,borderColor:color,backgroundColor:color.replace('1)', '.12)').replace('rgb', 'rgba'),fill:true,tension:.2}]},options:opts});
+}
+renderLine('angus-raw', rows.map(r=>r.raw_score!=null?Number(r.raw_score):null), 'Raw score', 'rgba(217,120,43,1)');
+renderLine('angus-lot', rows.map(r=>r.score_lot!=null?Number(r.score_lot):null), 'Escore lote', 'rgba(13,122,94,1)', 1, 9);
+renderLine('angus-global', rows.map(r=>r.score_global!=null?Number(r.score_global):null), 'Escore global', 'rgba(26,111,212,1)', 1, 9);
+const tb=document.getElementById('angus-traits-bars');
+if(tb && FEATURED && Array.isArray(FEATURED.traits_items) && FEATURED.traits_items.length){
+  const traitLabels = FEATURED.traits_items.map(t=>String(t[0]));
+  const traitScores = FEATURED.traits_items.map(t=>{
+    const v=Number(t[1]);
+    if(!Number.isFinite(v)) return null;
+    const s=(v+4)/8*8+1; // aproximação visual da escala 1-9 para leitura rápida
+    return Math.max(1, Math.min(9, Math.round(s*2)/2));
+  });
+  new Chart(tb.getContext('2d'),{
+    type:'bar',
+    data:{labels:traitLabels,datasets:[{label:'Escore por trait',data:traitScores,backgroundColor:'rgba(26,111,212,.45)',borderColor:'#1a6fd4',borderWidth:1}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,scales:{x:{min:1,max:9}}}
+  });
 }
 </script>
 {% endblock %}

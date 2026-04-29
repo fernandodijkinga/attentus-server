@@ -1532,6 +1532,8 @@ def init_db():
         animal_tag     TEXT    NOT NULL,
         filename       TEXT    NOT NULL,
         image_path     TEXT    NOT NULL,
+        thumb_path     TEXT    DEFAULT '',
+        bbox_path      TEXT    DEFAULT '',
         raw_score      REAL,
         score_lot      REAL,
         score_global   REAL,
@@ -1549,6 +1551,8 @@ def init_db():
         animal_tag     TEXT    NOT NULL,
         filename       TEXT    NOT NULL,
         image_path     TEXT    NOT NULL,
+        thumb_path     TEXT    DEFAULT '',
+        bbox_path      TEXT    DEFAULT '',
         raw_score      REAL,
         score_lot      REAL,
         score_global   REAL,
@@ -1639,6 +1643,10 @@ def init_db():
         if nelore_cols and "score_global" not in nelore_cols:
             db.execute("ALTER TABLE perspicuus_nelore_records ADD COLUMN score_global REAL")
             db.execute("UPDATE perspicuus_nelore_records SET score_global = score_1_9 WHERE score_1_9 IS NOT NULL")
+        if nelore_cols and "thumb_path" not in nelore_cols:
+            db.execute("ALTER TABLE perspicuus_nelore_records ADD COLUMN thumb_path TEXT DEFAULT ''")
+        if nelore_cols and "bbox_path" not in nelore_cols:
+            db.execute("ALTER TABLE perspicuus_nelore_records ADD COLUMN bbox_path TEXT DEFAULT ''")
         db.execute("UPDATE perspicuus_nelore_records SET score_1_9 = score_global WHERE score_global IS NOT NULL")
         db.commit()
     except sqlite3.OperationalError as e:
@@ -1656,6 +1664,10 @@ def init_db():
         if angus_cols and "score_global" not in angus_cols:
             db.execute("ALTER TABLE perspicuus_angus_records ADD COLUMN score_global REAL")
             db.execute("UPDATE perspicuus_angus_records SET score_global = score_1_9 WHERE score_1_9 IS NOT NULL")
+        if angus_cols and "thumb_path" not in angus_cols:
+            db.execute("ALTER TABLE perspicuus_angus_records ADD COLUMN thumb_path TEXT DEFAULT ''")
+        if angus_cols and "bbox_path" not in angus_cols:
+            db.execute("ALTER TABLE perspicuus_angus_records ADD COLUMN bbox_path TEXT DEFAULT ''")
         db.execute("UPDATE perspicuus_angus_records SET score_1_9 = score_global WHERE score_global IS NOT NULL")
         db.commit()
     except sqlite3.OperationalError as e:
@@ -2870,6 +2882,19 @@ def _angus_save_one(
         except (TypeError, ValueError):
             continue
     raw_score = round(sum(vals) / len(vals), 4) if vals else None
+    thumb_web = ''
+    bbox_web = ''
+    bbox = out.get('bbox') if isinstance(out, dict) else None
+    yconf = out.get('yolo_conf') if isinstance(out, dict) else None
+    if bbox:
+        thumb_name = f"thumb_{local_name}"
+        thumb_abs = os.path.join(folder, thumb_name)
+        if save_ecc_crop_thumbnail(dest, bbox, thumb_abs):
+            thumb_web = f"/api/perspicuus-angus/media/{safe_farm}/{safe_day}/{thumb_name}"
+        box_name = f"bbox_{local_name}"
+        box_abs = os.path.join(folder, box_name)
+        if save_ecc_bbox_overlay(dest, bbox, box_abs, yolo_conf=yconf):
+            bbox_web = f"/api/perspicuus-angus/media/{safe_farm}/{safe_day}/{box_name}"
     cal = _perspicuus_get_calibration(db, 'angus')
     cal = _perspicuus_cal_with_auto_bounds(db, 'angus', cal, include_raw=raw_score)
     score_lot, score_global = _perspicuus_score_pair_for_record(
@@ -2880,13 +2905,13 @@ def _angus_save_one(
         """
         INSERT INTO perspicuus_angus_records (
             created_at, farm_id, lot_id, birth_date, sex, inference_date, animal_tag, filename,
-            image_path, raw_score, score_lot, score_global, score_1_9, traits_json, meta_json, error_text
+            image_path, thumb_path, bbox_path, raw_score, score_lot, score_global, score_1_9, traits_json, meta_json, error_text
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )
         """,
         (
             now_iso, farm_id, lot_id, birth_date, sex, inference_date, animal_tag, fs.filename,
-            web_path, raw_score, score_lot, score_global, score_global,
+            web_path, thumb_web, bbox_web, raw_score, score_lot, score_global, score_global,
             json.dumps(traits, ensure_ascii=False),
             json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox')}, ensure_ascii=False),
             err,
@@ -2990,6 +3015,19 @@ def _angus_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
         except (TypeError, ValueError):
             continue
     raw_score = round(sum(vals) / len(vals), 4) if vals else None
+    thumb_web = ''
+    bbox_web = ''
+    bbox = out.get('bbox') if isinstance(out, dict) else None
+    yconf = out.get('yolo_conf') if isinstance(out, dict) else None
+    if bbox:
+        thumb_name = f"thumb_{secure_filename(filename)}"
+        thumb_abs = os.path.join(ANGUS_UPLOADS_DIR, farm_slug, day_slug, thumb_name)
+        if save_ecc_crop_thumbnail(fp, bbox, thumb_abs):
+            thumb_web = f"/api/perspicuus-angus/media/{farm_slug}/{day_slug}/{thumb_name}"
+        box_name = f"bbox_{secure_filename(filename)}"
+        box_abs = os.path.join(ANGUS_UPLOADS_DIR, farm_slug, day_slug, box_name)
+        if save_ecc_bbox_overlay(fp, bbox, box_abs, yolo_conf=yconf):
+            bbox_web = f"/api/perspicuus-angus/media/{farm_slug}/{day_slug}/{box_name}"
     cal = _perspicuus_get_calibration(db, 'angus')
     cal = _perspicuus_cal_with_auto_bounds(db, 'angus', cal, include_raw=raw_score)
     score_lot, score_global = _perspicuus_score_pair_for_record(
@@ -2998,7 +3036,7 @@ def _angus_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
     db.execute(
         """
         UPDATE perspicuus_angus_records
-        SET raw_score = ?, score_lot = ?, score_global = ?, score_1_9 = ?, traits_json = ?, meta_json = ?, error_text = ?
+        SET raw_score = ?, score_lot = ?, score_global = ?, score_1_9 = ?, thumb_path = ?, bbox_path = ?, traits_json = ?, meta_json = ?, error_text = ?
         WHERE id = ?
         """,
         (
@@ -3006,6 +3044,8 @@ def _angus_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
             score_lot,
             score_global,
             score_global,
+            thumb_web,
+            bbox_web,
             json.dumps(traits, ensure_ascii=False),
             json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox')}, ensure_ascii=False),
             err,
@@ -3125,7 +3165,7 @@ def perspicuus_angus_analise_individual():
         points = [dict(x) for x in pr]
         im = db.execute(
             """
-            SELECT id, inference_date, filename, image_path, raw_score,
+            SELECT id, inference_date, filename, image_path, thumb_path, bbox_path, raw_score,
                    COALESCE(score_global, score_1_9) AS score_1_9,
                    score_lot, score_global, traits_json, error_text
             FROM perspicuus_angus_records
@@ -3447,6 +3487,19 @@ def _nelore_save_one(
         except (TypeError, ValueError):
             continue
     raw_score = round(sum(vals) / len(vals), 4) if vals else None
+    thumb_web = ''
+    bbox_web = ''
+    bbox = out.get('bbox') if isinstance(out, dict) else None
+    yconf = out.get('yolo_conf') if isinstance(out, dict) else None
+    if bbox:
+        thumb_name = f"thumb_{local_name}"
+        thumb_abs = os.path.join(folder, thumb_name)
+        if save_ecc_crop_thumbnail(dest, bbox, thumb_abs):
+            thumb_web = f"/api/perspicuus-nelore/media/{safe_farm}/{safe_day}/{thumb_name}"
+        box_name = f"bbox_{local_name}"
+        box_abs = os.path.join(folder, box_name)
+        if save_ecc_bbox_overlay(dest, bbox, box_abs, yolo_conf=yconf):
+            bbox_web = f"/api/perspicuus-nelore/media/{safe_farm}/{safe_day}/{box_name}"
     cal = _perspicuus_get_calibration(db, 'nelore')
     cal = _perspicuus_cal_with_auto_bounds(db, 'nelore', cal, include_raw=raw_score)
     score_lot, score_global = _perspicuus_score_pair_for_record(
@@ -3457,13 +3510,13 @@ def _nelore_save_one(
         """
         INSERT INTO perspicuus_nelore_records (
             created_at, farm_id, lot_id, birth_date, sex, inference_date, animal_tag, filename,
-            image_path, raw_score, score_lot, score_global, score_1_9, traits_json, meta_json, error_text
+            image_path, thumb_path, bbox_path, raw_score, score_lot, score_global, score_1_9, traits_json, meta_json, error_text
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             now_iso, farm_id, lot_id, birth_date, sex, inference_date, animal_tag, fs.filename,
-            web_path, raw_score, score_lot, score_global, score_global,
+            web_path, thumb_web, bbox_web, raw_score, score_lot, score_global, score_global,
             json.dumps(traits, ensure_ascii=False),
             json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox')}, ensure_ascii=False),
             err,
@@ -3579,6 +3632,19 @@ def _nelore_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
         except (TypeError, ValueError):
             continue
     raw_score = round(sum(vals) / len(vals), 4) if vals else None
+    thumb_web = ''
+    bbox_web = ''
+    bbox = out.get('bbox') if isinstance(out, dict) else None
+    yconf = out.get('yolo_conf') if isinstance(out, dict) else None
+    if bbox:
+        thumb_name = f"thumb_{secure_filename(filename)}"
+        thumb_abs = os.path.join(NELORE_UPLOADS_DIR, farm_slug, day_slug, thumb_name)
+        if save_ecc_crop_thumbnail(fp, bbox, thumb_abs):
+            thumb_web = f"/api/perspicuus-nelore/media/{farm_slug}/{day_slug}/{thumb_name}"
+        box_name = f"bbox_{secure_filename(filename)}"
+        box_abs = os.path.join(NELORE_UPLOADS_DIR, farm_slug, day_slug, box_name)
+        if save_ecc_bbox_overlay(fp, bbox, box_abs, yolo_conf=yconf):
+            bbox_web = f"/api/perspicuus-nelore/media/{farm_slug}/{day_slug}/{box_name}"
     cal = _perspicuus_get_calibration(db, 'nelore')
     cal = _perspicuus_cal_with_auto_bounds(db, 'nelore', cal, include_raw=raw_score)
     score_lot, score_global = _perspicuus_score_pair_for_record(
@@ -3587,7 +3653,7 @@ def _nelore_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
     db.execute(
         """
         UPDATE perspicuus_nelore_records
-        SET raw_score = ?, score_lot = ?, score_global = ?, score_1_9 = ?, traits_json = ?, meta_json = ?, error_text = ?
+        SET raw_score = ?, score_lot = ?, score_global = ?, score_1_9 = ?, thumb_path = ?, bbox_path = ?, traits_json = ?, meta_json = ?, error_text = ?
         WHERE id = ?
         """,
         (
@@ -3595,6 +3661,8 @@ def _nelore_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
             score_lot,
             score_global,
             score_global,
+            thumb_web,
+            bbox_web,
             json.dumps(traits, ensure_ascii=False),
             json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox')}, ensure_ascii=False),
             err,
@@ -3720,7 +3788,7 @@ def perspicuus_nelore_analise_individual():
         points = [dict(x) for x in pr]
         im = db.execute(
             """
-            SELECT id, inference_date, lot_id, filename, image_path, raw_score,
+            SELECT id, inference_date, lot_id, filename, image_path, thumb_path, bbox_path, raw_score,
                    COALESCE(score_global, score_1_9) AS score_1_9,
                    score_lot, score_global, traits_json, error_text
             FROM perspicuus_nelore_records

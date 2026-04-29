@@ -59,7 +59,7 @@
         <td class="mono">{{ '%.4f'|format(r.raw_score) if r.raw_score is not none else '—' }}</td>
         <td class="mono">{{ '%g'|format(r.score_lot) if r.score_lot is not none else '—' }}</td>
         <td class="mono">{{ '%g'|format(r.score_global) if r.score_global is not none else (('%g'|format(r.score_1_9)) if r.score_1_9 is not none else '—') }}</td>
-        <td>{% if r.image_path %}<img class="thumb" src="{{ r.image_path }}" onclick="window.open('{{ r.image_path }}')">{% else %}—{% endif %}</td>
+        <td>{% if r.thumb_path or r.image_path %}<img class="thumb" src="{{ r.thumb_path or r.image_path }}" onclick="window.open('{{ r.bbox_path or r.image_path }}')">{% else %}—{% endif %}</td>
         <td class="mono">{{ r.error_text or 'ok' }}</td>
         <td><a class="btn btn-ghost btn-sm" href="{{ url_for('perspicuus_nelore_analise_individual', farm=r.farm_id, lot=r.lot_id, animal=r.animal_tag) }}">Animal</a></td>
         <td class="flex gap-8">
