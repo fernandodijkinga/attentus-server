@@ -86,6 +86,37 @@
   border-radius: 999px;
   letter-spacing: .3px;
 }
+.cal-carousel-ctrl {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(255,255,255,.55);
+  border-radius: 999px;
+  background: rgba(8, 16, 26, .68);
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+}
+.cal-carousel-ctrl.prev { left: 8px; }
+.cal-carousel-ctrl.next { right: 8px; }
+.cal-carousel-meta {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  background: rgba(10, 18, 30, .72);
+  color: #eaf2ff;
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
 .cal-card .empty {
   display:flex; align-items:center; justify-content:center;
   height: 150px;
@@ -196,12 +227,8 @@
     </div>
     <div class="cal-form-grid">
       <div class="field" style="margin:0">
-        <label>Raw mínimo (vira 1.00)</label>
-        <input id="ecc-cal-raw-min" type="number" step="0.1" value="{{ '%.2f'|format(calibration.raw_min) }}">
-      </div>
-      <div class="field" style="margin:0">
-        <label>Raw máximo (vira 5.00)</label>
-        <input id="ecc-cal-raw-max" type="number" step="0.1" value="{{ '%.2f'|format(calibration.raw_max) }}">
+        <label>Raw min/max usados (auto)</label>
+        <input type="text" value="{% if raw_bounds %}[{{ '%.2f'|format(raw_bounds[0]) }}, {{ '%.2f'|format(raw_bounds[1]) }}]{% else %}sem dados{% endif %}" disabled>
       </div>
       <button id="ecc-cal-apply" class="btn btn-accent btn-sm" type="button">Aplicar e corrigir BCS</button>
     </div>
@@ -217,12 +244,16 @@
     {% if bucket_rows %}
     <div class="cal-grid">
       {% for b in bucket_rows %}
-      <div class="cal-card" data-raw="{{ '%.2f'|format(b.raw_bucket) }}">
-        {% set s = b.sample %}
+      <div class="cal-card" data-raw="{{ '%.2f'|format(b.raw_bucket) }}" data-samples="{{ b.samples | tojson }}">
+        {% set s = b.samples[0] if b.samples else none %}
         <div class="cal-img-wrap">
           {% if s and (s.thumb_path or s.image_path) %}
-          <img src="{{ s.thumb_path or s.image_path }}" alt="raw {{ '%.2f'|format(b.raw_bucket) }}"
-               onclick="window.open('{{ s.bbox_path or s.image_path }}')">
+          <img class="js-carousel-image" src="{{ s.thumb_path or s.image_path }}" alt="raw {{ '%.2f'|format(b.raw_bucket) }}">
+          {% if b.samples|length > 1 %}
+          <button class="cal-carousel-ctrl prev js-carousel-prev" type="button" aria-label="Anterior">‹</button>
+          <button class="cal-carousel-ctrl next js-carousel-next" type="button" aria-label="Próxima">›</button>
+          <span class="cal-carousel-meta js-carousel-meta">1/{{ b.samples|length }}</span>
+          {% endif %}
           {% else %}
           <div class="empty">sem imagem</div>
           {% endif %}
@@ -256,6 +287,7 @@
 <script>
 const ECC_CAL_APPLY_URL = {{ url_for('api_ecc_calibragem_apply') | tojson }};
 const ECC_FARM_FILTER = {{ farm_filter | tojson }};
+const ECC_RAW_BOUNDS = {{ raw_bounds | tojson }};
 
 function calcBCS(raw, rawMin, rawMax) {
   const x = Number(raw);
@@ -268,8 +300,8 @@ function calcBCS(raw, rawMin, rawMax) {
 }
 
 function refreshPreview() {
-  const rawMin = Number(document.getElementById('ecc-cal-raw-min')?.value);
-  const rawMax = Number(document.getElementById('ecc-cal-raw-max')?.value);
+  const rawMin = Array.isArray(ECC_RAW_BOUNDS) ? Number(ECC_RAW_BOUNDS[0]) : NaN;
+  const rawMax = Array.isArray(ECC_RAW_BOUNDS) ? Number(ECC_RAW_BOUNDS[1]) : NaN;
   document.querySelectorAll('.cal-card').forEach((card) => {
     const raw = Number(card.dataset.raw);
     const out = card.querySelector('.js-cal-out');
@@ -283,9 +315,42 @@ function refreshPreview() {
   });
 }
 
+function initCarousels() {
+  document.querySelectorAll('.cal-card[data-samples]').forEach((card) => {
+    let samples = [];
+    try {
+      samples = JSON.parse(card.dataset.samples || '[]');
+    } catch (e) {
+      samples = [];
+    }
+    if (!Array.isArray(samples) || !samples.length) return;
+    const img = card.querySelector('.js-carousel-image');
+    if (!img) return;
+    const meta = card.querySelector('.js-carousel-meta');
+    const prevBtn = card.querySelector('.js-carousel-prev');
+    const nextBtn = card.querySelector('.js-carousel-next');
+    let idx = 0;
+    function renderSample() {
+      const s = samples[idx] || {};
+      img.src = s.thumb_path || s.image_path || '';
+      img.onclick = () => window.open(s.bbox_path || s.image_path || '');
+      if (meta) meta.textContent = `${idx + 1}/${samples.length}`;
+    }
+    prevBtn?.addEventListener('click', () => {
+      idx = (idx - 1 + samples.length) % samples.length;
+      renderSample();
+    });
+    nextBtn?.addEventListener('click', () => {
+      idx = (idx + 1) % samples.length;
+      renderSample();
+    });
+    renderSample();
+  });
+}
+
 async function applyCalibration() {
-  const rawMin = Number(document.getElementById('ecc-cal-raw-min')?.value);
-  const rawMax = Number(document.getElementById('ecc-cal-raw-max')?.value);
+  const rawMin = Array.isArray(ECC_RAW_BOUNDS) ? Number(ECC_RAW_BOUNDS[0]) : NaN;
+  const rawMax = Array.isArray(ECC_RAW_BOUNDS) ? Number(ECC_RAW_BOUNDS[1]) : NaN;
   if (!Number.isFinite(rawMin) || !Number.isFinite(rawMax) || rawMax <= rawMin) {
     toast('Parâmetros inválidos: raw_max deve ser maior que raw_min.', false);
     return;
@@ -298,7 +363,7 @@ async function applyCalibration() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ raw_min: rawMin, raw_max: rawMax, farm_id: ECC_FARM_FILTER || '' }),
+      body: JSON.stringify({ farm_id: ECC_FARM_FILTER || '' }),
     });
     const payload = await resp.json().catch(() => ({}));
     if (!resp.ok) {
@@ -314,9 +379,8 @@ async function applyCalibration() {
   }
 }
 
-document.getElementById('ecc-cal-raw-min')?.addEventListener('input', refreshPreview);
-document.getElementById('ecc-cal-raw-max')?.addEventListener('input', refreshPreview);
 document.getElementById('ecc-cal-apply')?.addEventListener('click', applyCalibration);
 refreshPreview();
+initCarousels();
 </script>
 {% endblock %}

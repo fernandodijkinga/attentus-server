@@ -511,7 +511,7 @@ select { cursor: pointer; }
     {% endif %}
 
     {% if can_access_env('bcs') %}
-    <a href="{{ url_for('ecc_importar') }}" class="nav-link {% if request.endpoint in ['ecc_importar', 'ecc_analise_rebanho', 'ecc_analise_individual', 'ecc_pontos_atencao', 'ecc_analise'] %}active{% endif %}">
+    <a href="{{ url_for('ecc_importar') }}" class="nav-link {% if request.endpoint in ['ecc_importar', 'ecc_analise_rebanho', 'ecc_analise_individual', 'ecc_pontos_atencao', 'ecc_analise', 'perspicuus_holandes_calibragem'] %}active{% endif %}">
       <span class="icon">📈</span> ECC
     </a>
     <a href="{{ url_for('ecc_importar') }}" class="nav-link nav-sub {% if request.endpoint in ['ecc_importar', 'ecc_analise'] %}active{% endif %}">
@@ -519,6 +519,9 @@ select { cursor: pointer; }
     </a>
     <a href="{{ url_for('ecc_calibragem') }}" class="nav-link nav-sub {% if request.endpoint == 'ecc_calibragem' %}active{% endif %}">
       <span class="icon">•</span> calibragem BCS
+    </a>
+    <a href="{{ url_for('perspicuus_holandes_calibragem') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_holandes_calibragem' %}active{% endif %}">
+      <span class="icon">•</span> calibragem holandês
     </a>
     <a href="{{ url_for('ecc_analise_rebanho') }}" class="nav-link nav-sub {% if request.endpoint == 'ecc_analise_rebanho' %}active{% endif %}">
       <span class="icon">•</span> análise rebanho

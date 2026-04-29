@@ -45,7 +45,7 @@
   <div class="card-title">Registros ({{ records|length }})</div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>ID</th><th>Data</th><th>Fazenda</th><th>Lote</th><th>Brinco</th><th>Nascimento</th><th>Sexo</th><th>Raw</th><th>Escore</th><th>Imagem</th><th>Status</th><th>Ações</th></tr></thead>
+      <thead><tr><th>ID</th><th>Data</th><th>Fazenda</th><th>Lote</th><th>Brinco</th><th>Nascimento</th><th>Sexo</th><th>Raw</th><th>Escore lote</th><th>Escore global</th><th>Imagem</th><th>Status</th><th>Ações</th></tr></thead>
       <tbody>
       {% for r in records %}
       <tr id="row-{{ r.id }}">
@@ -57,7 +57,8 @@
         <td class="mono" id="birth-{{ r.id }}">{{ r.birth_date or '—' }}</td>
         <td class="mono" id="sex-{{ r.id }}">{{ r.sex or '—' }}</td>
         <td class="mono">{{ '%.4f'|format(r.raw_score) if r.raw_score is not none else '—' }}</td>
-        <td class="mono">{{ '%g'|format(r.score_1_9) if r.score_1_9 is not none else '—' }}</td>
+        <td class="mono">{{ '%g'|format(r.score_lot) if r.score_lot is not none else '—' }}</td>
+        <td class="mono">{{ '%g'|format(r.score_global) if r.score_global is not none else (('%g'|format(r.score_1_9)) if r.score_1_9 is not none else '—') }}</td>
         <td>{% if r.image_path %}<img class="thumb" src="{{ r.image_path }}" onclick="window.open('{{ r.image_path }}')">{% else %}—{% endif %}</td>
         <td class="mono">{{ r.error_text or 'ok' }}</td>
         <td class="flex gap-8">
@@ -66,7 +67,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="12"><div class="empty-state"><div class="icon">🗂</div>Sem registros para os filtros atuais.</div></td></tr>
+      <tr><td colspan="13"><div class="empty-state"><div class="icon">🗂</div>Sem registros para os filtros atuais.</div></td></tr>
       {% endfor %}
       </tbody>
     </table>

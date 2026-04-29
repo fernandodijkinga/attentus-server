@@ -88,12 +88,8 @@
   <form id="calForm" onsubmit="return false;">
     <div class="cal-grid">
       <div class="field">
-        <label>Raw mínimo</label>
-        <input id="cal-raw-min" type="number" step="0.0001" value="{{ '%.4f'|format(calibration.raw_min) }}">
-      </div>
-      <div class="field">
-        <label>Raw máximo</label>
-        <input id="cal-raw-max" type="number" step="0.0001" value="{{ '%.4f'|format(calibration.raw_max) }}">
+        <label>Raw min/max usados (auto)</label>
+        <input type="text" value="{% if raw_bounds %}[{{ '%.4f'|format(raw_bounds[0]) }}, {{ '%.4f'|format(raw_bounds[1]) }}]{% else %}sem dados{% endif %}" disabled>
       </div>
       <div class="field">
         <label>Res mínimo (saída)</label>
@@ -142,6 +138,7 @@
 <script>
 const APPLY_URL = {{ url_for('api_perspicuus_angus_calibragem_apply') | tojson }};
 const PREVIEW_RAWS = [-4, -3, -2, -1, 0, 1, 2, 3, 4];
+const RAW_BOUNDS = {{ raw_bounds | tojson }};
 
 function rescale(raw, p) {
   const x = Number(raw);
@@ -157,8 +154,8 @@ function rescale(raw, p) {
 
 function readParams() {
   return {
-    rawMin: Number(document.getElementById('cal-raw-min').value),
-    rawMax: Number(document.getElementById('cal-raw-max').value),
+    rawMin: Array.isArray(RAW_BOUNDS) ? Number(RAW_BOUNDS[0]) : NaN,
+    rawMax: Array.isArray(RAW_BOUNDS) ? Number(RAW_BOUNDS[1]) : NaN,
     resMin: Number(document.getElementById('cal-res-min').value),
     resMax: Number(document.getElementById('cal-res-max').value),
     step: Number(document.getElementById('cal-step').value),
@@ -187,7 +184,7 @@ function refreshPreview() {
 async function applyCalibration() {
   const p = readParams();
   if (!Number.isFinite(p.rawMin) || !Number.isFinite(p.rawMax) || p.rawMax <= p.rawMin) {
-    toast('raw_max precisa ser maior que raw_min.', false); return;
+    toast('Sem intervalo raw válido para calibrar.', false); return;
   }
   if (!Number.isFinite(p.resMin) || !Number.isFinite(p.resMax) || p.resMax <= p.resMin) {
     toast('res_max precisa ser maior que res_min.', false); return;
@@ -205,7 +202,6 @@ async function applyCalibration() {
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
       body: JSON.stringify({
-        raw_min: p.rawMin, raw_max: p.rawMax,
         res_min: p.resMin, res_max: p.resMax,
         step: p.step, fixed_effects: p.fixedEffects,
         farm_id: farm,
@@ -228,7 +224,7 @@ async function applyCalibration() {
   }
 }
 
-['cal-raw-min','cal-raw-max','cal-res-min','cal-res-max','cal-step','cal-fixed-effects']
+['cal-res-min','cal-res-max','cal-step','cal-fixed-effects']
   .forEach((id) => document.getElementById(id).addEventListener('input', refreshPreview));
 document.querySelectorAll('#cal-fixed-effects input[type="checkbox"]').forEach((el)=>el.addEventListener('change', refreshPreview));
 document.getElementById('btnApply').addEventListener('click', applyCalibration);
