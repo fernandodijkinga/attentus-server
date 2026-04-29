@@ -1,17 +1,20 @@
 {# Perspicuus shared design system: macros + styles. Use:
    {% from "_perspicuus_layout.html" import persp_styles, persp_tabs %}
+
+   Identidade visual replicada do BCS/ECC (_bcs_layout.html), mas com prefixo
+   .persp-* para isolar dos componentes de ECC e do app.
 #}
 
 {% macro persp_styles() -%}
 <style>
 /* ======================================================
    PERSPICUUS DESIGN SYSTEM
-   Prefixo .persp-* — alinhado ao BCS, ajustado para o brete (azul).
+   Prefixo .persp-* — espelha o BCS para coerência visual.
    ====================================================== */
 .persp-hero {
   position: relative;
   background:
-    linear-gradient(135deg, rgba(26,111,212,.12) 0%, rgba(13,122,94,.06) 50%, transparent 100%),
+    linear-gradient(135deg, rgba(13,122,94,.10) 0%, rgba(26,111,212,.06) 50%, transparent 100%),
     var(--surf);
   border: 1px solid var(--border);
   border-radius: 18px;
@@ -25,8 +28,8 @@
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(ellipse 60% 80% at 100% 0%, rgba(26,111,212,.10) 0%, transparent 55%),
-    radial-gradient(ellipse 50% 70% at 0% 100%, rgba(13,122,94,.05) 0%, transparent 50%);
+    radial-gradient(ellipse 60% 80% at 100% 0%, rgba(13,122,94,.08) 0%, transparent 55%),
+    radial-gradient(ellipse 50% 70% at 0% 100%, rgba(26,111,212,.05) 0%, transparent 50%);
   pointer-events: none;
 }
 .persp-hero-top {
@@ -43,7 +46,7 @@
   font-size: 10px;
   letter-spacing: 3px;
   text-transform: uppercase;
-  color: var(--accent2);
+  color: var(--accent);
   font-weight: 700;
   display: inline-flex;
   align-items: center;
@@ -53,7 +56,7 @@
   content: '';
   width: 26px;
   height: 2px;
-  background: linear-gradient(90deg, var(--accent2), transparent);
+  background: linear-gradient(90deg, var(--accent), transparent);
   border-radius: 2px;
 }
 .persp-hero-title {
@@ -65,12 +68,12 @@
   margin-top: 8px;
   line-height: 1.15;
 }
-.persp-hero-title em { font-style: normal; color: var(--accent2); }
+.persp-hero-title em { font-style: normal; color: var(--accent); }
 .persp-hero-sub {
   margin-top: 8px;
   color: var(--text2);
   font-size: 13px;
-  max-width: 720px;
+  max-width: 640px;
   line-height: 1.55;
 }
 .persp-hero-actions {
@@ -79,7 +82,14 @@
   gap: 8px;
   align-items: center;
 }
+.persp-hero-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text2);
+  margin-top: 4px;
+}
 
+/* ----- KPI strip ----- */
 .persp-kpi-strip {
   position: relative;
   z-index: 1;
@@ -89,13 +99,14 @@
   margin-top: 16px;
 }
 .persp-kpi-card {
+  position: relative;
   background: rgba(255, 255, 255, 0.65);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 12px 14px 11px;
+  padding: 11px 14px 10px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   backdrop-filter: blur(2px);
   transition: transform .15s ease, box-shadow .15s ease;
 }
@@ -103,18 +114,6 @@
   transform: translateY(-1px);
   box-shadow: var(--shadow-sm);
 }
-.persp-kpi-card .ico-circle {
-  width: 32px; height: 32px;
-  border-radius: 999px;
-  background: rgba(26,111,212,.10);
-  color: var(--accent2);
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 16px;
-}
-.persp-kpi-card.accent .ico-circle { background: rgba(13,122,94,.10); color: var(--accent); }
-.persp-kpi-card.orange .ico-circle { background: rgba(217,120,43,.14); color: var(--accent3); }
-.persp-kpi-card.warn .ico-circle { background: rgba(184,134,11,.14); color: var(--warn); }
-.persp-kpi-card.danger .ico-circle { background: rgba(198,40,65,.12); color: var(--err); }
 .persp-kpi-card .lbl {
   font-family: var(--mono);
   font-size: 10px;
@@ -124,18 +123,24 @@
 }
 .persp-kpi-card .val {
   font-family: var(--mono);
-  font-weight: 700;
   font-size: 22px;
+  font-weight: 700;
   color: var(--text);
-  line-height: 1.05;
+  line-height: 1.1;
+}
+.persp-kpi-card .extra {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text2);
+  margin-top: 2px;
 }
 .persp-kpi-card.accent .val { color: var(--accent); }
-.persp-kpi-card.blue .val { color: var(--accent2); }
+.persp-kpi-card.blue   .val { color: var(--accent2); }
 .persp-kpi-card.orange .val { color: var(--accent3); }
-.persp-kpi-card.warn .val { color: var(--warn); }
+.persp-kpi-card.warn   .val { color: var(--warn); }
 .persp-kpi-card.danger .val { color: var(--err); }
-.persp-kpi-card .extra { font-family: var(--mono); font-size: 10.5px; color: var(--text2); }
 
+/* ----- Tabs ----- */
 .persp-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -162,15 +167,23 @@
   gap: 7px;
   border: 1px solid transparent;
 }
-.persp-tab:hover { background: var(--surf2); color: var(--accent2); }
-.persp-tab.active {
-  background: linear-gradient(135deg, rgba(26,111,212,.13), rgba(13,122,94,.10));
-  color: var(--accent2);
-  border-color: rgba(26,111,212,.22);
-  box-shadow: 0 1px 2px rgba(26,111,212,.10);
+.persp-tab:hover {
+  background: var(--surf2);
+  color: var(--accent);
 }
-.persp-tab .tab-ico { font-size: 13px; width: 14px; text-align: center; }
+.persp-tab.active {
+  background: linear-gradient(135deg, rgba(13,122,94,.13), rgba(26,111,212,.10));
+  color: var(--accent);
+  border-color: rgba(13,122,94,.22);
+  box-shadow: 0 1px 2px rgba(13,122,94,.10);
+}
+.persp-tab .tab-ico {
+  font-size: 13px;
+  width: 14px;
+  text-align: center;
+}
 
+/* ----- Sections ----- */
 .persp-section {
   background: var(--surf);
   border: 1px solid var(--border);
@@ -201,16 +214,20 @@
   margin: 0;
 }
 .persp-section-title .ico {
-  width: 28px; height: 28px;
+  width: 28px;
+  height: 28px;
   border-radius: 8px;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: rgba(26,111,212,.10);
-  color: var(--accent2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(13,122,94,.10);
+  color: var(--accent);
   font-size: 14px;
 }
-.persp-section-title .ico.accent { background: rgba(13,122,94,.10); color: var(--accent); }
-.persp-section-title .ico.warn { background: rgba(184,134,11,.12); color: var(--warn); }
+.persp-section-title .ico.blue   { background: rgba(26,111,212,.10); color: var(--accent2); }
+.persp-section-title .ico.warn   { background: rgba(184,134,11,.12); color: var(--warn); }
 .persp-section-title .ico.orange { background: rgba(217,120,43,.12); color: var(--accent3); }
+.persp-section-title .ico.accent { background: rgba(13,122,94,.10); color: var(--accent); }
 .persp-section-sub {
   font-family: var(--mono);
   font-size: 11px;
@@ -219,14 +236,7 @@
 .persp-section-body { padding: 18px; }
 .persp-section-body.tight { padding: 4px 0 0; }
 
-.persp-grid-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-@media (max-width: 980px) { .persp-grid-2 { grid-template-columns: 1fr; } }
-
+/* ----- Filters ----- */
 .persp-filter-row {
   display: flex;
   flex-wrap: wrap;
@@ -235,6 +245,7 @@
 }
 .persp-filter-row .field { margin: 0; min-width: 160px; }
 
+/* ----- Table ----- */
 .persp-table { overflow: auto; }
 .persp-table table { width: 100%; border-collapse: collapse; }
 .persp-table thead th {
@@ -248,7 +259,9 @@
   background: var(--surf2);
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
-  position: sticky; top: 0; z-index: 1;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 .persp-table tbody td {
   padding: 10px 16px;
@@ -258,8 +271,8 @@
 }
 .persp-table tbody tr:hover { background: var(--surf2); }
 .persp-table tbody tr:last-child td { border-bottom: 0; }
-.persp-table .num { text-align: right; font-family: var(--mono); }
 
+/* ----- Status pills ----- */
 .persp-status-pill {
   display: inline-flex;
   align-items: center;
@@ -271,16 +284,18 @@
   font-weight: 700;
   letter-spacing: .3px;
 }
-.persp-status-pill.ok { background: rgba(13,122,94,.12); color: var(--accent); }
-.persp-status-pill.err { background: rgba(198,40,65,.10); color: var(--err); }
+.persp-status-pill.ok   { background: rgba(13,122,94,.12);  color: var(--accent); }
+.persp-status-pill.err  { background: rgba(198,40,65,.10);  color: var(--err); }
 .persp-status-pill.warn { background: rgba(184,134,11,.14); color: var(--warn); }
 .persp-status-pill::before {
   content: '';
-  width: 6px; height: 6px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
   background: currentColor;
 }
 
+/* ----- Empty state ----- */
 .persp-empty {
   text-align: center;
   padding: 48px 20px;
@@ -290,34 +305,131 @@
 }
 .persp-empty .icon { font-size: 36px; margin-bottom: 10px; opacity: .85; }
 
-/* Painel de insights (igual ao usado em ECC) */
+/* ----- Insights side panel (shared with ECC) ----- */
 .persp-insight-panel {
-  background: linear-gradient(180deg, rgba(26,111,212,.05) 0%, var(--surf) 100%);
+  background: var(--surf);
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 16px 16px 20px;
-  position: sticky; top: 12px;
+  padding: 14px 16px;
   box-shadow: var(--shadow-sm);
+  position: sticky;
+  top: 12px;
 }
 .persp-insight-head {
-  display: inline-flex; align-items: center; gap: 8px;
   font-family: var(--sans);
-  font-size: 14px; font-weight: 800;
-  background: var(--accent2); color: #fff;
-  padding: 6px 14px; border-radius: 999px;
-  margin-bottom: 14px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.persp-insight-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
-.persp-insight-list li { display: flex; align-items: flex-start; gap: 10px; }
+.persp-insight-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.persp-insight-list li {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 10px;
+  align-items: start;
+  font-size: 12.5px;
+  color: var(--text2);
+  line-height: 1.45;
+  padding: 8px 4px 10px;
+  border-bottom: 1px dashed var(--border);
+}
+.persp-insight-list li:last-child { border-bottom: 0; }
+.persp-insight-list li p { margin: 0; }
 .persp-insight-list .ico-circle {
-  width: 30px; height: 30px; border-radius: 999px;
-  background: rgba(26,111,212,.10); color: var(--accent2);
-  display: inline-flex; align-items: center; justify-content: center;
-  flex-shrink: 0; font-size: 14px;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(13,122,94,.12);
+  color: var(--accent);
+  font-size: 14px;
 }
-.persp-insight-list p { margin: 0; font-size: 12.5px; color: var(--text); line-height: 1.4; }
+
+/* ----- Engine tip (config faltando) ----- */
+.persp-engine-tip {
+  margin: 0 0 14px;
+  font-size: 11.5px;
+  color: var(--text2);
+  background: rgba(184,134,11,.10);
+  border: 1px solid rgba(184,134,11,.20);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-family: var(--mono);
+  line-height: 1.45;
+}
+
+/* ----- 1–9 gauge bar (animais) ----- */
+.persp-gauge-row { margin-bottom: 10px; }
+.persp-gauge-row:last-child { margin-bottom: 0; }
+.persp-gauge-label-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 10px; margin-bottom: 2px;
+}
+.persp-gauge-val {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--accent2);
+}
+.persp-gauge-val-wrap { display: inline-flex; align-items: baseline; gap: 6px; }
+.persp-gauge-val-raw {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text2);
+}
+.persp-gauge-scale-head {
+  display: flex; justify-content: space-between;
+  font-family: var(--mono); color: var(--muted);
+  font-size: 9.5px; letter-spacing: 0.5px; margin-bottom: 3px;
+}
+.persp-gauge-bar {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: linear-gradient(90deg, #c62841 0%, #d9782b 22%, #0d7a5e 50%, #d9782b 78%, #c62841 100%);
+  overflow: visible;
+  box-shadow: inset 0 1px 2px rgba(255,255,255,0.35);
+}
+.persp-gauge-marker {
+  position: absolute;
+  top: -4px;
+  width: 3px;
+  height: 18px;
+  background: #1a2f45;
+  box-shadow: 0 0 0 2px rgba(255,255,255,.95);
+  border-radius: 2px;
+  transform: translateX(-50%);
+  left: var(--pct, 50%);
+}
+
+/* ----- Rebanho 2-col layout (chart + sidebar de insights) ----- */
+.persp-rebanho-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+@media (max-width: 1180px) {
+  .persp-rebanho-grid { grid-template-columns: 1fr; }
+  .persp-insight-panel { position: relative; top: auto; }
+}
 </style>
 {%- endmacro %}
+
 
 {% macro persp_tabs(active='') -%}
 <div class="persp-tabs" role="tablist">
@@ -328,10 +440,10 @@
     <span class="tab-ico">🐂</span> Animais
   </a>
   <a class="persp-tab {% if active == 'inferencias' %}active{% endif %}" href="{{ url_for('perspicuus_inferencias') }}">
-    <span class="tab-ico">◇</span> Inferências MK1
+    <span class="tab-ico">◇</span> Inferências
   </a>
   <a class="persp-tab {% if active == 'rebanho' %}active{% endif %}" href="{{ url_for('perspicuus_analise_rebanho') }}">
-    <span class="tab-ico">📈</span> Análise rebanho
+    <span class="tab-ico">🐄</span> Análise rebanho
   </a>
 </div>
 {%- endmacro %}
