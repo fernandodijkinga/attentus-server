@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Perspicuus Nelore - dataset{% endblock %}
+{% block head %}
+<style>
+.filters-grid{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:10px}
+.thumb{width:64px;height:48px;object-fit:cover;border:1px solid var(--border);border-radius:6px;cursor:zoom-in}
+@media (max-width:1200px){.filters-grid{grid-template-columns:1fr 1fr}}
+@media (max-width:640px){.filters-grid{grid-template-columns:1fr}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">🐃 <span>Dataset</span> <span style="color:var(--accent)">Nelore</span></div>
+    <div class="page-sub">Gerência de registros, limpeza e reprocessamento em lote</div>
+  </div>
+  <div class="flex gap-8">
+    <span class="pill pill-blue">{{ stats.total_records }} registros</span>
+    <span class="pill pill-green">{{ stats.with_score }} com score</span>
+    <span class="pill pill-orange">{{ stats.lots }} lotes</span>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-title">Filtros e ações</div>
+  <form method="get" class="filters-grid">
+    <div class="field"><label>Fazenda</label>
+      <select name="farm"><option value="">todas</option>{% for f in farms %}<option value="{{ f }}" {% if f==farm_filter %}selected{% endif %}>{{ f }}</option>{% endfor %}</select>
+    </div>
+    <div class="field"><label>Lote</label>
+      <select name="lot"><option value="">todos</option>{% for l in lots %}<option value="{{ l }}" {% if l==lot_filter %}selected{% endif %}>{{ l }}</option>{% endfor %}</select>
+    </div>
+    <div class="field"><label>Brinco</label>
+      <select name="animal"><option value="">todos</option>{% for a in animals %}<option value="{{ a }}" {% if a==animal_filter %}selected{% endif %}>{{ a }}</option>{% endfor %}</select>
+    </div>
+    <div class="field"><label>Busca</label><input name="q" value="{{ q_filter }}" placeholder="fazenda, lote, brinco, arquivo"></div>
+    <div class="field"><label>&nbsp;</label><button class="btn btn-ghost btn-sm" type="submit">Filtrar</button></div>
+  </form>
+  <div class="flex gap-8">
+    <button class="btn btn-accent btn-sm" id="btnReprocessAll">Reprocessar todos os animais</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Registros ({{ records|length }})</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>ID</th><th>Data</th><th>Fazenda</th><th>Lote</th><th>Brinco</th><th>Raw</th><th>1-9</th><th>Imagem</th><th>Status</th><th>Ações</th></tr></thead>
+      <tbody>
+      {% for r in records %}
+      <tr id="row-{{ r.id }}">
+        <td class="mono">{{ r.id }}</td>
+        <td class="mono">{{ r.inference_date }}</td>
+        <td>{{ r.farm_id }}</td>
+        <td>{{ r.lot_id or '—' }}</td>
+        <td class="mono">{{ r.animal_tag }}</td>
+        <td class="mono">{{ '%.4f'|format(r.raw_score) if r.raw_score is not none else '—' }}</td>
+        <td class="mono">{{ '%g'|format(r.score_1_9) if r.score_1_9 is not none else '—' }}</td>
+        <td>{% if r.image_path %}<img class="thumb" src="{{ r.image_path }}" onclick="window.open('{{ r.image_path }}')">{% else %}—{% endif %}</td>
+        <td class="mono">{{ r.error_text or 'ok' }}</td>
+        <td><button class="btn btn-danger btn-sm" onclick="deleteRow({{ r.id }})">Excluir</button></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="10"><div class="empty-state"><div class="icon">🗂</div>Sem registros para os filtros atuais.</div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function deleteRow(id){
+  if(!confirm('Excluir este registro do dataset Nelore?')) return;
+  const r = await fetch(`/api/record/perspicuus-nelore/${id}`, {method:'DELETE'});
+  if(!r.ok){ toast('Erro ao excluir registro', false); return; }
+  const el = document.getElementById(`row-${id}`);
+  if(el) el.remove();
+  toast('Registro excluído');
+}
+
+document.getElementById('btnReprocessAll')?.addEventListener('click', async () => {
+  if(!confirm('Reprocessar todos os animais Nelore nos filtros atuais?')) return;
+  const params = new URLSearchParams(window.location.search);
+  const payload = { farm_id: params.get('farm') || '', lot_id: params.get('lot') || '' };
+  const r = await fetch('/api/perspicuus-nelore/reprocess-all', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload),
+  });
+  const data = await r.json().catch(() => ({}));
+  if(!r.ok){ toast(data.error || 'Falha no reprocessamento', false); return; }
+  toast(`Reprocessado: ${data.ok}/${data.total} (erros: ${data.errors})`);
+  window.location.reload();
+});
+</script>
+{% endblock %}

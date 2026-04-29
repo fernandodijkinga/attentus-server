@@ -338,12 +338,14 @@ def _environment_for_request() -> str | None:
     angus_eps = {
         'perspicuus_angus_importar', 'perspicuus_angus_analise_individual',
         'perspicuus_angus_analise_populacao', 'perspicuus_angus_modelos',
-        'serve_perspicuus_angus_media',
+        'perspicuus_angus_dataset', 'serve_perspicuus_angus_media',
+        'delete_perspicuus_angus_record', 'api_perspicuus_angus_reprocess_all',
     }
     nelore_eps = {
         'perspicuus_nelore_importar', 'perspicuus_nelore_analise_individual',
         'perspicuus_nelore_analise_populacao', 'perspicuus_nelore_modelos',
-        'serve_perspicuus_nelore_media',
+        'perspicuus_nelore_dataset', 'serve_perspicuus_nelore_media',
+        'delete_perspicuus_nelore_record', 'api_perspicuus_nelore_reprocess_all',
     }
     bcs_eps = {
         'serve_ecc_media', 'ecc_analise', 'ecc_importar', 'api_ecc_upload_one',
@@ -2138,6 +2140,88 @@ def _angus_base_lists(db):
     return farms, animals, stats
 
 
+def _angus_parse_media_url(web_path: str) -> tuple[str, str, str] | None:
+    p = str(web_path or '').strip()
+    prefix = '/api/perspicuus-angus/media/'
+    if not p.startswith(prefix):
+        return None
+    rest = p[len(prefix):].lstrip('/')
+    parts = rest.split('/', 2)
+    if len(parts) < 3:
+        return None
+    return parts[0], parts[1], parts[2]
+
+
+def _angus_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
+    from perspicuus_inference import get_engine
+
+    row = db.execute("SELECT * FROM perspicuus_angus_records WHERE id = ?", (rid,)).fetchone()
+    if not row:
+        return {'ok': False, 'id': rid, 'error': 'not_found'}
+
+    parsed = _angus_parse_media_url(row['image_path'] or '')
+    if not parsed:
+        db.execute(
+            "UPDATE perspicuus_angus_records SET raw_score = NULL, score_1_9 = NULL, traits_json = '{}', meta_json = '{}', error_text = ? WHERE id = ?",
+            ('image_path inválido', rid),
+        )
+        return {'ok': False, 'id': rid, 'error': 'bad_image_path'}
+    farm_slug, day_slug, filename = parsed
+    fp = os.path.join(ANGUS_UPLOADS_DIR, farm_slug, day_slug, secure_filename(filename))
+    if not os.path.isfile(fp):
+        db.execute(
+            "UPDATE perspicuus_angus_records SET raw_score = NULL, score_1_9 = NULL, traits_json = '{}', meta_json = '{}', error_text = ? WHERE id = ?",
+            ('imagem não encontrada no disco', rid),
+        )
+        return {'ok': False, 'id': rid, 'error': 'missing_image'}
+
+    img = cv2.imread(fp)
+    if img is None:
+        db.execute(
+            "UPDATE perspicuus_angus_records SET raw_score = NULL, score_1_9 = NULL, traits_json = '{}', meta_json = '{}', error_text = ? WHERE id = ?",
+            ('falha ao abrir imagem', rid),
+        )
+        return {'ok': False, 'id': rid, 'error': 'read_fail'}
+
+    eng = get_engine('angus')
+    if not eng.is_ready():
+        return {'ok': False, 'id': rid, 'error': 'engine_not_ready'}
+
+    try:
+        out = eng.infer_bgr(img, 'lateral')
+        traits = out.get('traits') or {}
+        err = None
+    except Exception as e:  # noqa: BLE001
+        out = {}
+        traits = {}
+        err = str(e)
+
+    vals = []
+    for v in (traits or {}).values():
+        try:
+            vals.append(float(v))
+        except (TypeError, ValueError):
+            continue
+    raw_score = round(sum(vals) / len(vals), 4) if vals else None
+    score_1_9 = rescale_perspicuus_trait_score(raw_score) if raw_score is not None else None
+    db.execute(
+        """
+        UPDATE perspicuus_angus_records
+        SET raw_score = ?, score_1_9 = ?, traits_json = ?, meta_json = ?, error_text = ?
+        WHERE id = ?
+        """,
+        (
+            raw_score,
+            score_1_9,
+            json.dumps(traits, ensure_ascii=False),
+            json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox')}, ensure_ascii=False),
+            err,
+            rid,
+        ),
+    )
+    return {'ok': err is None, 'id': rid, 'error': err}
+
+
 @app.route('/perspicuus-angus/importar', methods=['GET', 'POST'])
 @login_required
 def perspicuus_angus_importar():
@@ -2409,6 +2493,27 @@ def perspicuus_angus_modelos():
     )
 
 
+@app.route('/perspicuus-angus/dataset')
+@login_required
+def perspicuus_angus_dataset():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    animal_filter = str(request.args.get('animal', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    rows = _angus_load_rows(db, farm_filter, animal_filter, q, limit=1200)
+    farms, animals, stats = _angus_base_lists(db)
+    return render_template(
+        'perspicuus_angus_dataset.html',
+        records=rows,
+        farms=farms,
+        animals=animals,
+        farm_filter=farm_filter,
+        animal_filter=animal_filter,
+        q_filter=q,
+        stats=stats,
+    )
+
+
 @app.route('/api/perspicuus-nelore/media/<farm>/<day>/<filename>')
 @login_required
 def serve_perspicuus_nelore_media(farm, day, filename):
@@ -2530,6 +2635,88 @@ def _nelore_base_lists(db):
         'with_score': db.execute("SELECT COUNT(*) FROM perspicuus_nelore_records WHERE score_1_9 IS NOT NULL").fetchone()[0],
     }
     return farms, lots, animals, stats
+
+
+def _nelore_parse_media_url(web_path: str) -> tuple[str, str, str] | None:
+    p = str(web_path or '').strip()
+    prefix = '/api/perspicuus-nelore/media/'
+    if not p.startswith(prefix):
+        return None
+    rest = p[len(prefix):].lstrip('/')
+    parts = rest.split('/', 2)
+    if len(parts) < 3:
+        return None
+    return parts[0], parts[1], parts[2]
+
+
+def _nelore_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
+    from perspicuus_inference import get_engine
+
+    row = db.execute("SELECT * FROM perspicuus_nelore_records WHERE id = ?", (rid,)).fetchone()
+    if not row:
+        return {'ok': False, 'id': rid, 'error': 'not_found'}
+
+    parsed = _nelore_parse_media_url(row['image_path'] or '')
+    if not parsed:
+        db.execute(
+            "UPDATE perspicuus_nelore_records SET raw_score = NULL, score_1_9 = NULL, traits_json = '{}', meta_json = '{}', error_text = ? WHERE id = ?",
+            ('image_path inválido', rid),
+        )
+        return {'ok': False, 'id': rid, 'error': 'bad_image_path'}
+    farm_slug, day_slug, filename = parsed
+    fp = os.path.join(NELORE_UPLOADS_DIR, farm_slug, day_slug, secure_filename(filename))
+    if not os.path.isfile(fp):
+        db.execute(
+            "UPDATE perspicuus_nelore_records SET raw_score = NULL, score_1_9 = NULL, traits_json = '{}', meta_json = '{}', error_text = ? WHERE id = ?",
+            ('imagem não encontrada no disco', rid),
+        )
+        return {'ok': False, 'id': rid, 'error': 'missing_image'}
+
+    img = cv2.imread(fp)
+    if img is None:
+        db.execute(
+            "UPDATE perspicuus_nelore_records SET raw_score = NULL, score_1_9 = NULL, traits_json = '{}', meta_json = '{}', error_text = ? WHERE id = ?",
+            ('falha ao abrir imagem', rid),
+        )
+        return {'ok': False, 'id': rid, 'error': 'read_fail'}
+
+    eng = get_engine('nelore')
+    if not eng.is_ready():
+        return {'ok': False, 'id': rid, 'error': 'engine_not_ready'}
+
+    try:
+        out = eng.infer_bgr(img, 'lateral')
+        traits = out.get('traits') or {}
+        err = None
+    except Exception as e:  # noqa: BLE001
+        out = {}
+        traits = {}
+        err = str(e)
+
+    vals = []
+    for v in (traits or {}).values():
+        try:
+            vals.append(float(v))
+        except (TypeError, ValueError):
+            continue
+    raw_score = round(sum(vals) / len(vals), 4) if vals else None
+    score_1_9 = rescale_perspicuus_trait_score(raw_score) if raw_score is not None else None
+    db.execute(
+        """
+        UPDATE perspicuus_nelore_records
+        SET raw_score = ?, score_1_9 = ?, traits_json = ?, meta_json = ?, error_text = ?
+        WHERE id = ?
+        """,
+        (
+            raw_score,
+            score_1_9,
+            json.dumps(traits, ensure_ascii=False),
+            json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox')}, ensure_ascii=False),
+            err,
+            rid,
+        ),
+    )
+    return {'ok': err is None, 'id': rid, 'error': err}
 
 
 @app.route('/perspicuus-nelore/importar', methods=['GET', 'POST'])
@@ -2812,6 +2999,30 @@ def perspicuus_nelore_modelos():
         inference_engine_ready=get_engine('nelore').is_ready(),
         role_ext=PERSPICUUS_MODEL_ROLE_EXT,
         role_labels=role_labels,
+    )
+
+
+@app.route('/perspicuus-nelore/dataset')
+@login_required
+def perspicuus_nelore_dataset():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    lot_filter = str(request.args.get('lot', '')).strip()
+    animal_filter = str(request.args.get('animal', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    rows = _nelore_load_rows(db, farm_filter, lot_filter, animal_filter, q, limit=1200)
+    farms, lots, animals, stats = _nelore_base_lists(db)
+    return render_template(
+        'perspicuus_nelore_dataset.html',
+        records=rows,
+        farms=farms,
+        lots=lots,
+        animals=animals,
+        farm_filter=farm_filter,
+        lot_filter=lot_filter,
+        animal_filter=animal_filter,
+        q_filter=q,
+        stats=stats,
     )
 
 
@@ -4250,6 +4461,123 @@ def infer_perspicuus_record_api(rid):
     )
     db.commit()
     return jsonify({'status': 'ok', 'inference': result}), 200
+
+
+@app.route('/api/record/perspicuus-angus/<int:rid>', methods=['DELETE'])
+@login_required
+def delete_perspicuus_angus_record(rid):
+    db = get_db()
+    cur = db.execute("DELETE FROM perspicuus_angus_records WHERE id = ?", (rid,))
+    db.commit()
+    if cur.rowcount == 0:
+        return jsonify({'error': 'Não encontrado'}), 404
+    return jsonify({'status': 'deleted', 'id': rid})
+
+
+@app.route('/api/record/perspicuus-nelore/<int:rid>', methods=['DELETE'])
+@login_required
+def delete_perspicuus_nelore_record(rid):
+    db = get_db()
+    cur = db.execute("DELETE FROM perspicuus_nelore_records WHERE id = ?", (rid,))
+    db.commit()
+    if cur.rowcount == 0:
+        return jsonify({'error': 'Não encontrado'}), 404
+    return jsonify({'status': 'deleted', 'id': rid})
+
+
+@app.route('/api/perspicuus-angus/reprocess-all', methods=['POST'])
+@login_required
+def api_perspicuus_angus_reprocess_all():
+    try:
+        from perspicuus_inference import get_engine
+        eng = get_engine('angus')
+    except ImportError as e:
+        return jsonify({'error': f'Módulo de inferência indisponível: {e}'}), 503
+    if not eng.is_ready():
+        return jsonify({'error': 'Motor ONNX Angus não está configurado.'}), 400
+
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    farm = str(data.get('farm_id') or request.args.get('farm_id', '') or '').strip()
+    cond = ['1=1']
+    params: list[str] = []
+    if farm:
+        cond.append('farm_id = ?')
+        params.append(farm)
+    where = ' AND '.join(cond)
+    max_n = max(1, min(10000, int(os.environ.get('ANGUS_REPROCESS_MAX', '5000'))))
+    ids = [
+        r[0]
+        for r in db.execute(
+            f'SELECT id FROM perspicuus_angus_records WHERE {where} ORDER BY id ASC',
+            params,
+        ).fetchall()[:max_n]
+    ]
+    ok_n, err_n = 0, 0
+    for rid in ids:
+        result = _angus_reinfer_record_by_id(db, rid)
+        if result.get('ok'):
+            ok_n += 1
+        else:
+            err_n += 1
+    db.commit()
+    return jsonify({
+        'status': 'done',
+        'total': len(ids),
+        'ok': ok_n,
+        'errors': err_n,
+        'farm_id_filter': farm or None,
+    })
+
+
+@app.route('/api/perspicuus-nelore/reprocess-all', methods=['POST'])
+@login_required
+def api_perspicuus_nelore_reprocess_all():
+    try:
+        from perspicuus_inference import get_engine
+        eng = get_engine('nelore')
+    except ImportError as e:
+        return jsonify({'error': f'Módulo de inferência indisponível: {e}'}), 503
+    if not eng.is_ready():
+        return jsonify({'error': 'Motor ONNX Nelore não está configurado.'}), 400
+
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    farm = str(data.get('farm_id') or request.args.get('farm_id', '') or '').strip()
+    lot = str(data.get('lot_id') or request.args.get('lot_id', '') or '').strip()
+    cond = ['1=1']
+    params: list[str] = []
+    if farm:
+        cond.append('farm_id = ?')
+        params.append(farm)
+    if lot:
+        cond.append('lot_id = ?')
+        params.append(lot)
+    where = ' AND '.join(cond)
+    max_n = max(1, min(10000, int(os.environ.get('NELORE_REPROCESS_MAX', '5000'))))
+    ids = [
+        r[0]
+        for r in db.execute(
+            f'SELECT id FROM perspicuus_nelore_records WHERE {where} ORDER BY id ASC',
+            params,
+        ).fetchall()[:max_n]
+    ]
+    ok_n, err_n = 0, 0
+    for rid in ids:
+        result = _nelore_reinfer_record_by_id(db, rid)
+        if result.get('ok'):
+            ok_n += 1
+        else:
+            err_n += 1
+    db.commit()
+    return jsonify({
+        'status': 'done',
+        'total': len(ids),
+        'ok': ok_n,
+        'errors': err_n,
+        'farm_id_filter': farm or None,
+        'lot_id_filter': lot or None,
+    })
 
 # ─── DOWNLOADS ────────────────────────────────────────────────────────────────
 
