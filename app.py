@@ -2907,7 +2907,7 @@ def _angus_save_one(
             created_at, farm_id, lot_id, birth_date, sex, inference_date, animal_tag, filename,
             image_path, thumb_path, bbox_path, raw_score, score_lot, score_global, score_1_9, traits_json, meta_json, error_text
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )
         """,
         (
             now_iso, farm_id, lot_id, birth_date, sex, inference_date, animal_tag, fs.filename,
@@ -3512,7 +3512,7 @@ def _nelore_save_one(
             created_at, farm_id, lot_id, birth_date, sex, inference_date, animal_tag, filename,
             image_path, thumb_path, bbox_path, raw_score, score_lot, score_global, score_1_9, traits_json, meta_json, error_text
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             now_iso, farm_id, lot_id, birth_date, sex, inference_date, animal_tag, fs.filename,

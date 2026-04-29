@@ -19,7 +19,7 @@
 .trait-scale-mid{position:absolute;left:50%;top:-18px;transform:translateX(-50%);font-family:var(--mono);font-size:11px;color:var(--text2)}
 .trait-marker{
   position:absolute;top:-6px;width:4px;height:24px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.35);
-  border-radius:2px;transform:translateX(-50%);
+  border-radius:2px;transform:translateX(-50%);left:calc(var(--pct, 50) * 1%);
 }
 </style>
 {% endblock %}
@@ -52,7 +52,31 @@
       Escore lote ref.: <b>{{ '%g'|format(featured.score_lot) if featured and featured.score_lot is not none else '—' }}</b> ·
       Escore global ref.: <b>{{ '%g'|format(featured.score_global) if featured and featured.score_global is not none else (('%g'|format(featured.score_1_9)) if featured and featured.score_1_9 is not none else '—') }}</b>
     </div>
-    <div id="nelore-trait-scales"></div>
+    <div id="nelore-trait-scales">
+      {% if featured and featured.traits_items %}
+        {% for tname, tval in featured.traits_items %}
+        {% set tscore = tval|perspicuus_rescaled %}
+        <div class="trait-row">
+          <div class="trait-row-top">
+            <div class="trait-name">{{ tname }}</div>
+            <div class="trait-val">
+              {{ '%g'|format(tscore) if tscore is not none else '—' }}
+              <small>raw {{ '%.2f'|format(tval) }}</small>
+            </div>
+          </div>
+          <div class="trait-scale-labels"><span>1.00</span><span>5.00</span><span>9.00</span></div>
+          <div class="trait-scale">
+            <span class="trait-scale-mid">5.00</span>
+            {% if tscore is not none %}
+            <span class="trait-marker" style="--pct: {{ ((tscore - 1.0) / 8.0 * 100.0) }}"></span>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+      <div class="empty-state"><div class="icon">📉</div>Sem traits para exibir.</div>
+      {% endif %}
+    </div>
   </div>
 </div>
 <div class="card">
@@ -70,37 +94,4 @@
   </table></div>
 </div>
 {% endblock %}
-{% block scripts %}
-<script id="nelore-points-json" type="application/json">{{ points|tojson }}</script>
-<script id="nelore-featured-json" type="application/json">{{ (featured or {})|tojson }}</script>
-<script>
-function readJson(id, fallback){
-  const el = document.getElementById(id);
-  if (!el) return fallback;
-  try { return JSON.parse(el.textContent || 'null') ?? fallback; } catch { return fallback; }
-}
-const PTS = readJson('nelore-points-json', []);
-const FEATURED = readJson('nelore-featured-json', {});
-const host=document.getElementById('nelore-trait-scales');
-if(host && FEATURED && Array.isArray(FEATURED.traits_items) && FEATURED.traits_items.length){
-  const rowsHtml = FEATURED.traits_items.map((t)=>{
-    const name=String(t[0]||'—');
-    const raw=Number(t[1]);
-    if(!Number.isFinite(raw)) return '';
-    const score=Math.max(1,Math.min(9,Math.round((((raw+4)/8)*8+1)*2)/2));
-    const pct=((score-1)/8)*100;
-    return `<div class="trait-row">
-      <div class="trait-row-top">
-        <div class="trait-name">${name}</div>
-        <div class="trait-val">${score.toFixed(1).replace('.0','')} <small>raw ${raw.toFixed(2)}</small></div>
-      </div>
-      <div class="trait-scale-labels"><span>1.00</span><span>5.00</span><span>9.00</span></div>
-      <div class="trait-scale"><span class="trait-scale-mid">5.00</span><span class="trait-marker" style="left:${pct}%"></span></div>
-    </div>`;
-  }).join('');
-  host.innerHTML = rowsHtml || '<div class="empty-state"><div class="icon">📉</div>Sem traits para exibir.</div>';
-} else if(host){
-  host.innerHTML = '<div class="empty-state"><div class="icon">📉</div>Sem traits para exibir.</div>';
-}
-</script>
-{% endblock %}
+{% block scripts %}{% endblock %}
