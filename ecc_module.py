@@ -113,9 +113,11 @@ def save_ecc_crop_thumbnail(
     bbox: Any,
     thumb_abs_path: str,
     target_size: tuple[int, int] = (224, 224),
+    img: Any = None,
 ) -> bool:
     """
     Salva thumbnail cropada no bbox detectado.
+    Se ``img`` (numpy.ndarray BGR) for fornecido, evita reler do disco.
     Retorna False se não conseguir gerar crop válido.
     """
     if not bbox or not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
@@ -125,7 +127,8 @@ def save_ecc_crop_thumbnail(
     except (TypeError, ValueError):
         return False
 
-    img = cv2.imread(abs_path)
+    if img is None:
+        img = cv2.imread(abs_path)
     if img is None:
         return False
     h, w = img.shape[:2]
@@ -150,9 +153,11 @@ def save_ecc_bbox_overlay(
     bbox: Any,
     boxed_abs_path: str,
     yolo_conf: Any = None,
+    img: Any = None,
 ) -> bool:
     """
     Salva uma cópia da imagem original com bounding box desenhado.
+    Se ``img`` (numpy.ndarray BGR) for fornecido, evita reler do disco.
     """
     if not bbox or not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
         return False
@@ -161,7 +166,8 @@ def save_ecc_bbox_overlay(
     except (TypeError, ValueError):
         return False
 
-    img = cv2.imread(abs_path)
+    if img is None:
+        img = cv2.imread(abs_path)
     if img is None:
         return False
     h, w = img.shape[:2]

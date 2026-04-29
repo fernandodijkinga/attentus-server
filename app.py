@@ -31,6 +31,7 @@ import random
 import sqlite3
 import json
 import threading
+import time
 import zipfile
 import io
 import csv
@@ -159,6 +160,14 @@ os.makedirs(ANGUS_UPLOADS_DIR, exist_ok=True)
 NELORE_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
 NELORE_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'perspicuus_nelore')
 os.makedirs(NELORE_UPLOADS_DIR, exist_ok=True)
+
+# Limites de upload em batch (Perspicuus) — protegem o worker do gunicorn de
+# WORKER TIMEOUT quando o usuário envia muitas fotos numa única requisição.
+PERSPICUUS_BATCH_MAX = max(1, int(os.environ.get('PERSPICUUS_BATCH_MAX', '20')))
+# Deadline em segundos (~85% do --timeout do gunicorn). Override via env.
+PERSPICUUS_BATCH_DEADLINE_S = max(
+    10.0, float(os.environ.get('PERSPICUUS_BATCH_DEADLINE_S', '150.0'))
+)
 
 PERSPICUUS_BREED_TABLE = {
     'angus': 'perspicuus_angus_records',
@@ -3114,11 +3123,11 @@ def _angus_save_one(
     if bbox:
         thumb_name = f"thumb_{local_name}"
         thumb_abs = os.path.join(folder, thumb_name)
-        if save_ecc_crop_thumbnail(dest, bbox, thumb_abs):
+        if save_ecc_crop_thumbnail(dest, bbox, thumb_abs, img=img):
             thumb_web = f"/api/perspicuus-angus/media/{safe_farm}/{safe_day}/{thumb_name}"
         box_name = f"bbox_{local_name}"
         box_abs = os.path.join(folder, box_name)
-        if save_ecc_bbox_overlay(dest, bbox, box_abs, yolo_conf=yconf):
+        if save_ecc_bbox_overlay(dest, bbox, box_abs, yolo_conf=yconf, img=img):
             bbox_web = f"/api/perspicuus-angus/media/{safe_farm}/{safe_day}/{box_name}"
     cal = _perspicuus_get_calibration(db, 'angus')
     cal = _perspicuus_cal_with_auto_bounds(db, 'angus', cal, include_raw=raw_score)
@@ -3247,11 +3256,11 @@ def _angus_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
     if bbox:
         thumb_name = f"thumb_{secure_filename(filename)}"
         thumb_abs = os.path.join(ANGUS_UPLOADS_DIR, farm_slug, day_slug, thumb_name)
-        if save_ecc_crop_thumbnail(fp, bbox, thumb_abs):
+        if save_ecc_crop_thumbnail(fp, bbox, thumb_abs, img=img):
             thumb_web = f"/api/perspicuus-angus/media/{farm_slug}/{day_slug}/{thumb_name}"
         box_name = f"bbox_{secure_filename(filename)}"
         box_abs = os.path.join(ANGUS_UPLOADS_DIR, farm_slug, day_slug, box_name)
-        if save_ecc_bbox_overlay(fp, bbox, box_abs, yolo_conf=yconf):
+        if save_ecc_bbox_overlay(fp, bbox, box_abs, yolo_conf=yconf, img=img):
             bbox_web = f"/api/perspicuus-angus/media/{farm_slug}/{day_slug}/{box_name}"
     cal = _perspicuus_get_calibration(db, 'angus')
     cal = _perspicuus_cal_with_auto_bounds(db, 'angus', cal, include_raw=raw_score)
@@ -3312,9 +3321,16 @@ def perspicuus_angus_importar():
             if not farm_id or not date_iso or not files:
                 flash('Lote: informe fazenda, data e ficheiros.', 'error')
                 return redirect(url_for('perspicuus_angus_importar'))
+            files_total = len(files)
+            files = files[:PERSPICUUS_BATCH_MAX]
             n_ok, n_err = 0, 0
+            n_skipped = max(0, files_total - len(files))
             errs = []
+            deadline_at = time.monotonic() + PERSPICUUS_BATCH_DEADLINE_S
             for fs in files:
+                if time.monotonic() >= deadline_at:
+                    n_skipped += 1
+                    continue
                 if not fs or not fs.filename:
                     continue
                 animal_tag = os.path.splitext(os.path.basename(fs.filename))[0].strip()
@@ -3329,6 +3345,12 @@ def perspicuus_angus_importar():
                 flash(f'Lote Angus: {n_ok} imagem(ns) processada(s).', 'success')
             if n_err:
                 flash(f'Lote com {n_err} erro(s): ' + '; '.join(errs[:3]), 'error')
+            if n_skipped:
+                flash(
+                    f'{n_skipped} foto(s) não processada(s) neste lote — reenvie em '
+                    f'pacotes de até {PERSPICUUS_BATCH_MAX} imagens.',
+                    'error',
+                )
             return redirect(url_for('perspicuus_angus_importar'))
         flash('Modo inválido.', 'error')
         return redirect(url_for('perspicuus_angus_importar'))
@@ -3719,11 +3741,11 @@ def _nelore_save_one(
     if bbox:
         thumb_name = f"thumb_{local_name}"
         thumb_abs = os.path.join(folder, thumb_name)
-        if save_ecc_crop_thumbnail(dest, bbox, thumb_abs):
+        if save_ecc_crop_thumbnail(dest, bbox, thumb_abs, img=img):
             thumb_web = f"/api/perspicuus-nelore/media/{safe_farm}/{safe_day}/{thumb_name}"
         box_name = f"bbox_{local_name}"
         box_abs = os.path.join(folder, box_name)
-        if save_ecc_bbox_overlay(dest, bbox, box_abs, yolo_conf=yconf):
+        if save_ecc_bbox_overlay(dest, bbox, box_abs, yolo_conf=yconf, img=img):
             bbox_web = f"/api/perspicuus-nelore/media/{safe_farm}/{safe_day}/{box_name}"
     cal = _perspicuus_get_calibration(db, 'nelore')
     cal = _perspicuus_cal_with_auto_bounds(db, 'nelore', cal, include_raw=raw_score)
@@ -3864,11 +3886,11 @@ def _nelore_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
     if bbox:
         thumb_name = f"thumb_{secure_filename(filename)}"
         thumb_abs = os.path.join(NELORE_UPLOADS_DIR, farm_slug, day_slug, thumb_name)
-        if save_ecc_crop_thumbnail(fp, bbox, thumb_abs):
+        if save_ecc_crop_thumbnail(fp, bbox, thumb_abs, img=img):
             thumb_web = f"/api/perspicuus-nelore/media/{farm_slug}/{day_slug}/{thumb_name}"
         box_name = f"bbox_{secure_filename(filename)}"
         box_abs = os.path.join(NELORE_UPLOADS_DIR, farm_slug, day_slug, box_name)
-        if save_ecc_bbox_overlay(fp, bbox, box_abs, yolo_conf=yconf):
+        if save_ecc_bbox_overlay(fp, bbox, box_abs, yolo_conf=yconf, img=img):
             bbox_web = f"/api/perspicuus-nelore/media/{farm_slug}/{day_slug}/{box_name}"
     cal = _perspicuus_get_calibration(db, 'nelore')
     cal = _perspicuus_cal_with_auto_bounds(db, 'nelore', cal, include_raw=raw_score)
@@ -3931,9 +3953,16 @@ def perspicuus_nelore_importar():
             if not farm_id or not date_iso or not files:
                 flash('Lote: informe fazenda, lote, data e ficheiros.', 'error')
                 return redirect(url_for('perspicuus_nelore_importar'))
+            files_total = len(files)
+            files = files[:PERSPICUUS_BATCH_MAX]
             n_ok, n_err = 0, 0
+            n_skipped = max(0, files_total - len(files))
             errs = []
+            deadline_at = time.monotonic() + PERSPICUUS_BATCH_DEADLINE_S
             for fs in files:
+                if time.monotonic() >= deadline_at:
+                    n_skipped += 1
+                    continue
                 if not fs or not fs.filename:
                     continue
                 animal_tag = os.path.splitext(os.path.basename(fs.filename))[0].strip()
@@ -3948,6 +3977,12 @@ def perspicuus_nelore_importar():
                 flash(f'Lote Nelore: {n_ok} imagem(ns) processada(s).', 'success')
             if n_err:
                 flash(f'Lote com {n_err} erro(s): ' + '; '.join(errs[:3]), 'error')
+            if n_skipped:
+                flash(
+                    f'{n_skipped} foto(s) não processada(s) neste lote — reenvie em '
+                    f'pacotes de até {PERSPICUUS_BATCH_MAX} imagens.',
+                    'error',
+                )
             return redirect(url_for('perspicuus_nelore_importar'))
         flash('Modo inválido.', 'error')
         return redirect(url_for('perspicuus_nelore_importar'))
