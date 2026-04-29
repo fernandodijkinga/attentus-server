@@ -2,12 +2,13 @@
 {% block title %}Perspicuus Angus - análise população{% endblock %}
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 {% endblock %}
 {% block content %}
 <div class="page-header">
   <div>
-    <div class="page-title">🐮 <span>Perspicuus Angus</span> <span style="color:var(--accent)">análise população</span></div>
-    <div class="page-sub">Distribuição populacional e tendência global (não agrupada por rebanho)</div>
+    <div class="page-title">🐮 <span>Perspicuus Angus</span> <span style="color:var(--accent)">análise população avançada</span></div>
+    <div class="page-sub">Traits, boxplots, efeitos fixos e significância estatística</div>
   </div>
 </div>
 <div class="card mb-16">
@@ -17,9 +18,58 @@
     <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
   </form>
 </div>
+<div class="stat-grid mb-16">
+  <div class="stat-card"><div class="stat-label">Registros</div><div class="stat-value">{{ cards.records }}</div></div>
+  <div class="stat-card"><div class="stat-label">Com raw</div><div class="stat-value blue">{{ cards.with_raw }}</div></div>
+  <div class="stat-card"><div class="stat-label">Com reescalado</div><div class="stat-value accent">{{ cards.with_rescaled }}</div></div>
+  <div class="stat-card"><div class="stat-label">Traits ativos</div><div class="stat-value orange">{{ cards.traits }}</div></div>
+  <div class="stat-card"><div class="stat-label">Raw mean ± sd</div><div class="stat-sub">{{ cards.raw_mean if cards.raw_mean is not none else '—' }} ± {{ cards.raw_std if cards.raw_std is not none else '—' }}</div></div>
+  <div class="stat-card"><div class="stat-label">Esc reescalado mean ± sd</div><div class="stat-sub">{{ cards.res_mean if cards.res_mean is not none else '—' }} ± {{ cards.res_std if cards.res_std is not none else '—' }}</div></div>
+</div>
 <div class="grid-2 mb-16">
   <div class="card"><div class="card-title">Distribuição de score (1-9)</div><div style="height:300px"><canvas id="ang-pop-dist"></canvas></div></div>
-  <div class="card"><div class="card-title">Média da população por dia</div><div style="height:300px"><canvas id="ang-pop-series"></canvas></div></div>
+  <div class="card"><div class="card-title">Média reescalada por dia</div><div style="height:300px"><canvas id="ang-pop-series"></canvas></div></div>
+</div>
+<div class="card mb-16">
+  <div class="flex-between mb-16">
+    <div class="card-title">Evolução por trait (raw x reescalado)</div>
+    <div class="field" style="margin:0;min-width:240px"><label>Trait</label><select id="traitSel"></select></div>
+  </div>
+  <div style="height:320px"><canvas id="traitSeries"></canvas></div>
+</div>
+<div class="grid-2 mb-16">
+  <div class="card">
+    <div class="card-title">Boxplot raw por efeito fixo</div>
+    <div class="field" style="max-width:260px"><label>Efeito</label><select id="effectSelRaw"></select></div>
+    <div id="boxRaw" style="height:320px"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Boxplot reescalado por efeito fixo</div>
+    <div class="field" style="max-width:260px"><label>Efeito</label><select id="effectSelRes"></select></div>
+    <div id="boxRes" style="height:320px"></div>
+  </div>
+</div>
+<div class="card mb-16">
+  <div class="card-title">Significância por efeito fixo (ANOVA + permutação)</div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Efeito</th><th>N raw</th><th>Grupos raw</th><th>eta² raw</th><th>p raw</th><th>N res</th><th>Grupos res</th><th>eta² res</th><th>p res</th></tr></thead>
+    <tbody>{% for r in effect_overall %}<tr>
+      <td>{{ r.label }}</td><td class="mono">{{ r.raw_n }}</td><td class="mono">{{ r.raw_groups }}</td>
+      <td class="mono">{{ '%.4f'|format(r.raw_eta2) if r.raw_eta2 is not none else '—' }}</td><td class="mono">{{ '%.4f'|format(r.raw_p) if r.raw_p is not none else '—' }}</td>
+      <td class="mono">{{ r.res_n }}</td><td class="mono">{{ r.res_groups }}</td>
+      <td class="mono">{{ '%.4f'|format(r.res_eta2) if r.res_eta2 is not none else '—' }}</td><td class="mono">{{ '%.4f'|format(r.res_p) if r.res_p is not none else '—' }}</td>
+    </tr>{% else %}<tr><td colspan="9"><div class="empty-state"><div class="icon">∑</div>Sem dados suficientes.</div></td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+<div class="card mb-16">
+  <div class="card-title">Traits com maior sinal de efeito fixo</div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Efeito</th><th>Trait</th><th>N</th><th>Grupos</th><th>eta²</th><th>p</th></tr></thead>
+    <tbody>{% for r in effect_traits %}<tr>
+      <td>{{ r.effect_label }}</td><td class="mono">{{ r.trait }}</td><td class="mono">{{ r.n }}</td><td class="mono">{{ r.groups }}</td>
+      <td class="mono">{{ '%.4f'|format(r.eta2) if r.eta2 is not none else '—' }}</td><td class="mono">{{ '%.4f'|format(r.p) if r.p is not none else '—' }}</td>
+    </tr>{% else %}<tr><td colspan="6"><div class="empty-state"><div class="icon">∑</div>Sem dados suficientes por trait.</div></td></tr>{% endfor %}</tbody>
+  </table></div>
 </div>
 <div class="card">
   <div class="card-title">Animais com maior variação</div>
@@ -34,11 +84,29 @@
 {% endblock %}
 {% block scripts %}
 <script>
-const DIST={{ dist|tojson }};
-const SER={{ pop_series|tojson }};
-const d=document.getElementById('ang-pop-dist');
-if(d){new Chart(d.getContext('2d'),{type:'bar',data:{labels:['1-3','3-5','5-7','7-9'],datasets:[{data:DIST,backgroundColor:['#c62841','#d9782b','#0d7a5e','#1a6fd4']}]},options:{responsive:true,maintainAspectRatio:false}});}
-const s=document.getElementById('ang-pop-series');
-if(s){new Chart(s.getContext('2d'),{type:'line',data:{labels:(SER||[]).map(x=>x.date),datasets:[{label:'Média 1-9',data:(SER||[]).map(x=>x.mean),borderColor:'#1a6fd4',backgroundColor:'rgba(26,111,212,.14)',fill:true,tension:.2}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{min:1,max:9}}}});}
+const DIST={{ dist|tojson }}, SER={{ pop_series|tojson }};
+const TRAIT_SER={{ trait_series|tojson }}, TOP_TRAITS={{ top_traits|tojson }};
+const BOX={{ boxplot_by_effect|tojson }}, EFFECTS={{ effect_overall|tojson }};
+let traitChart=null;
+if(document.getElementById('ang-pop-dist')) new Chart(document.getElementById('ang-pop-dist').getContext('2d'),{type:'bar',data:{labels:['1-3','3-5','5-7','7-9'],datasets:[{data:DIST,backgroundColor:['#c62841','#d9782b','#0d7a5e','#1a6fd4']}]},options:{responsive:true,maintainAspectRatio:false}});
+if(document.getElementById('ang-pop-series')) new Chart(document.getElementById('ang-pop-series').getContext('2d'),{type:'line',data:{labels:(SER||[]).map(x=>x.date),datasets:[{label:'Média 1-9',data:(SER||[]).map(x=>x.mean),borderColor:'#1a6fd4',backgroundColor:'rgba(26,111,212,.14)',fill:true,tension:.2}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{min:1,max:9}}}});
+function buildTrait(){
+  const sel=document.getElementById('traitSel'); if(!sel) return;
+  const t=sel.value; const arr=(TRAIT_SER||{})[t]||[]; const ctx=document.getElementById('traitSeries')?.getContext('2d'); if(!ctx) return;
+  if(traitChart) traitChart.destroy();
+  traitChart=new Chart(ctx,{type:'line',data:{labels:arr.map(x=>x.date),datasets:[{label:'Raw mean',data:arr.map(x=>x.raw_mean),borderColor:'#d9782b',tension:.2,yAxisID:'yRaw'},{label:'Rescaled mean',data:arr.map(x=>x.res_mean),borderColor:'#1a6fd4',tension:.2,yAxisID:'yRes'}]},options:{responsive:true,maintainAspectRatio:false,scales:{yRaw:{position:'left'},yRes:{position:'right',min:1,max:9,grid:{drawOnChartArea:false}}}});
+}
+function buildBox(targetId, effectKey, metric){
+  const host=document.getElementById(targetId); if(!host) return;
+  const rows=(BOX||{})[effectKey]||[];
+  const traces=rows.map(r=>({y:(metric==='raw'?r.raw:r.res)||[],type:'box',name:r.group,boxpoints:false}));
+  Plotly.newPlot(host,traces,{margin:{t:10,l:40,r:10,b:80},xaxis:{tickangle:-30},yaxis:{title:metric==='raw'?'raw':'reescalado'}},{displayModeBar:false,responsive:true});
+}
+const traitSel=document.getElementById('traitSel');
+if(traitSel){ (TOP_TRAITS||[]).forEach(t=>{const o=document.createElement('option');o.value=t;o.textContent=t;traitSel.appendChild(o);}); if((TOP_TRAITS||[]).length){traitSel.value=TOP_TRAITS[0]; buildTrait();} traitSel.addEventListener('change',buildTrait);}
+const effectKeys=(EFFECTS||[]).map(x=>x.effect);
+function initEff(id, cb){ const el=document.getElementById(id); if(!el) return; effectKeys.forEach(k=>{const o=document.createElement('option'); o.value=k; o.textContent=k; el.appendChild(o);}); if(effectKeys.length){el.value=effectKeys[0]; cb();} el.addEventListener('change',cb);}
+initEff('effectSelRaw', ()=>buildBox('boxRaw', document.getElementById('effectSelRaw').value, 'raw'));
+initEff('effectSelRes', ()=>buildBox('boxRes', document.getElementById('effectSelRes').value, 'res'));
 </script>
 {% endblock %}

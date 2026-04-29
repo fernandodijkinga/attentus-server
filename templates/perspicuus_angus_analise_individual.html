@@ -25,7 +25,7 @@
 <div class="card">
   <div class="card-title">Registros</div>
   <div class="table-wrap"><table>
-    <thead><tr><th>Data</th><th>Fazenda</th><th>Brinco</th><th>Raw</th><th>1-9</th><th>Status</th></tr></thead>
+    <thead><tr><th>Data</th><th>Fazenda</th><th>Brinco</th><th>Raw</th><th>Escore</th><th>Status</th></tr></thead>
     <tbody>{% for r in records %}<tr>
       <td class="mono">{{ r.inference_date }}</td><td>{{ r.farm_id }}</td><td class="mono">{{ r.animal_tag }}</td>
       <td class="mono">{{ '%.4f'|format(r.raw_score) if r.raw_score is not none else '—' }}</td>

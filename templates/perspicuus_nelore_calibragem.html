@@ -106,10 +106,12 @@
         <input id="cal-step" type="number" step="0.01" min="0.01" value="{{ '%g'|format(calibration.step) }}">
       </div>
       <div class="field">
-        <label>Efeito fixo</label>
-        <select id="cal-fixed-effect">
+        <label>Efeitos fixos (1 ou mais)</label>
+        <select id="cal-fixed-effects" multiple size="5">
           {% for fe in fixed_effects %}
-          <option value="{{ fe }}" {% if calibration.fixed_effect == fe %}selected{% endif %}>{{ fixed_effect_labels[fe] }}</option>
+          {% if fe %}
+          <option value="{{ fe }}" {% if fe in (calibration.fixed_effects or []) %}selected{% endif %}>{{ fixed_effect_labels[fe] }}</option>
+          {% endif %}
           {% endfor %}
         </select>
       </div>
@@ -165,7 +167,7 @@ function readParams() {
     resMin: Number(document.getElementById('cal-res-min').value),
     resMax: Number(document.getElementById('cal-res-max').value),
     step: Number(document.getElementById('cal-step').value),
-    fixedEffect: document.getElementById('cal-fixed-effect').value,
+    fixedEffects: Array.from(document.getElementById('cal-fixed-effects').selectedOptions).map((o) => o.value),
   };
 }
 
@@ -211,7 +213,7 @@ async function applyCalibration() {
       body: JSON.stringify({
         raw_min: p.rawMin, raw_max: p.rawMax,
         res_min: p.resMin, res_max: p.resMax,
-        step: p.step, fixed_effect: p.fixedEffect,
+        step: p.step, fixed_effects: p.fixedEffects,
         farm_id: farm, lot_id: lot,
       }),
     });
@@ -226,7 +228,7 @@ async function applyCalibration() {
   }
 }
 
-['cal-raw-min','cal-raw-max','cal-res-min','cal-res-max','cal-step','cal-fixed-effect']
+['cal-raw-min','cal-raw-max','cal-res-min','cal-res-max','cal-step','cal-fixed-effects']
   .forEach((id) => document.getElementById(id).addEventListener('input', refreshPreview));
 document.getElementById('btnApply').addEventListener('click', applyCalibration);
 refreshPreview();

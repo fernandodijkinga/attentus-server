@@ -27,6 +27,7 @@
 import os
 import re
 import math
+import random
 import sqlite3
 import json
 import threading
@@ -188,9 +189,28 @@ def _perspicuus_default_cal() -> dict[str, Any]:
         'res_max': 9.0,
         'step': 0.5,
         'fixed_effect': '',
+        'fixed_effects': [],
         'updated_at': None,
         'updated_by': 'system',
     }
+
+
+def _perspicuus_parse_fixed_effects(raw: Any, breed: str) -> list[str]:
+    allowed = [x for x in PERSPICUUS_FIXED_EFFECTS.get(breed, ()) if x]
+    if not allowed:
+        return []
+    parts: list[str] = []
+    if isinstance(raw, str):
+        parts = [x.strip() for x in raw.split(',') if x.strip()]
+    elif isinstance(raw, (list, tuple, set)):
+        parts = [str(x).strip() for x in raw if str(x).strip()]
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in parts:
+        if p in allowed and p not in seen:
+            out.append(p)
+            seen.add(p)
+    return out
 
 
 def _perspicuus_get_calibration(db, breed: str) -> dict[str, Any]:
@@ -203,13 +223,15 @@ def _perspicuus_get_calibration(db, breed: str) -> dict[str, Any]:
     ).fetchone()
     if not row:
         return _perspicuus_default_cal()
+    fixed_effects = _perspicuus_parse_fixed_effects(row['fixed_effect'], breed)
     return {
         'raw_min': float(row['raw_min']),
         'raw_max': float(row['raw_max']),
         'res_min': float(row['res_min']),
         'res_max': float(row['res_max']),
         'step': float(row['step']),
-        'fixed_effect': str(row['fixed_effect'] or ''),
+        'fixed_effect': ','.join(fixed_effects),
+        'fixed_effects': fixed_effects,
         'updated_at': row['updated_at'],
         'updated_by': row['updated_by'],
     }
@@ -248,18 +270,349 @@ def _perspicuus_birth_year(birth_date: str) -> str:
     return ''
 
 
-def _perspicuus_record_group_key(rec: dict[str, Any], fixed_effect: str) -> str:
-    if not fixed_effect:
+def _perspicuus_record_group_key(rec: dict[str, Any], fixed_effects: list[str]) -> str:
+    if not fixed_effects:
         return ''
-    if fixed_effect == 'farm':
-        return str(rec.get('farm_id') or '').strip()
-    if fixed_effect == 'lot':
-        return str(rec.get('lot_id') or '').strip()
-    if fixed_effect == 'birth_year':
-        return _perspicuus_birth_year(rec.get('birth_date') or '')
-    if fixed_effect == 'sex':
-        return str(rec.get('sex') or '').strip().lower()
-    return ''
+    parts: list[str] = []
+    for fixed_effect in fixed_effects:
+        if fixed_effect == 'farm':
+            value = str(rec.get('farm_id') or '').strip()
+        elif fixed_effect == 'lot':
+            value = str(rec.get('lot_id') or '').strip()
+        elif fixed_effect == 'birth_year':
+            value = _perspicuus_birth_year(rec.get('birth_date') or '')
+        elif fixed_effect == 'sex':
+            value = str(rec.get('sex') or '').strip().lower()
+        else:
+            value = ''
+        if not value:
+            return ''
+        parts.append(value)
+    return '||'.join(parts)
+
+
+def _pct(sorted_vals: list[float], q: float) -> float | None:
+    if not sorted_vals:
+        return None
+    if len(sorted_vals) == 1:
+        return float(sorted_vals[0])
+    qq = max(0.0, min(1.0, float(q)))
+    pos = qq * (len(sorted_vals) - 1)
+    lo = int(math.floor(pos))
+    hi = int(math.ceil(pos))
+    if lo == hi:
+        return float(sorted_vals[lo])
+    w = pos - lo
+    return float(sorted_vals[lo] * (1.0 - w) + sorted_vals[hi] * w)
+
+
+def _mean_std(vals: list[float]) -> tuple[float | None, float | None]:
+    if not vals:
+        return None, None
+    mu = sum(vals) / len(vals)
+    if len(vals) < 2:
+        return float(mu), 0.0
+    var = sum((v - mu) ** 2 for v in vals) / (len(vals) - 1)
+    return float(mu), float(math.sqrt(max(0.0, var)))
+
+
+def _anova_eta2_with_permutation(
+    groups: dict[str, list[float]],
+    permutations: int = 250,
+    sample_cap: int = 2400,
+) -> dict[str, Any]:
+    clean = {k: [float(x) for x in v if x is not None] for k, v in groups.items() if len(v) >= 2}
+    clean = {k: v for k, v in clean.items() if len(v) >= 2}
+    if len(clean) < 2:
+        return {'n': sum(len(v) for v in clean.values()), 'groups': len(clean), 'eta2': None, 'f': None, 'p': None}
+
+    labels: list[str] = []
+    values: list[float] = []
+    for g, arr in clean.items():
+        for x in arr:
+            labels.append(g)
+            values.append(float(x))
+    n = len(values)
+    if n < 8:
+        return {'n': n, 'groups': len(clean), 'eta2': None, 'f': None, 'p': None}
+
+    if n > sample_cap:
+        idx = random.sample(range(n), sample_cap)
+        labels = [labels[i] for i in idx]
+        values = [values[i] for i in idx]
+        n = len(values)
+
+    group_sizes: dict[str, int] = {}
+    for g in labels:
+        group_sizes[g] = group_sizes.get(g, 0) + 1
+    usable_groups = {g for g, c in group_sizes.items() if c >= 2}
+    if len(usable_groups) < 2:
+        return {'n': n, 'groups': len(usable_groups), 'eta2': None, 'f': None, 'p': None}
+
+    vals2 = [v for v, g in zip(values, labels) if g in usable_groups]
+    labs2 = [g for g in labels if g in usable_groups]
+    n2 = len(vals2)
+    if n2 < 8:
+        return {'n': n2, 'groups': len(usable_groups), 'eta2': None, 'f': None, 'p': None}
+
+    def f_stat(vals_in: list[float], labs_in: list[str]) -> tuple[float, float]:
+        mu = sum(vals_in) / len(vals_in)
+        sums: dict[str, float] = {}
+        cnts: dict[str, int] = {}
+        for v, g in zip(vals_in, labs_in):
+            sums[g] = sums.get(g, 0.0) + v
+            cnts[g] = cnts.get(g, 0) + 1
+        means = {g: sums[g] / cnts[g] for g in cnts}
+        ss_between = sum(cnts[g] * (means[g] - mu) ** 2 for g in cnts)
+        ss_total = sum((v - mu) ** 2 for v in vals_in)
+        ss_within = max(0.0, ss_total - ss_between)
+        k = len(cnts)
+        dfb = k - 1
+        dfw = len(vals_in) - k
+        if dfb <= 0 or dfw <= 0 or ss_within <= 0:
+            return 0.0, 0.0
+        msb = ss_between / dfb
+        msw = ss_within / dfw
+        fval = msb / msw if msw > 0 else 0.0
+        eta2 = ss_between / ss_total if ss_total > 0 else 0.0
+        return float(fval), float(max(0.0, min(1.0, eta2)))
+
+    f_obs, eta2 = f_stat(vals2, labs2)
+    ge = 0
+    labs_tmp = labs2[:]
+    for _ in range(max(1, int(permutations))):
+        random.shuffle(labs_tmp)
+        f_perm, _ = f_stat(vals2, labs_tmp)
+        if f_perm >= f_obs:
+            ge += 1
+    p = (ge + 1) / (max(1, int(permutations)) + 1)
+    return {'n': n2, 'groups': len(usable_groups), 'eta2': eta2, 'f': f_obs, 'p': p}
+
+
+def _perspicuus_population_analysis(rows: list[sqlite3.Row], breed: str) -> dict[str, Any]:
+    all_rows = [dict(r) for r in rows]
+    raw_vals = []
+    res_vals = []
+    by_day: dict[str, dict[str, float]] = {}
+    by_animal: dict[str, list[float]] = {}
+    dist = [0, 0, 0, 0]
+    traits_all: dict[str, list[float]] = defaultdict(list)
+    traits_res_all: dict[str, list[float]] = defaultdict(list)
+    trait_day: dict[str, dict[str, dict[str, float]]] = defaultdict(lambda: defaultdict(lambda: {'raw_sum': 0.0, 'res_sum': 0.0, 'n': 0}))
+
+    for r in all_rows:
+        sc = r.get('score_1_9')
+        rw = r.get('raw_score')
+        try:
+            rwf = float(rw) if rw is not None else None
+        except (TypeError, ValueError):
+            rwf = None
+        try:
+            scf = float(sc) if sc is not None else None
+        except (TypeError, ValueError):
+            scf = None
+        if rwf is not None:
+            raw_vals.append(rwf)
+        if scf is not None:
+            res_vals.append(scf)
+            if scf < 3:
+                dist[0] += 1
+            elif scf < 5:
+                dist[1] += 1
+            elif scf < 7:
+                dist[2] += 1
+            else:
+                dist[3] += 1
+
+        day = str(r.get('inference_date') or '')
+        if day and scf is not None:
+            box = by_day.setdefault(day, {'sum': 0.0, 'n': 0})
+            box['sum'] += scf
+            box['n'] += 1
+
+        if scf is not None:
+            if breed == 'nelore':
+                key = f"{r.get('farm_id','')}::{r.get('lot_id','')}::{r.get('animal_tag','')}"
+            else:
+                key = f"{r.get('farm_id','')}::{r.get('animal_tag','')}"
+            by_animal.setdefault(key, []).append(scf)
+
+        traits = {}
+        try:
+            traits = json.loads(r.get('traits_json') or '{}')
+        except (TypeError, ValueError, json.JSONDecodeError):
+            traits = {}
+        if isinstance(traits, dict):
+            for tname, tval in traits.items():
+                try:
+                    tv = float(tval)
+                except (TypeError, ValueError):
+                    continue
+                traits_all[str(tname)].append(tv)
+                trs = rescale_perspicuus_trait_score(tv)
+                traits_res_all[str(tname)].append(trs)
+                if day:
+                    bucket = trait_day[str(tname)][day]
+                    bucket['raw_sum'] += tv
+                    bucket['res_sum'] += trs
+                    bucket['n'] += 1
+
+    pop_series = [
+        {'date': d, 'mean': round(box['sum'] / box['n'], 3), 'n': int(box['n'])}
+        for d, box in sorted(by_day.items(), key=lambda x: x[0]) if box['n'] > 0
+    ]
+
+    ranked = []
+    for k, vals in by_animal.items():
+        if len(vals) < 2:
+            continue
+        if breed == 'nelore':
+            farm_id, lot_id, animal_tag = k.split('::', 2)
+            ranked.append({
+                'farm_id': farm_id, 'lot_id': lot_id, 'animal_tag': animal_tag,
+                'n': len(vals), 'mean': round(sum(vals) / len(vals), 2),
+                'min': round(min(vals), 2), 'max': round(max(vals), 2),
+                'spread': round(max(vals) - min(vals), 2),
+            })
+        else:
+            farm_id, animal_tag = k.split('::', 1)
+            ranked.append({
+                'farm_id': farm_id, 'animal_tag': animal_tag,
+                'n': len(vals), 'mean': round(sum(vals) / len(vals), 2),
+                'min': round(min(vals), 2), 'max': round(max(vals), 2),
+                'spread': round(max(vals) - min(vals), 2),
+            })
+    ranked.sort(key=lambda x: (-x['spread'], -x['n']))
+
+    trait_summary = []
+    for t in sorted(traits_all.keys()):
+        arr_raw = sorted(traits_all[t])
+        arr_res = sorted(traits_res_all[t])
+        mu_raw, sd_raw = _mean_std(arr_raw)
+        mu_res, sd_res = _mean_std(arr_res)
+        trait_summary.append({
+            'trait': t,
+            'n': len(arr_raw),
+            'raw_mean': round(mu_raw, 4) if mu_raw is not None else None,
+            'raw_std': round(sd_raw, 4) if sd_raw is not None else None,
+            'raw_q1': round(_pct(arr_raw, 0.25) or 0.0, 4) if arr_raw else None,
+            'raw_median': round(_pct(arr_raw, 0.50) or 0.0, 4) if arr_raw else None,
+            'raw_q3': round(_pct(arr_raw, 0.75) or 0.0, 4) if arr_raw else None,
+            'res_mean': round(mu_res, 3) if mu_res is not None else None,
+            'res_std': round(sd_res, 3) if sd_res is not None else None,
+        })
+    trait_summary.sort(key=lambda x: x['n'], reverse=True)
+    top_traits = [x['trait'] for x in trait_summary[:8]]
+
+    trait_series = {}
+    for t in top_traits:
+        entries = []
+        for d, box in sorted(trait_day[t].items(), key=lambda x: x[0]):
+            if box['n'] <= 0:
+                continue
+            entries.append({
+                'date': d,
+                'raw_mean': round(box['raw_sum'] / box['n'], 4),
+                'res_mean': round(box['res_sum'] / box['n'], 3),
+                'n': int(box['n']),
+            })
+        trait_series[t] = entries
+
+    effect_keys = [e for e in PERSPICUUS_FIXED_EFFECTS.get(breed, ()) if e]
+    effect_overall = []
+    effect_traits = []
+    boxplot_by_effect = {}
+    for eff in effect_keys:
+        grp_raw: dict[str, list[float]] = defaultdict(list)
+        grp_res: dict[str, list[float]] = defaultdict(list)
+        trait_grp: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+        for r in all_rows:
+            gk = _perspicuus_record_group_key(r, [eff])
+            if not gk:
+                continue
+            try:
+                if r.get('raw_score') is not None:
+                    grp_raw[gk].append(float(r.get('raw_score')))
+            except (TypeError, ValueError):
+                pass
+            try:
+                if r.get('score_1_9') is not None:
+                    grp_res[gk].append(float(r.get('score_1_9')))
+            except (TypeError, ValueError):
+                pass
+            try:
+                traits = json.loads(r.get('traits_json') or '{}')
+            except (TypeError, ValueError, json.JSONDecodeError):
+                traits = {}
+            if isinstance(traits, dict):
+                for tn in top_traits:
+                    try:
+                        trait_grp[tn][gk].append(float(traits.get(tn)))
+                    except (TypeError, ValueError):
+                        continue
+
+        a_raw = _anova_eta2_with_permutation(grp_raw)
+        a_res = _anova_eta2_with_permutation(grp_res)
+        effect_overall.append({
+            'effect': eff,
+            'label': PERSPICUUS_FIXED_EFFECT_LABELS.get(eff, eff),
+            'raw_n': a_raw['n'], 'raw_groups': a_raw['groups'], 'raw_eta2': a_raw['eta2'], 'raw_p': a_raw['p'],
+            'res_n': a_res['n'], 'res_groups': a_res['groups'], 'res_eta2': a_res['eta2'], 'res_p': a_res['p'],
+        })
+
+        for tn in top_traits:
+            aa = _anova_eta2_with_permutation(trait_grp[tn])
+            effect_traits.append({
+                'effect': eff, 'effect_label': PERSPICUUS_FIXED_EFFECT_LABELS.get(eff, eff),
+                'trait': tn, 'n': aa['n'], 'groups': aa['groups'], 'eta2': aa['eta2'], 'p': aa['p'],
+            })
+
+        # Boxplot points (top 10 groups by n)
+        box_groups = sorted(
+            [(g, len(v)) for g, v in grp_raw.items() if len(v) >= 3],
+            key=lambda x: -x[1]
+        )[:10]
+        payload = []
+        for g, _ in box_groups:
+            payload.append({
+                'group': g,
+                'raw': grp_raw.get(g, [])[:220],
+                'res': grp_res.get(g, [])[:220],
+            })
+        boxplot_by_effect[eff] = payload
+
+    effect_traits.sort(
+        key=lambda x: (
+            9e9 if x['p'] is None else x['p'],
+            -1 if x['eta2'] is None else -x['eta2'],
+        )
+    )
+
+    raw_mu, raw_sd = _mean_std(raw_vals)
+    res_mu, res_sd = _mean_std(res_vals)
+    cards = {
+        'records': len(all_rows),
+        'with_raw': len(raw_vals),
+        'with_rescaled': len(res_vals),
+        'traits': len(trait_summary),
+        'raw_mean': round(raw_mu, 4) if raw_mu is not None else None,
+        'raw_std': round(raw_sd, 4) if raw_sd is not None else None,
+        'res_mean': round(res_mu, 3) if res_mu is not None else None,
+        'res_std': round(res_sd, 3) if res_sd is not None else None,
+    }
+
+    return {
+        'cards': cards,
+        'dist': dist,
+        'pop_series': pop_series,
+        'ranked': ranked[:120],
+        'trait_summary': trait_summary,
+        'top_traits': top_traits,
+        'trait_series': trait_series,
+        'effect_overall': effect_overall,
+        'effect_traits': effect_traits[:80],
+        'boxplot_by_effect': boxplot_by_effect,
+    }
 
 
 def _perspicuus_apply_calibration(
@@ -288,10 +641,12 @@ def _perspicuus_apply_calibration(
         params,
     ).fetchall()
 
-    fixed_effect = str(cal.get('fixed_effect') or '')
+    fixed_effects = cal.get('fixed_effects')
+    if not isinstance(fixed_effects, list):
+        fixed_effects = _perspicuus_parse_fixed_effects(cal.get('fixed_effect') or '', breed)
     group_means: dict[str, float] = {}
     global_mean: float | None = None
-    if fixed_effect and rows:
+    if fixed_effects and rows:
         sums: dict[str, list[float]] = {}
         all_vals: list[float] = []
         for r in rows:
@@ -300,7 +655,7 @@ def _perspicuus_apply_calibration(
             except (TypeError, ValueError):
                 continue
             d = dict(r)
-            g = _perspicuus_record_group_key(d, fixed_effect)
+            g = _perspicuus_record_group_key(d, fixed_effects)
             if not g:
                 continue
             sums.setdefault(g, []).append(v)
@@ -318,9 +673,9 @@ def _perspicuus_apply_calibration(
         except (TypeError, ValueError):
             continue
         adj = raw
-        if fixed_effect and global_mean is not None:
+        if fixed_effects and global_mean is not None:
             d = dict(r)
-            g = _perspicuus_record_group_key(d, fixed_effect)
+            g = _perspicuus_record_group_key(d, fixed_effects)
             mu_g = group_means.get(g)
             if mu_g is not None:
                 adj = raw - mu_g + global_mean
@@ -2608,61 +2963,23 @@ def perspicuus_angus_analise_populacao():
     q = str(request.args.get('q', '')).strip()
     rows = _angus_load_rows(db, farm_filter, '', q, limit=12000)
     farms, _, stats = _angus_base_lists(db)
-    dist = [0, 0, 0, 0]
-    by_day: dict[str, dict[str, float]] = {}
-    by_animal: dict[str, list[float]] = {}
-    for r in rows:
-        sc = r['score_1_9']
-        if sc is None:
-            continue
-        try:
-            v = float(sc)
-        except (TypeError, ValueError):
-            continue
-        if v < 3:
-            dist[0] += 1
-        elif v < 5:
-            dist[1] += 1
-        elif v < 7:
-            dist[2] += 1
-        else:
-            dist[3] += 1
-        d = str(r['inference_date'] or '')
-        if d:
-            box = by_day.setdefault(d, {'sum': 0.0, 'n': 0})
-            box['sum'] += v
-            box['n'] += 1
-        key = f"{r['farm_id']}::{r['animal_tag']}"
-        by_animal.setdefault(key, []).append(v)
-    pop_series = [
-        {'date': d, 'mean': round(box['sum'] / box['n'], 3), 'n': int(box['n'])}
-        for d, box in sorted(by_day.items(), key=lambda x: x[0])
-        if box['n'] > 0
-    ]
-    ranked = []
-    for k, vals in by_animal.items():
-        if len(vals) < 2:
-            continue
-        farm_id, animal_tag = k.split('::', 1)
-        ranked.append({
-            'farm_id': farm_id,
-            'animal_tag': animal_tag,
-            'n': len(vals),
-            'mean': round(sum(vals) / len(vals), 2),
-            'min': round(min(vals), 2),
-            'max': round(max(vals), 2),
-            'spread': round(max(vals) - min(vals), 2),
-        })
-    ranked.sort(key=lambda x: (-x['spread'], -x['n']))
+    deep = _perspicuus_population_analysis(rows, 'angus')
     return render_template(
         'perspicuus_angus_analise_populacao.html',
         farms=farms,
         farm_filter=farm_filter,
         q_filter=q,
         stats=stats,
-        dist=dist,
-        pop_series=pop_series,
-        ranked=ranked[:120],
+        cards=deep['cards'],
+        dist=deep['dist'],
+        pop_series=deep['pop_series'],
+        ranked=deep['ranked'],
+        trait_summary=deep['trait_summary'],
+        top_traits=deep['top_traits'],
+        trait_series=deep['trait_series'],
+        effect_overall=deep['effect_overall'],
+        effect_traits=deep['effect_traits'],
+        boxplot_by_effect=deep['boxplot_by_effect'],
     )
 
 
@@ -2839,16 +3156,18 @@ def _validate_perspicuus_cal_payload(data: dict, breed: str) -> tuple[str | None
         return 'res_max deve ser maior que res_min.', {}
     if step <= 0 or step > (res_max - res_min):
         return 'step deve ser positivo e <= (res_max - res_min).', {}
-    fixed_effect = str(data.get('fixed_effect') or '').strip()
-    if fixed_effect not in PERSPICUUS_FIXED_EFFECTS.get(breed, ('',)):
-        return 'efeito fixo inválido para esta raça.', {}
+    fixed_effects = _perspicuus_parse_fixed_effects(
+        data.get('fixed_effects', data.get('fixed_effect') or ''),
+        breed,
+    )
     return None, {
         'raw_min': raw_min,
         'raw_max': raw_max,
         'res_min': res_min,
         'res_max': res_max,
         'step': step,
-        'fixed_effect': fixed_effect,
+        'fixed_effect': ','.join(fixed_effects),
+        'fixed_effects': fixed_effects,
     }
 
 
@@ -3212,53 +3531,7 @@ def perspicuus_nelore_analise_populacao():
     q = str(request.args.get('q', '')).strip()
     rows = _nelore_load_rows(db, farm_filter, lot_filter, '', q, limit=12000)
     farms, lots, _, stats = _nelore_base_lists(db)
-    dist = [0, 0, 0, 0]
-    by_day: dict[str, dict[str, float]] = {}
-    by_animal: dict[str, list[float]] = {}
-    for r in rows:
-        sc = r['score_1_9']
-        if sc is None:
-            continue
-        try:
-            v = float(sc)
-        except (TypeError, ValueError):
-            continue
-        if v < 3:
-            dist[0] += 1
-        elif v < 5:
-            dist[1] += 1
-        elif v < 7:
-            dist[2] += 1
-        else:
-            dist[3] += 1
-        d = str(r['inference_date'] or '')
-        if d:
-            box = by_day.setdefault(d, {'sum': 0.0, 'n': 0})
-            box['sum'] += v
-            box['n'] += 1
-        key = f"{r['farm_id']}::{r['lot_id'] or ''}::{r['animal_tag']}"
-        by_animal.setdefault(key, []).append(v)
-    pop_series = [
-        {'date': d, 'mean': round(box['sum'] / box['n'], 3), 'n': int(box['n'])}
-        for d, box in sorted(by_day.items(), key=lambda x: x[0])
-        if box['n'] > 0
-    ]
-    ranked = []
-    for k, vals in by_animal.items():
-        if len(vals) < 2:
-            continue
-        farm_id, lot_id, animal_tag = k.split('::', 2)
-        ranked.append({
-            'farm_id': farm_id,
-            'lot_id': lot_id,
-            'animal_tag': animal_tag,
-            'n': len(vals),
-            'mean': round(sum(vals) / len(vals), 2),
-            'min': round(min(vals), 2),
-            'max': round(max(vals), 2),
-            'spread': round(max(vals) - min(vals), 2),
-        })
-    ranked.sort(key=lambda x: (-x['spread'], -x['n']))
+    deep = _perspicuus_population_analysis(rows, 'nelore')
     return render_template(
         'perspicuus_nelore_analise_populacao.html',
         farms=farms,
@@ -3267,9 +3540,16 @@ def perspicuus_nelore_analise_populacao():
         lot_filter=lot_filter,
         q_filter=q,
         stats=stats,
-        dist=dist,
-        pop_series=pop_series,
-        ranked=ranked[:120],
+        cards=deep['cards'],
+        dist=deep['dist'],
+        pop_series=deep['pop_series'],
+        ranked=deep['ranked'],
+        trait_summary=deep['trait_summary'],
+        top_traits=deep['top_traits'],
+        trait_series=deep['trait_series'],
+        effect_overall=deep['effect_overall'],
+        effect_traits=deep['effect_traits'],
+        boxplot_by_effect=deep['boxplot_by_effect'],
     )
 
 
