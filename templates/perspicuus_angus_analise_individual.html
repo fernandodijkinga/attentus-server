@@ -1,11 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Perspicuus Angus - análise individual{% endblock %}
 {% block head %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 .meta-line{font-family:var(--mono);font-size:12px;color:var(--text2);margin-bottom:10px}
 .ind-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .animal-cover{width:100%;height:260px;object-fit:cover;border:1px solid var(--border);border-radius:10px;background:var(--surf2)}
+.score-gauge{display:grid;gap:6px}
+.traits-hint{font-size:10px;color:var(--text2);font-family:var(--mono);line-height:1.35;margin:0 0 4px}
+.trait-name{color:var(--text);font-family:var(--mono);letter-spacing:.2px}
+.persp-gauge-row{margin-bottom:6px}
+.persp-gauge-row:last-child{margin-bottom:0}
+.persp-gauge-label-row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:2px}
+.persp-gauge-val{font-family:var(--mono);font-size:14px;font-weight:700;color:var(--primary)}
+.persp-gauge-val-wrap{display:inline-flex;align-items:baseline;gap:6px}
+.persp-gauge-val-raw{font-family:var(--mono);font-size:10px;font-weight:500;color:var(--text2)}
+.persp-gauge-scale-head{display:flex;justify-content:space-between;font-family:var(--mono);color:var(--text2);font-size:10px;letter-spacing:.5px;margin-bottom:3px}
+.persp-gauge-bar{position:relative;height:12px;border-radius:999px;border:1px solid var(--border);background:linear-gradient(90deg,#ff4d6a 0%,#ff9f40 22%,#00e5a0 50%,#ff9f40 78%,#ff4d6a 100%);overflow:visible;box-shadow:inset 0 1px 2px rgba(255,255,255,.35)}
+.persp-gauge-marker{position:absolute;top:-4px;width:3px;height:20px;background:#eaf8ff;box-shadow:0 0 0 1px rgba(0,0,0,.35);transform:translateX(-50%);left:calc(var(--pct,50)*1%)}
 @media (max-width:980px){.ind-grid{grid-template-columns:1fr}}
 </style>
 {% endblock %}
@@ -25,8 +36,11 @@
   </form>
 </div>
 {% set featured = images[0] if images and (images|length) > 0 else none %}
+{% set raw_ref = (featured.raw_score|perspicuus_rescaled) if featured and featured.raw_score is not none else none %}
+{% set lot_ref = featured.score_lot if featured else none %}
+{% set global_ref = (featured.score_global if featured and featured.score_global is not none else (featured.score_1_9 if featured else none)) %}
 <div class="card mb-16">
-  <div class="card-title">Curva do animal — {{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
+  <div class="card-title">Análise do animal — {{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
   <div class="meta-line">
     Fazenda: <b>{{ selected_farm or '—' }}</b> ·
     Brinco: <b>{{ selected_animal or '—' }}</b> ·
@@ -44,9 +58,85 @@
       <div class="empty-state"><div class="icon">🖼️</div>Sem imagem para o animal.</div>
       {% endif %}
     </div>
-    <div class="card"><div class="card-title">Plot Raw score</div><div style="height:260px"><canvas id="ang-raw"></canvas></div></div>
-    <div class="card"><div class="card-title">Plot Escore lote</div><div style="height:260px"><canvas id="ang-lot"></canvas></div></div>
-    <div class="card"><div class="card-title">Plot Escore global</div><div style="height:260px"><canvas id="ang-global"></canvas></div></div>
+    <div class="card">
+      <div class="card-title">Plot Raw score (sem média)</div>
+      <div class="score-gauge">
+        <p class="traits-hint">Um gauge por trait identificado, sem agregação.</p>
+        {% if featured and featured.traits_items %}
+          {% for tname, tval in featured.traits_items %}
+          {% set t_raw = tval|perspicuus_rescaled %}
+          <div class="persp-gauge-row">
+            <div class="persp-gauge-label-row">
+              <span class="trait-name">{{ tname }}</span>
+              {% if t_raw is not none %}
+              <span class="persp-gauge-val-wrap"><span class="persp-gauge-val">{{ '%g'|format(t_raw) }}</span><span class="persp-gauge-val-raw">raw {{ '%.2f'|format(tval) }}</span></span>
+              {% else %}
+              <span class="persp-gauge-val" style="color:var(--muted);font-weight:600">—</span>
+              {% endif %}
+            </div>
+            <div class="persp-gauge-scale-head"><span>1.00</span><span>5.00</span><span>9.00</span></div>
+            <div class="persp-gauge-bar">{% if t_raw is not none %}<div class="persp-gauge-marker" style="--pct: {{ t_raw|persp_gauge_left_pct }}"></div>{% endif %}</div>
+          </div>
+          {% endfor %}
+        {% else %}
+        <div class="empty-state"><div class="icon">📉</div>Sem traits identificados.</div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Plot Escore lote (sem média)</div>
+      <div class="score-gauge">
+        <p class="traits-hint">Ajuste por trait com delta do escore lote, sem mistura entre traits.</p>
+        {% if featured and featured.traits_items %}
+          {% set lot_delta = (lot_ref - raw_ref) if lot_ref is not none and raw_ref is not none else none %}
+          {% for tname, tval in featured.traits_items %}
+          {% set t_raw = tval|perspicuus_rescaled %}
+          {% set t_lot = (t_raw + lot_delta) if t_raw is not none and lot_delta is not none else none %}
+          <div class="persp-gauge-row">
+            <div class="persp-gauge-label-row">
+              <span class="trait-name">{{ tname }}</span>
+              {% if t_lot is not none %}
+              <span class="persp-gauge-val-wrap"><span class="persp-gauge-val">{{ '%g'|format(t_lot) }}</span><span class="persp-gauge-val-raw">raw {{ '%.2f'|format(tval) }}</span></span>
+              {% else %}
+              <span class="persp-gauge-val" style="color:var(--muted);font-weight:600">—</span>
+              {% endif %}
+            </div>
+            <div class="persp-gauge-scale-head"><span>1.00</span><span>5.00</span><span>9.00</span></div>
+            <div class="persp-gauge-bar">{% if t_lot is not none %}<div class="persp-gauge-marker" style="--pct: {{ t_lot|persp_gauge_left_pct }}"></div>{% endif %}</div>
+          </div>
+          {% endfor %}
+        {% else %}
+        <div class="empty-state"><div class="icon">📉</div>Sem traits identificados.</div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Plot Escore global (sem média)</div>
+      <div class="score-gauge">
+        <p class="traits-hint">Ajuste por trait com delta do escore global, sem mistura entre traits.</p>
+        {% if featured and featured.traits_items %}
+          {% set global_delta = (global_ref - raw_ref) if global_ref is not none and raw_ref is not none else none %}
+          {% for tname, tval in featured.traits_items %}
+          {% set t_raw = tval|perspicuus_rescaled %}
+          {% set t_global = (t_raw + global_delta) if t_raw is not none and global_delta is not none else none %}
+          <div class="persp-gauge-row">
+            <div class="persp-gauge-label-row">
+              <span class="trait-name">{{ tname }}</span>
+              {% if t_global is not none %}
+              <span class="persp-gauge-val-wrap"><span class="persp-gauge-val">{{ '%g'|format(t_global) }}</span><span class="persp-gauge-val-raw">raw {{ '%.2f'|format(tval) }}</span></span>
+              {% else %}
+              <span class="persp-gauge-val" style="color:var(--muted);font-weight:600">—</span>
+              {% endif %}
+            </div>
+            <div class="persp-gauge-scale-head"><span>1.00</span><span>5.00</span><span>9.00</span></div>
+            <div class="persp-gauge-bar">{% if t_global is not none %}<div class="persp-gauge-marker" style="--pct: {{ t_global|persp_gauge_left_pct }}"></div>{% endif %}</div>
+          </div>
+          {% endfor %}
+        {% else %}
+        <div class="empty-state"><div class="icon">📉</div>Sem traits identificados.</div>
+        {% endif %}
+      </div>
+    </div>
   </div>
 </div>
 <div class="card">
@@ -64,30 +154,4 @@
   </table></div>
 </div>
 {% endblock %}
-{% block scripts %}
-<script id="ang-points-json" type="application/json">{{ points|tojson }}</script>
-<script>
-function readJson(id, fallback){
-  const el = document.getElementById(id);
-  if (!el) return fallback;
-  try { return JSON.parse(el.textContent || 'null') ?? fallback; } catch { return fallback; }
-}
-const PTS = readJson('ang-points-json', []);
-const rows = (Array.isArray(PTS)?PTS:[]).slice().sort((a,b)=>String(a.inference_date).localeCompare(String(b.inference_date))||((a.id||0)-(b.id||0)));
-const labels = rows.map(r=>r.inference_date);
-function drawLine(id, values, color, min=null, max=null, label=''){
-  const c=document.getElementById(id); if(!c || !rows.length) return;
-  const opts={responsive:true,maintainAspectRatio:false,scales:{y:{}}};
-  if(min!==null) opts.scales.y.min=min;
-  if(max!==null) opts.scales.y.max=max;
-  new Chart(c.getContext('2d'),{
-    type:'line',
-    data:{labels,datasets:[{label,data:values,borderColor:color,backgroundColor:'rgba(13,122,94,.12)',fill:true,tension:.2}]},
-    options:opts
-  });
-}
-drawLine('ang-raw', rows.map(r=>r.raw_score!=null?Number(r.raw_score):null), '#d9782b', null, null, 'Raw');
-drawLine('ang-lot', rows.map(r=>r.score_lot!=null?Number(r.score_lot):null), '#0d7a5e', 1, 9, 'Lote');
-drawLine('ang-global', rows.map(r=>r.score_global!=null?Number(r.score_global):null), '#1a6fd4', 1, 9, 'Global');
-</script>
-{% endblock %}
+{% block scripts %}{% endblock %}
