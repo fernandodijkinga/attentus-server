@@ -4,7 +4,7 @@
 <style>
 .meta-line{font-family:var(--mono);font-size:12px;color:var(--text2);margin-bottom:10px}
 .ind-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.animal-cover{width:100%;height:260px;object-fit:cover;border:1px solid var(--border);border-radius:10px;background:var(--surf2)}
+.animal-cover{width:100%;height:260px;object-fit:contain;object-position:center;border:1px solid var(--border);border-radius:10px;background:var(--surf2)}
 .score-gauge{display:grid;gap:6px}
 .traits-hint{font-size:10px;color:var(--text2);font-family:var(--mono);line-height:1.35;margin:0 0 4px}
 .trait-name{color:var(--text);font-family:var(--mono);letter-spacing:.2px}
@@ -36,7 +36,7 @@
   </form>
 </div>
 {% set featured = images[0] if images and (images|length) > 0 else none %}
-{% set raw_ref = (featured.raw_score|perspicuus_rescaled) if featured and featured.raw_score is not none else none %}
+{% set raw_ref_rescaled = (featured.raw_score|perspicuus_rescaled) if featured and featured.raw_score is not none else none %}
 {% set lot_ref = featured.score_lot if featured else none %}
 {% set global_ref = (featured.score_global if featured and featured.score_global is not none else (featured.score_1_9 if featured else none)) %}
 <div class="card mb-16">
@@ -64,7 +64,9 @@
         <p class="traits-hint">Um gauge por trait identificado, sem agregação.</p>
         {% if featured and featured.traits_items %}
           {% for tname, tval in featured.traits_items %}
-          {% set t_raw = tval|perspicuus_rescaled %}
+          {% set t_raw = tval %}
+          {% set t_raw_clamped = -4 if t_raw < -4 else (4 if t_raw > 4 else t_raw) %}
+          {% set t_raw_pct = ((t_raw_clamped + 4) / 8 * 100) %}
           <div class="persp-gauge-row">
             <div class="persp-gauge-label-row">
               <span class="trait-name">{{ tname }}</span>
@@ -74,8 +76,8 @@
               <span class="persp-gauge-val" style="color:var(--muted);font-weight:600">—</span>
               {% endif %}
             </div>
-            <div class="persp-gauge-scale-head"><span>1.00</span><span>5.00</span><span>9.00</span></div>
-            <div class="persp-gauge-bar">{% if t_raw is not none %}<div class="persp-gauge-marker" style="--pct: {{ t_raw|persp_gauge_left_pct }}"></div>{% endif %}</div>
+            <div class="persp-gauge-scale-head"><span>-4.00</span><span>0.00</span><span>+4.00</span></div>
+            <div class="persp-gauge-bar">{% if t_raw is not none %}<div class="persp-gauge-marker" style="--pct: {{ t_raw_pct }}"></div>{% endif %}</div>
           </div>
           {% endfor %}
         {% else %}
@@ -88,10 +90,13 @@
       <div class="score-gauge">
         <p class="traits-hint">Ajuste por trait com delta do escore lote, sem mistura entre traits.</p>
         {% if featured and featured.traits_items %}
-          {% set lot_delta = (lot_ref - raw_ref) if lot_ref is not none and raw_ref is not none else none %}
+          {% set lot_delta = (lot_ref - raw_ref_rescaled) if lot_ref is not none and raw_ref_rescaled is not none else none %}
           {% for tname, tval in featured.traits_items %}
-          {% set t_raw = tval|perspicuus_rescaled %}
-          {% set t_lot = (t_raw + lot_delta) if t_raw is not none and lot_delta is not none else none %}
+          {% set t_raw_1_9 = tval|perspicuus_rescaled %}
+          {% set t_lot_1_9 = (t_raw_1_9 + lot_delta) if t_raw_1_9 is not none and lot_delta is not none else none %}
+          {% set t_lot = (1 + ((t_lot_1_9 - 1) * 5 / 8)) if t_lot_1_9 is not none else none %}
+          {% set t_lot_clamped = 1 if t_lot is not none and t_lot < 1 else (6 if t_lot is not none and t_lot > 6 else t_lot) %}
+          {% set t_lot_pct = (((t_lot_clamped - 1) / 5) * 100) if t_lot_clamped is not none else none %}
           <div class="persp-gauge-row">
             <div class="persp-gauge-label-row">
               <span class="trait-name">{{ tname }}</span>
@@ -101,8 +106,8 @@
               <span class="persp-gauge-val" style="color:var(--muted);font-weight:600">—</span>
               {% endif %}
             </div>
-            <div class="persp-gauge-scale-head"><span>1.00</span><span>5.00</span><span>9.00</span></div>
-            <div class="persp-gauge-bar">{% if t_lot is not none %}<div class="persp-gauge-marker" style="--pct: {{ t_lot|persp_gauge_left_pct }}"></div>{% endif %}</div>
+            <div class="persp-gauge-scale-head"><span>1.00</span><span>3.50</span><span>6.00</span></div>
+            <div class="persp-gauge-bar">{% if t_lot is not none %}<div class="persp-gauge-marker" style="--pct: {{ t_lot_pct }}"></div>{% endif %}</div>
           </div>
           {% endfor %}
         {% else %}
@@ -115,10 +120,13 @@
       <div class="score-gauge">
         <p class="traits-hint">Ajuste por trait com delta do escore global, sem mistura entre traits.</p>
         {% if featured and featured.traits_items %}
-          {% set global_delta = (global_ref - raw_ref) if global_ref is not none and raw_ref is not none else none %}
+          {% set global_delta = (global_ref - raw_ref_rescaled) if global_ref is not none and raw_ref_rescaled is not none else none %}
           {% for tname, tval in featured.traits_items %}
-          {% set t_raw = tval|perspicuus_rescaled %}
-          {% set t_global = (t_raw + global_delta) if t_raw is not none and global_delta is not none else none %}
+          {% set t_raw_1_9 = tval|perspicuus_rescaled %}
+          {% set t_global_1_9 = (t_raw_1_9 + global_delta) if t_raw_1_9 is not none and global_delta is not none else none %}
+          {% set t_global = (1 + ((t_global_1_9 - 1) * 5 / 8)) if t_global_1_9 is not none else none %}
+          {% set t_global_clamped = 1 if t_global is not none and t_global < 1 else (6 if t_global is not none and t_global > 6 else t_global) %}
+          {% set t_global_pct = (((t_global_clamped - 1) / 5) * 100) if t_global_clamped is not none else none %}
           <div class="persp-gauge-row">
             <div class="persp-gauge-label-row">
               <span class="trait-name">{{ tname }}</span>
@@ -128,8 +136,8 @@
               <span class="persp-gauge-val" style="color:var(--muted);font-weight:600">—</span>
               {% endif %}
             </div>
-            <div class="persp-gauge-scale-head"><span>1.00</span><span>5.00</span><span>9.00</span></div>
-            <div class="persp-gauge-bar">{% if t_global is not none %}<div class="persp-gauge-marker" style="--pct: {{ t_global|persp_gauge_left_pct }}"></div>{% endif %}</div>
+            <div class="persp-gauge-scale-head"><span>1.00</span><span>3.50</span><span>6.00</span></div>
+            <div class="persp-gauge-bar">{% if t_global is not none %}<div class="persp-gauge-marker" style="--pct: {{ t_global_pct }}"></div>{% endif %}</div>
           </div>
           {% endfor %}
         {% else %}
