@@ -1515,6 +1515,31 @@ def init_db():
         updated_at  TEXT    NOT NULL,
         updated_by  TEXT    NOT NULL DEFAULT 'system'
     );
+    CREATE TABLE IF NOT EXISTS perspicuus_holandes_records (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at     TEXT    NOT NULL,
+        farm_id        TEXT    NOT NULL,
+        inference_date TEXT    NOT NULL,   -- YYYY-MM-DD (data funcional da inferência)
+        animal_tag     TEXT    NOT NULL,   -- brinco
+        view           TEXT    NOT NULL DEFAULT 'posterior',
+        filename       TEXT    NOT NULL,
+        image_path     TEXT    NOT NULL,   -- /api/ecc/media/...
+        thumb_path     TEXT    DEFAULT '', -- thumbnail cropada (bbox)
+        bbox_path      TEXT    DEFAULT '', -- imagem original com bbox desenhado
+        trait_name     TEXT    DEFAULT '',
+        raw_score      REAL,
+        ecc_score      REAL,
+        traits_json    TEXT    NOT NULL DEFAULT '{}',
+        meta_json      TEXT    NOT NULL DEFAULT '{}',
+        error_text     TEXT
+    );
+    CREATE TABLE IF NOT EXISTS perspicuus_holandes_calibration (
+        id          INTEGER PRIMARY KEY CHECK (id = 1),
+        raw_min     REAL    NOT NULL DEFAULT -4.0,
+        raw_max     REAL    NOT NULL DEFAULT 4.0,
+        updated_at  TEXT    NOT NULL,
+        updated_by  TEXT    NOT NULL DEFAULT 'system'
+    );
     CREATE TABLE IF NOT EXISTS attentus_users (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         username    TEXT    NOT NULL UNIQUE,
@@ -1593,6 +1618,8 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_persp_rfid       ON perspicuus_events(animal_rfid);
     CREATE INDEX IF NOT EXISTS idx_ecc_farm_date    ON ecc_bcs_records(farm_id, inference_date);
     CREATE INDEX IF NOT EXISTS idx_ecc_animal_date  ON ecc_bcs_records(farm_id, animal_tag, inference_date);
+    CREATE INDEX IF NOT EXISTS idx_holandes_farm_date   ON perspicuus_holandes_records(farm_id, inference_date);
+    CREATE INDEX IF NOT EXISTS idx_holandes_animal_date ON perspicuus_holandes_records(farm_id, animal_tag, inference_date);
     CREATE INDEX IF NOT EXISTS idx_attentus_users_username ON attentus_users(username);
     CREATE INDEX IF NOT EXISTS idx_angus_farm_date   ON perspicuus_angus_records(farm_id, inference_date);
     CREATE INDEX IF NOT EXISTS idx_angus_animal_date ON perspicuus_angus_records(farm_id, animal_tag, inference_date);
@@ -1685,6 +1712,19 @@ def init_db():
         db.commit()
     except sqlite3.OperationalError as e:
         log.warning("Migração ecc calibration: %s", e)
+    try:
+        row = db.execute("SELECT id FROM perspicuus_holandes_calibration WHERE id = 1").fetchone()
+        if not row:
+            db.execute(
+                """
+                INSERT INTO perspicuus_holandes_calibration (id, raw_min, raw_max, updated_at, updated_by)
+                VALUES (1, -4.0, 4.0, ?, 'system')
+                """,
+                (datetime.utcnow().isoformat() + 'Z',),
+            )
+        db.commit()
+    except sqlite3.OperationalError as e:
+        log.warning("Migração holandes calibration: %s", e)
     try:
         for tname in ('perspicuus_angus_calibration', 'perspicuus_nelore_calibration'):
             row = db.execute(f"SELECT id FROM {tname} WHERE id = 1").fetchone()
@@ -4091,6 +4131,20 @@ def _ecc_get_calibration(db) -> dict[str, Any]:
     }
 
 
+def _perspicuus_holandes_get_calibration(db) -> dict[str, Any]:
+    row = db.execute(
+        "SELECT raw_min, raw_max, updated_at, updated_by FROM perspicuus_holandes_calibration WHERE id = 1"
+    ).fetchone()
+    if not row:
+        return {'raw_min': -4.0, 'raw_max': 4.0, 'updated_at': None, 'updated_by': 'system'}
+    return {
+        'raw_min': float(row['raw_min']),
+        'raw_max': float(row['raw_max']),
+        'updated_at': row['updated_at'],
+        'updated_by': row['updated_by'],
+    }
+
+
 def _ecc_rescale_with_calibration(raw_score: float | None, cal: dict[str, Any]) -> float | None:
     if raw_score is None:
         return None
@@ -4123,6 +4177,27 @@ def _ecc_apply_calibration_to_all_scores(db, cal: dict[str, Any], farm_id: str =
         val = _ecc_rescale_with_calibration(r['raw_score'], cal)
         db.execute(
             "UPDATE ecc_bcs_records SET ecc_score = ? WHERE id = ?",
+            (val, int(r['id'])),
+        )
+        n += 1
+    return n
+
+
+def _perspicuus_holandes_apply_calibration_to_all_scores(db, cal: dict[str, Any], farm_id: str = '') -> int:
+    cond = "raw_score IS NOT NULL"
+    params: list[Any] = []
+    if farm_id:
+        cond += " AND farm_id = ?"
+        params.append(farm_id)
+    rows = db.execute(
+        f"SELECT id, raw_score FROM perspicuus_holandes_records WHERE {cond}",
+        params,
+    ).fetchall()
+    n = 0
+    for r in rows:
+        val = _ecc_rescale_with_calibration(r['raw_score'], cal)
+        db.execute(
+            "UPDATE perspicuus_holandes_records SET ecc_score = ? WHERE id = ?",
             (val, int(r['id'])),
         )
         n += 1
@@ -4430,7 +4505,7 @@ def ecc_calibragem():
 def perspicuus_holandes_calibragem():
     db = get_db()
     farm_filter = str(request.args.get('farm', '')).strip()
-    cal = _ecc_get_calibration(db)
+    cal = _perspicuus_holandes_get_calibration(db)
     cond = ["raw_score IS NOT NULL"]
     params: list[Any] = []
     if farm_filter:
@@ -4440,7 +4515,7 @@ def perspicuus_holandes_calibragem():
     rows = db.execute(
         f"""
         SELECT id, farm_id, animal_tag, raw_score, ecc_score, image_path, thumb_path, bbox_path
-        FROM ecc_bcs_records
+        FROM perspicuus_holandes_records
         WHERE {where}
         ORDER BY raw_score ASC, id DESC
         LIMIT 5000
@@ -4472,13 +4547,19 @@ def perspicuus_holandes_calibragem():
             'bbox_path': r['bbox_path'],
         })
     bucket_rows = [buckets[k] for k in sorted(buckets.keys())]
-    farms, _, stats = _ecc_base_lists(db)
+    farms = [r[0] for r in db.execute("SELECT DISTINCT farm_id FROM perspicuus_holandes_records ORDER BY farm_id").fetchall()]
+    stats = {
+        'total_records': db.execute("SELECT COUNT(*) FROM perspicuus_holandes_records").fetchone()[0],
+        'farms': db.execute("SELECT COUNT(DISTINCT farm_id) FROM perspicuus_holandes_records").fetchone()[0],
+        'animals': db.execute("SELECT COUNT(DISTINCT farm_id || '::' || animal_tag) FROM perspicuus_holandes_records").fetchone()[0],
+        'with_score': db.execute("SELECT COUNT(*) FROM perspicuus_holandes_records WHERE ecc_score IS NOT NULL").fetchone()[0],
+    }
     stats['calibration_rows'] = db.execute(
-        f"SELECT COUNT(*) FROM ecc_bcs_records WHERE {where}",
+        f"SELECT COUNT(*) FROM perspicuus_holandes_records WHERE {where}",
         params,
     ).fetchone()[0]
     row_bounds = db.execute(
-        f"SELECT MIN(raw_score) AS mn, MAX(raw_score) AS mx FROM ecc_bcs_records WHERE {where}",
+        f"SELECT MIN(raw_score) AS mn, MAX(raw_score) AS mx FROM perspicuus_holandes_records WHERE {where}",
         params,
     ).fetchone()
     raw_bounds = None
@@ -4581,7 +4662,54 @@ def api_ecc_calibragem_apply():
 @app.route('/api/perspicuus-holandes/calibragem/apply', methods=['POST'])
 @login_required
 def api_perspicuus_holandes_calibragem_apply():
-    return api_ecc_calibragem_apply()
+    data = request.get_json(silent=True) or {}
+
+    farm = str(data.get('farm_id') or '').strip()
+    db = get_db()
+    cond = ["raw_score IS NOT NULL"]
+    params: list[Any] = []
+    if farm:
+        cond.append("farm_id = ?")
+        params.append(farm)
+    try:
+        raw_min = float(data.get('raw_min')) if data.get('raw_min') is not None else None
+        raw_max = float(data.get('raw_max')) if data.get('raw_max') is not None else None
+    except (TypeError, ValueError):
+        return jsonify({'error': 'raw_min/raw_max inválidos.'}), 400
+    if raw_min is None or raw_max is None:
+        row_bounds = db.execute(
+            f"SELECT MIN(raw_score) AS mn, MAX(raw_score) AS mx FROM perspicuus_holandes_records WHERE {' AND '.join(cond)}",
+            params,
+        ).fetchone()
+        try:
+            raw_min = float(row_bounds['mn']) if row_bounds and row_bounds['mn'] is not None else None
+            raw_max = float(row_bounds['mx']) if row_bounds and row_bounds['mx'] is not None else None
+        except (TypeError, ValueError):
+            raw_min, raw_max = None, None
+    if raw_min is None or raw_max is None or raw_max <= raw_min:
+        return jsonify({'error': 'Não há raw_score suficiente para calibrar.'}), 400
+    now_iso = datetime.utcnow().isoformat() + 'Z'
+    db.execute(
+        """
+        INSERT INTO perspicuus_holandes_calibration (id, raw_min, raw_max, updated_at, updated_by)
+        VALUES (1, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            raw_min = excluded.raw_min,
+            raw_max = excluded.raw_max,
+            updated_at = excluded.updated_at,
+            updated_by = excluded.updated_by
+        """,
+        (raw_min, raw_max, now_iso, str(session.get('username') or 'unknown')),
+    )
+    cal = _perspicuus_holandes_get_calibration(db)
+    updated = _perspicuus_holandes_apply_calibration_to_all_scores(db, cal, farm_id=farm)
+    db.commit()
+    return jsonify({
+        'status': 'ok',
+        'updated': updated,
+        'farm_id_filter': farm or None,
+        'calibration': cal,
+    })
 
 
 @app.route('/api/ecc/recalculate-all', methods=['POST'])
