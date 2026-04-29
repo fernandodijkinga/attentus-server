@@ -3,14 +3,24 @@
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
-.animal-card-grid{display:grid;grid-template-columns:360px 1fr;gap:16px}
-.animal-cover{width:100%;height:220px;object-fit:cover;border:1px solid var(--border);border-radius:10px;background:var(--surf2)}
-.traits-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin-top:8px}
-.trait-pill{font-family:var(--mono);font-size:11px;color:var(--text2);background:var(--surf2);border:1px solid var(--border);border-radius:6px;padding:4px 6px}
-.animal-plot-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.animal-plot-panel{min-height:260px}
-@media (max-width:1200px){.animal-plot-grid{grid-template-columns:1fr}}
-@media (max-width:980px){.animal-card-grid{grid-template-columns:1fr}}
+.trait-scale-wrap{display:grid;gap:14px}
+.trait-scale-head{font-family:var(--mono);font-size:12px;color:var(--text2)}
+.trait-row{display:grid;gap:6px}
+.trait-row-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.trait-name{font-family:var(--mono);font-size:28px;font-weight:700;line-height:1;color:var(--text)}
+.trait-val{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--accent)}
+.trait-val small{font-size:11px;color:var(--text2);font-weight:600}
+.trait-scale-labels{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;color:var(--text2)}
+.trait-scale{
+  position:relative;height:14px;border-radius:999px;
+  background:linear-gradient(90deg,#ff4d6a 0%,#ff9f40 20%,#00e5a0 50%,#ff9f40 80%,#ff4d6a 100%);
+  border:1px solid rgba(0,0,0,.08);
+}
+.trait-scale-mid{position:absolute;left:50%;top:-18px;transform:translateX(-50%);font-family:var(--mono);font-size:11px;color:var(--text2)}
+.trait-marker{
+  position:absolute;top:-6px;width:4px;height:24px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.35);
+  border-radius:2px;transform:translateX(-50%);
+}
 </style>
 {% endblock %}
 {% block content %}
@@ -30,56 +40,19 @@
   </form>
 </div>
 {% set featured = images[0] if images and (images|length) > 0 else none %}
-<div class="animal-card-grid mb-16">
-  <div class="card">
-    <div class="card-title">Card do animal</div>
-    {% if featured and (featured.thumb_path or featured.image_path) %}
-    <img src="{{ featured.thumb_path or featured.image_path }}" class="animal-cover" onclick="window.open('{{ featured.bbox_path or featured.image_path }}')">
-    {% else %}
-    <div class="empty-state" style="padding:24px 12px">Sem imagem para o animal selecionado.</div>
-    {% endif %}
-    <div class="mt-12" style="margin-top:12px;font-family:var(--mono);font-size:12px;display:grid;gap:6px">
-      <div><b>Fazenda:</b> {{ selected_farm or '—' }}</div>
-      <div><b>Lote:</b> {{ (featured.lot_id if featured else '') or lot_filter or '—' }}</div>
-      <div><b>Brinco:</b> {{ selected_animal or '—' }}</div>
-      <div><b>Data ref.:</b> {{ featured.inference_date if featured else '—' }}</div>
-      <div><b>Raw ref.:</b> {{ '%.4f'|format(featured.raw_score) if featured and featured.raw_score is not none else '—' }}</div>
-      <div><b>Escore lote ref.:</b> {{ '%g'|format(featured.score_lot) if featured and featured.score_lot is not none else '—' }}</div>
-      <div><b>Escore global ref.:</b> {{ '%g'|format(featured.score_global) if featured and featured.score_global is not none else (('%g'|format(featured.score_1_9)) if featured and featured.score_1_9 is not none else '—') }}</div>
+<div class="card mb-16">
+  <div class="card-title">Curva do animal — {{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
+  <div class="trait-scale-wrap">
+    <div class="trait-scale-head">
+      Fazenda: <b>{{ selected_farm or '—' }}</b> ·
+      Lote: <b>{{ (featured.lot_id if featured else '') or lot_filter or '—' }}</b> ·
+      Brinco: <b>{{ selected_animal or '—' }}</b> ·
+      Data ref.: <b>{{ featured.inference_date if featured else '—' }}</b> ·
+      Raw ref.: <b>{{ '%.4f'|format(featured.raw_score) if featured and featured.raw_score is not none else '—' }}</b> ·
+      Escore lote ref.: <b>{{ '%g'|format(featured.score_lot) if featured and featured.score_lot is not none else '—' }}</b> ·
+      Escore global ref.: <b>{{ '%g'|format(featured.score_global) if featured and featured.score_global is not none else (('%g'|format(featured.score_1_9)) if featured and featured.score_1_9 is not none else '—') }}</b>
     </div>
-    <div class="card-title" style="margin-top:12px">Traits identificados</div>
-    {% if featured and featured.traits_items %}
-    <div class="traits-grid">
-      {% for tname, tval in featured.traits_items %}
-      <div class="trait-pill">{{ tname }} · raw {{ '%.4f'|format(tval) }} · escore {{ '%g'|format(tval|perspicuus_rescaled) if (tval|perspicuus_rescaled) is not none else '—' }}</div>
-      {% endfor %}
-    </div>
-    <div style="height:220px;margin-top:10px"><canvas id="nelore-traits-bars"></canvas></div>
-    {% else %}
-    <div class="text-muted mono" style="margin-top:6px">Sem traits disponíveis no registro de referência.</div>
-    {% endif %}
-  </div>
-  <div class="animal-plot-grid">
-    <div class="card animal-plot-panel">
-      <div class="card-title">Imagem do animal</div>
-      {% if featured and (featured.thumb_path or featured.image_path) %}
-      <img src="{{ featured.thumb_path or featured.image_path }}" class="animal-cover" onclick="window.open('{{ featured.bbox_path or featured.image_path }}')">
-      {% else %}
-      <div class="empty-state" style="padding:24px 12px">Sem imagem para o animal selecionado.</div>
-      {% endif %}
-    </div>
-    <div class="card animal-plot-panel">
-      <div class="card-title">Raw score — {{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
-      <div style="height:260px"><canvas id="nelore-raw"></canvas></div>
-    </div>
-    <div class="card animal-plot-panel">
-      <div class="card-title">Escore lote — {{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
-      <div style="height:260px"><canvas id="nelore-lot"></canvas></div>
-    </div>
-    <div class="card animal-plot-panel">
-      <div class="card-title">Escore global — {{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
-      <div style="height:260px"><canvas id="nelore-global"></canvas></div>
-    </div>
+    <div id="nelore-trait-scales"></div>
   </div>
 </div>
 <div class="card">
@@ -98,36 +71,36 @@
 </div>
 {% endblock %}
 {% block scripts %}
+<script id="nelore-points-json" type="application/json">{{ points|tojson }}</script>
+<script id="nelore-featured-json" type="application/json">{{ (featured or {})|tojson }}</script>
 <script>
-const PTS={{ points|tojson }};
-const FEATURED={{ (featured or {})|tojson }};
-const rows=(Array.isArray(PTS)?PTS:[]).filter(r=>r&&(r.raw_score!=null||r.score_lot!=null||r.score_global!=null)).sort((a,b)=>String(a.inference_date).localeCompare(String(b.inference_date))||((a.id||0)-(b.id||0)));
-const labels=rows.map(r=>r.inference_date);
-function renderLine(canvasId, data, label, color, minY=null, maxY=null){
-  const c=document.getElementById(canvasId); if(!c) return;
-  if(!rows.length) return;
-  const opts={responsive:true,maintainAspectRatio:false,scales:{y:{}}};
-  if(minY!==null) opts.scales.y.min=minY;
-  if(maxY!==null) opts.scales.y.max=maxY;
-  new Chart(c.getContext('2d'),{type:'line',data:{labels,datasets:[{label,data,borderColor:color,backgroundColor:color.replace('1)', '.12)').replace('rgb', 'rgba'),fill:true,tension:.2}]},options:opts});
+function readJson(id, fallback){
+  const el = document.getElementById(id);
+  if (!el) return fallback;
+  try { return JSON.parse(el.textContent || 'null') ?? fallback; } catch { return fallback; }
 }
-renderLine('nelore-raw', rows.map(r=>r.raw_score!=null?Number(r.raw_score):null), 'Raw score', 'rgba(217,120,43,1)');
-renderLine('nelore-lot', rows.map(r=>r.score_lot!=null?Number(r.score_lot):null), 'Escore lote', 'rgba(13,122,94,1)', 1, 9);
-renderLine('nelore-global', rows.map(r=>r.score_global!=null?Number(r.score_global):null), 'Escore global', 'rgba(26,111,212,1)', 1, 9);
-const tb=document.getElementById('nelore-traits-bars');
-if(tb && FEATURED && Array.isArray(FEATURED.traits_items) && FEATURED.traits_items.length){
-  const traitLabels = FEATURED.traits_items.map(t=>String(t[0]));
-  const traitScores = FEATURED.traits_items.map(t=>{
-    const v=Number(t[1]);
-    if(!Number.isFinite(v)) return null;
-    const s=(v+4)/8*8+1;
-    return Math.max(1, Math.min(9, Math.round(s*2)/2));
-  });
-  new Chart(tb.getContext('2d'),{
-    type:'bar',
-    data:{labels:traitLabels,datasets:[{label:'Escore por trait',data:traitScores,backgroundColor:'rgba(26,111,212,.45)',borderColor:'#1a6fd4',borderWidth:1}]},
-    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,scales:{x:{min:1,max:9}}}
-  });
+const PTS = readJson('nelore-points-json', []);
+const FEATURED = readJson('nelore-featured-json', {});
+const host=document.getElementById('nelore-trait-scales');
+if(host && FEATURED && Array.isArray(FEATURED.traits_items) && FEATURED.traits_items.length){
+  const rowsHtml = FEATURED.traits_items.map((t)=>{
+    const name=String(t[0]||'—');
+    const raw=Number(t[1]);
+    if(!Number.isFinite(raw)) return '';
+    const score=Math.max(1,Math.min(9,Math.round((((raw+4)/8)*8+1)*2)/2));
+    const pct=((score-1)/8)*100;
+    return `<div class="trait-row">
+      <div class="trait-row-top">
+        <div class="trait-name">${name}</div>
+        <div class="trait-val">${score.toFixed(1).replace('.0','')} <small>raw ${raw.toFixed(2)}</small></div>
+      </div>
+      <div class="trait-scale-labels"><span>1.00</span><span>5.00</span><span>9.00</span></div>
+      <div class="trait-scale"><span class="trait-scale-mid">5.00</span><span class="trait-marker" style="left:${pct}%"></span></div>
+    </div>`;
+  }).join('');
+  host.innerHTML = rowsHtml || '<div class="empty-state"><div class="icon">📉</div>Sem traits para exibir.</div>';
+} else if(host){
+  host.innerHTML = '<div class="empty-state"><div class="icon">📉</div>Sem traits para exibir.</div>';
 }
 </script>
 {% endblock %}
