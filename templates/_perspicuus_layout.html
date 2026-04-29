@@ -1,0 +1,337 @@
+{# Perspicuus shared design system: macros + styles. Use:
+   {% from "_perspicuus_layout.html" import persp_styles, persp_tabs %}
+#}
+
+{% macro persp_styles() -%}
+<style>
+/* ======================================================
+   PERSPICUUS DESIGN SYSTEM
+   Prefixo .persp-* — alinhado ao BCS, ajustado para o brete (azul).
+   ====================================================== */
+.persp-hero {
+  position: relative;
+  background:
+    linear-gradient(135deg, rgba(26,111,212,.12) 0%, rgba(13,122,94,.06) 50%, transparent 100%),
+    var(--surf);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 22px 26px 18px;
+  margin-bottom: 14px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+.persp-hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 60% 80% at 100% 0%, rgba(26,111,212,.10) 0%, transparent 55%),
+    radial-gradient(ellipse 50% 70% at 0% 100%, rgba(13,122,94,.05) 0%, transparent 50%);
+  pointer-events: none;
+}
+.persp-hero-top {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  z-index: 1;
+}
+.persp-hero-eyebrow {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--accent2);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.persp-hero-eyebrow::before {
+  content: '';
+  width: 26px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent2), transparent);
+  border-radius: 2px;
+}
+.persp-hero-title {
+  font-family: var(--sans);
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+  color: var(--text);
+  margin-top: 8px;
+  line-height: 1.15;
+}
+.persp-hero-title em { font-style: normal; color: var(--accent2); }
+.persp-hero-sub {
+  margin-top: 8px;
+  color: var(--text2);
+  font-size: 13px;
+  max-width: 720px;
+  line-height: 1.55;
+}
+.persp-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.persp-kpi-strip {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+.persp-kpi-card {
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  backdrop-filter: blur(2px);
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.persp-kpi-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+.persp-kpi-card .ico-circle {
+  width: 32px; height: 32px;
+  border-radius: 999px;
+  background: rgba(26,111,212,.10);
+  color: var(--accent2);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 16px;
+}
+.persp-kpi-card.accent .ico-circle { background: rgba(13,122,94,.10); color: var(--accent); }
+.persp-kpi-card.orange .ico-circle { background: rgba(217,120,43,.14); color: var(--accent3); }
+.persp-kpi-card.warn .ico-circle { background: rgba(184,134,11,.14); color: var(--warn); }
+.persp-kpi-card.danger .ico-circle { background: rgba(198,40,65,.12); color: var(--err); }
+.persp-kpi-card .lbl {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.persp-kpi-card .val {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--text);
+  line-height: 1.05;
+}
+.persp-kpi-card.accent .val { color: var(--accent); }
+.persp-kpi-card.blue .val { color: var(--accent2); }
+.persp-kpi-card.orange .val { color: var(--accent3); }
+.persp-kpi-card.warn .val { color: var(--warn); }
+.persp-kpi-card.danger .val { color: var(--err); }
+.persp-kpi-card .extra { font-family: var(--mono); font-size: 10.5px; color: var(--text2); }
+
+.persp-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  background: var(--surf);
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow-sm);
+}
+.persp-tab {
+  text-decoration: none;
+  padding: 8px 14px;
+  border-radius: 8px;
+  color: var(--text2);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .2px;
+  transition: all .15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid transparent;
+}
+.persp-tab:hover { background: var(--surf2); color: var(--accent2); }
+.persp-tab.active {
+  background: linear-gradient(135deg, rgba(26,111,212,.13), rgba(13,122,94,.10));
+  color: var(--accent2);
+  border-color: rgba(26,111,212,.22);
+  box-shadow: 0 1px 2px rgba(26,111,212,.10);
+}
+.persp-tab .tab-ico { font-size: 13px; width: 14px; text-align: center; }
+
+.persp-section {
+  background: var(--surf);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  margin-bottom: 16px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+.persp-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 18px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--surf) 0%, var(--surf2) 100%);
+}
+.persp-section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 13.5px;
+  color: var(--text);
+  letter-spacing: -.1px;
+  margin: 0;
+}
+.persp-section-title .ico {
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(26,111,212,.10);
+  color: var(--accent2);
+  font-size: 14px;
+}
+.persp-section-title .ico.accent { background: rgba(13,122,94,.10); color: var(--accent); }
+.persp-section-title .ico.warn { background: rgba(184,134,11,.12); color: var(--warn); }
+.persp-section-title .ico.orange { background: rgba(217,120,43,.12); color: var(--accent3); }
+.persp-section-sub {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text2);
+}
+.persp-section-body { padding: 18px; }
+.persp-section-body.tight { padding: 4px 0 0; }
+
+.persp-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+@media (max-width: 980px) { .persp-grid-2 { grid-template-columns: 1fr; } }
+
+.persp-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+.persp-filter-row .field { margin: 0; min-width: 160px; }
+
+.persp-table { overflow: auto; }
+.persp-table table { width: 100%; border-collapse: collapse; }
+.persp-table thead th {
+  text-align: left;
+  padding: 11px 16px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--surf2);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  position: sticky; top: 0; z-index: 1;
+}
+.persp-table tbody td {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  vertical-align: middle;
+}
+.persp-table tbody tr:hover { background: var(--surf2); }
+.persp-table tbody tr:last-child td { border-bottom: 0; }
+.persp-table .num { text-align: right; font-family: var(--mono); }
+
+.persp-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .3px;
+}
+.persp-status-pill.ok { background: rgba(13,122,94,.12); color: var(--accent); }
+.persp-status-pill.err { background: rgba(198,40,65,.10); color: var(--err); }
+.persp-status-pill.warn { background: rgba(184,134,11,.14); color: var(--warn); }
+.persp-status-pill::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.persp-empty {
+  text-align: center;
+  padding: 48px 20px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.persp-empty .icon { font-size: 36px; margin-bottom: 10px; opacity: .85; }
+
+/* Painel de insights (igual ao usado em ECC) */
+.persp-insight-panel {
+  background: linear-gradient(180deg, rgba(26,111,212,.05) 0%, var(--surf) 100%);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 16px 20px;
+  position: sticky; top: 12px;
+  box-shadow: var(--shadow-sm);
+}
+.persp-insight-head {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--sans);
+  font-size: 14px; font-weight: 800;
+  background: var(--accent2); color: #fff;
+  padding: 6px 14px; border-radius: 999px;
+  margin-bottom: 14px;
+}
+.persp-insight-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
+.persp-insight-list li { display: flex; align-items: flex-start; gap: 10px; }
+.persp-insight-list .ico-circle {
+  width: 30px; height: 30px; border-radius: 999px;
+  background: rgba(26,111,212,.10); color: var(--accent2);
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; font-size: 14px;
+}
+.persp-insight-list p { margin: 0; font-size: 12.5px; color: var(--text); line-height: 1.4; }
+</style>
+{%- endmacro %}
+
+{% macro persp_tabs(active='') -%}
+<div class="persp-tabs" role="tablist">
+  <a class="persp-tab {% if active == 'eventos' %}active{% endif %}" href="{{ url_for('perspicuus') }}">
+    <span class="tab-ico">📥</span> Eventos
+  </a>
+  <a class="persp-tab {% if active == 'animais' %}active{% endif %}" href="{{ url_for('perspicuus_animais') }}">
+    <span class="tab-ico">🐂</span> Animais
+  </a>
+  <a class="persp-tab {% if active == 'inferencias' %}active{% endif %}" href="{{ url_for('perspicuus_inferencias') }}">
+    <span class="tab-ico">◇</span> Inferências MK1
+  </a>
+  <a class="persp-tab {% if active == 'rebanho' %}active{% endif %}" href="{{ url_for('perspicuus_analise_rebanho') }}">
+    <span class="tab-ico">📈</span> Análise rebanho
+  </a>
+</div>
+{%- endmacro %}

@@ -1,21 +1,19 @@
 {% extends "base.html" %}
-{% block title %}Perspicuus{% endblock %}
+{% from "_perspicuus_layout.html" import persp_styles, persp_tabs %}
+{% block title %}Perspicuus — eventos{% endblock %}
 
 {% block head %}
+{{ persp_styles() }}
 <style>
-.filters {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
-  align-items: end;
-}
 .events { display: grid; gap: 14px; }
 .event-card {
   background: var(--surf);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 12px;
   padding: 16px;
+  transition: border-color .15s ease, box-shadow .15s ease;
 }
+.event-card:hover { border-color: rgba(26,111,212,.35); box-shadow: var(--shadow-sm); }
 .event-top {
   display: flex;
   justify-content: space-between;
@@ -23,8 +21,9 @@
   flex-wrap: wrap;
   margin-bottom: 10px;
 }
-.event-id { font-family: var(--mono); font-size: 12px; color: var(--accent2); }
-.meta { font-family: var(--mono); font-size: 11px; color: var(--text2); display: flex; gap: 12px; flex-wrap: wrap; }
+.event-id { font-family: var(--mono); font-size: 12px; color: var(--accent2); font-weight: 700; }
+.event-meta { font-family: var(--mono); font-size: 11px; color: var(--text2); display: flex; gap: 10px 14px; flex-wrap: wrap; margin-top: 6px; }
+.event-meta b { color: var(--text); font-weight: 700; }
 .views-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(150px, 1fr));
@@ -35,7 +34,7 @@
 @media(max-width: 700px)  { .views-grid { grid-template-columns: 1fr; } }
 .view-box {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 10px;
   background: var(--bg);
 }
@@ -64,14 +63,10 @@
   padding: 8px; font-family: var(--mono); font-size: 9px; color: var(--muted);
   line-height: 1.35; border: 1px dashed var(--border); border-radius: 8px;
 }
-.inference-actions {
-  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
-  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
-}
 .inference-panel {
   margin-top: 12px; padding: 12px 14px;
-  border: 1px solid rgba(0,229,160,.2); border-radius: 10px;
-  background: rgba(0,229,160,.04);
+  border: 1px solid rgba(13,122,94,.22); border-radius: 10px;
+  background: linear-gradient(180deg, rgba(13,122,94,.06) 0%, var(--surf) 100%);
 }
 .inference-panel h4 {
   margin: 0 0 10px 0; font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase;
@@ -79,7 +74,7 @@
 }
 .infer-view-block { margin-bottom: 14px; }
 .infer-view-block:last-child { margin-bottom: 0; }
-.infer-view-title { font-size: 10px; font-weight: 700; color: var(--text2); margin-bottom: 6px; font-family: var(--mono); }
+.infer-view-title { font-size: 10px; font-weight: 700; color: var(--text2); margin-bottom: 6px; font-family: var(--mono); text-transform: uppercase; letter-spacing: 1px; }
 .infer-frame {
   margin-bottom: 10px; padding: 8px 10px; border-radius: 8px; background: var(--bg);
   border: 1px solid var(--border);
@@ -90,239 +85,285 @@
 }
 .trait-scores li span { color: var(--muted); margin-right: 4px; }
 .trait-scores li strong { color: var(--accent2); }
-.trait-scores li .trait-rescaled { color: var(--primary); font-weight: 700; }
+.trait-scores li .trait-rescaled { color: var(--accent); font-weight: 700; }
 .trait-scores li .trait-scale-sep { color: var(--muted); margin: 0 2px; }
 .infer-meta-line { font-size: 10px; color: var(--muted); margin-top: 6px; font-family: var(--mono); }
-.infer-err { color: #f07178; font-size: 12px; margin-bottom: 8px; }
+.infer-err { color: var(--err); font-size: 12px; margin-bottom: 8px; }
 .infer-skip { font-size: 11px; color: var(--text2); margin-bottom: 4px; }
 .traits-mean-box {
   margin-bottom: 12px; padding: 10px 12px; border-radius: 8px;
-  background: rgba(0,229,160,.12); border: 1px solid rgba(0,229,160,.25);
+  background: rgba(13,122,94,.10); border: 1px solid rgba(13,122,94,.22);
 }
 .traits-mean-box .mean-label { font-size: 10px; color: var(--accent); margin-bottom: 6px; font-family: var(--mono); text-transform: uppercase; letter-spacing: 1px; }
 .scale-legend { font-size: 9px; color: var(--text2); font-weight: 400; text-transform: none; letter-spacing: 0; margin-top: 4px; line-height: 1.35; }
+.persp-engine-tip {
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--text2);
+  background: rgba(184,134,11,.10);
+  border: 1px solid rgba(184,134,11,.20);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: var(--mono);
+  line-height: 1.45;
+}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="page-header">
-  <div>
-    <div class="page-title">🧠 <span>Perspicuus</span></div>
-    <div class="page-sub">Brete inteligente — RFID e pacotes de imagens por passagem</div>
-    {% if not inference_engine_ready %}
-    <div class="page-sub" style="margin-top:6px;opacity:.9">Inferência MK1: defina <span class="mono">PERSPICUUS_YOLO_ONNX</span>, <span class="mono">PERSPICUUS_LATERAL_ONNX</span> e <span class="mono">PERSPICUUS_POSTERIOR_ONNX</span> no servidor.</div>
-    {% elif inference_engine_ready %}
-    <div class="page-sub" style="margin-top:6px;opacity:.85">Com ONNX ativo, eventos com vistas lateral/posterior disparam inferência automática (uma imagem de cada vez; média por trait na pose). Use <b>Recalcular</b> para repetir.</div>
-    {% endif %}
+<div class="persp-hero">
+  <div class="persp-hero-top">
+    <div>
+      <div class="persp-hero-eyebrow">Brete inteligente · ingestão</div>
+      <div class="persp-hero-title">Eventos do brete <em>Perspicuus</em></div>
+      <div class="persp-hero-sub">RFID e pacotes de imagens (frontal, lateral, posterior, superior) capturados em cada passagem. Inferência morfológica MK1 disparada por evento.</div>
+    </div>
+    <form class="persp-filter-row" method="get" action="{{ url_for('perspicuus') }}">
+      <div class="field" style="margin:0">
+        <label>Estação</label>
+        <select name="station">
+          <option value="">Todas</option>
+          {% for s in stations %}
+          <option value="{{ s }}" {% if station_filter == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field" style="margin:0">
+        <label>RFID</label>
+        <input type="search" name="rfid" value="{{ rfid_filter }}" placeholder="982000123456789">
+      </div>
+      <div class="field" style="margin:0">
+        <label>Inferência</label>
+        <select name="ready">
+          <option value="" {% if ready_filter == '' %}selected{% endif %}>Todos</option>
+          <option value="1" {% if ready_filter == '1' %}selected{% endif %}>Pronto</option>
+          <option value="0" {% if ready_filter == '0' %}selected{% endif %}>Pendente</option>
+        </select>
+      </div>
+      <div class="flex gap-8" style="align-items:center">
+        <button class="btn btn-accent btn-sm" type="submit">Filtrar</button>
+        {% if station_filter or rfid_filter or ready_filter %}
+        <a class="btn btn-ghost btn-sm" href="{{ url_for('perspicuus') }}">Limpar</a>
+        {% endif %}
+      </div>
+    </form>
   </div>
-  <div class="flex gap-8">
-    <span class="pill pill-blue">{{ stats.total }} eventos</span>
-    <span class="pill pill-green">{{ stats.ready }} prontos p/ inferência</span>
-    <span class="pill pill-orange">{{ stats.stations }} estações</span>
-    <span class="pill">{{ stats.rfids }} RFIDs únicos</span>
+
+  <div class="persp-kpi-strip">
+    <div class="persp-kpi-card blue">
+      <div class="lbl">Eventos totais</div>
+      <div class="val">{{ overview.total }}</div>
+      <div class="extra">brete · todos os RFIDs</div>
+    </div>
+    <div class="persp-kpi-card accent">
+      <div class="lbl">Prontos p/ inferir</div>
+      <div class="val">{{ overview.ready }}</div>
+      <div class="extra">{% if overview.total %}{{ '%.1f'|format(overview.ready * 100.0 / overview.total) }}%{% else %}—{% endif %} do total</div>
+    </div>
+    <div class="persp-kpi-card warn">
+      <div class="lbl">Pendentes</div>
+      <div class="val">{{ overview.pending }}</div>
+      <div class="extra">aguardando frames lateral/posterior</div>
+    </div>
+    <div class="persp-kpi-card">
+      <div class="lbl">Estações ativas</div>
+      <div class="val">{{ overview.stations }}</div>
+      <div class="extra">brete distintos</div>
+    </div>
+    <div class="persp-kpi-card orange">
+      <div class="lbl">RFIDs únicos</div>
+      <div class="val">{{ overview.rfids }}</div>
+      <div class="extra">{{ overview.today }} eventos hoje</div>
+    </div>
   </div>
 </div>
 
-<div class="card mb-16">
-  <form class="filters" method="get" action="{{ url_for('perspicuus') }}">
-    <div class="field" style="margin:0">
-      <label>Estação</label>
-      <select name="station">
-        <option value="">Todas</option>
-        {% for s in stations %}
-        <option value="{{ s }}" {% if station_filter == s %}selected{% endif %}>{{ s }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="field" style="margin:0">
-      <label>RFID</label>
-      <input type="search" name="rfid" value="{{ rfid_filter }}" placeholder="982000123456789">
-    </div>
-    <div class="field" style="margin:0">
-      <label>Inferência</label>
-      <select name="ready">
-        <option value="" {% if ready_filter == '' %}selected{% endif %}>Todos</option>
-        <option value="1" {% if ready_filter == '1' %}selected{% endif %}>Pronto</option>
-        <option value="0" {% if ready_filter == '0' %}selected{% endif %}>Pendente</option>
-      </select>
-    </div>
-    <div class="flex gap-8" style="align-items:center">
-      <button class="btn btn-accent btn-sm" type="submit">Filtrar</button>
-      {% if station_filter or rfid_filter or ready_filter %}
-      <a class="btn btn-ghost btn-sm" href="{{ url_for('perspicuus') }}">Limpar</a>
-      {% endif %}
-    </div>
-  </form>
+{{ persp_tabs(active='eventos') }}
+
+{% if not inference_engine_ready %}
+<div class="persp-engine-tip">
+  Motor ONNX não configurado — defina <span class="mono">PERSPICUUS_YOLO_ONNX</span>,
+  <span class="mono">PERSPICUUS_LATERAL_ONNX</span> e
+  <span class="mono">PERSPICUUS_POSTERIOR_ONNX</span> no servidor para habilitar inferência automática.
 </div>
+{% endif %}
 
-<div class="events">
-  {% for ev in records %}
-  <div class="event-card" id="ev-{{ ev.id }}">
-    <div class="event-top">
-      <div>
-        <div class="event-id">{{ ev.event_id }}</div>
-        <div class="meta" style="margin-top:6px">
-          <span><b>timestamp:</b> {{ ev.timestamp_utc|br_dt('%d/%m/%Y %H:%M:%S') }}</span>
-          <span><b>station:</b> {{ ev.station_id }}</span>
-          <span><b>device:</b> {{ ev.device_id }}</span>
-          <span><b>rfid:</b> {{ ev.animal_rfid }}</span>
-          <span><b>status:</b> {{ ev.animal_status or '—' }}</span>
-          <span><b>rep:</b> {{ ev.animal_repetition }}</span>
-          <span><b>total:</b> {{ ev.total_images }}</span>
-        </div>
-      </div>
-      <div class="flex gap-8" style="flex-wrap:wrap;align-items:center">
-        {% if ev.inference_ready %}
-        <span class="pill pill-green">inference_ready = true</span>
-        {% else %}
-        <span class="pill pill-orange">inference_ready = false</span>
-        {% endif %}
-        {% if inference_engine_ready %}
-        <button type="button" class="btn btn-accent btn-sm" onclick="runPerspInfer({{ ev.id }})">
-          {% if ev.inference_at %}↻ Recalcular inferência{% else %}▶ Inferir agora{% endif %}
-        </button>
-        {% endif %}
-      </div>
-    </div>
-
-    <div class="views-grid">
-      {% for view in ['frontal', 'lateral', 'posterior', 'superior'] %}
-      <div class="view-box">
-        <div class="view-title">{{ view }}</div>
-        <div class="view-count">{{ ev[view + '_count'] }} frame(s)</div>
-        <div class="view-frames">
-          {% for frame in ev[view] %}
-            {% set src = frame.path|perspicuus_media_url %}
-            {% if src %}
-            <div class="persp-frame">
-              <img class="persp-thumb" src="{{ src }}" alt="" loading="lazy"
-                   onclick="window.open(this.src, '_blank', 'noopener,noreferrer')">
-              <span class="persp-cap">#{{ frame.frame_index }} · {{ frame.path.split('/')[-1] }}</span>
+<div class="persp-section">
+  <div class="persp-section-head">
+    <h3 class="persp-section-title"><span class="ico">📥</span> Eventos recentes</h3>
+    <div class="persp-section-sub">{{ total }} resultado(s) · página {{ page }} / {{ total_pages }}</div>
+  </div>
+  <div class="persp-section-body">
+    <div class="events">
+      {% for ev in records %}
+      <div class="event-card" id="ev-{{ ev.id }}">
+        <div class="event-top">
+          <div>
+            <div class="event-id">{{ ev.event_id }}</div>
+            <div class="event-meta">
+              <span><b>timestamp:</b> {{ ev.timestamp_utc|br_dt('%d/%m/%Y %H:%M:%S') }}</span>
+              <span><b>station:</b> {{ ev.station_id }}</span>
+              <span><b>device:</b> {{ ev.device_id }}</span>
+              <span><b>rfid:</b> {{ ev.animal_rfid }}</span>
+              <span><b>status:</b> {{ ev.animal_status or '—' }}</span>
+              <span><b>rep:</b> {{ ev.animal_repetition }}</span>
+              <span><b>total:</b> {{ ev.total_images }}</span>
             </div>
+          </div>
+          <div class="flex gap-8" style="flex-wrap:wrap;align-items:center">
+            {% if ev.inference_ready %}
+            <span class="persp-status-pill ok">inference_ready</span>
             {% else %}
-            <div class="persp-meta-only">
-              <strong>#{{ frame.frame_index }}</strong>
-              {% if frame.path %}
-              <div title="{{ frame.path }}">{{ frame.path.split('/')[-1] }}</div>
-              <div style="margin-top:4px;opacity:.85">Só metadado (sem ficheiro no servidor)</div>
-              {% else %}
-              <div>—</div>
-              {% endif %}
-            </div>
+            <span class="persp-status-pill warn">aguardando</span>
             {% endif %}
-          {% else %}
-          <div class="persp-meta-only">sem frames</div>
+            {% if inference_engine_ready %}
+            <button type="button" class="btn btn-accent btn-sm" onclick="runPerspInfer({{ ev.id }})">
+              {% if ev.inference_at %}↻ Recalcular inferência{% else %}▶ Inferir agora{% endif %}
+            </button>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="views-grid">
+          {% for view in ['frontal', 'lateral', 'posterior', 'superior'] %}
+          <div class="view-box">
+            <div class="view-title">{{ view }}</div>
+            <div class="view-count">{{ ev[view + '_count'] }} frame(s)</div>
+            <div class="view-frames">
+              {% for frame in ev[view] %}
+                {% set src = frame.path|perspicuus_media_url %}
+                {% if src %}
+                <div class="persp-frame">
+                  <img class="persp-thumb" src="{{ src }}" alt="" loading="lazy"
+                       onclick="window.open(this.src, '_blank', 'noopener,noreferrer')">
+                  <span class="persp-cap">#{{ frame.frame_index }} · {{ frame.path.split('/')[-1] }}</span>
+                </div>
+                {% else %}
+                <div class="persp-meta-only">
+                  <strong>#{{ frame.frame_index }}</strong>
+                  {% if frame.path %}
+                  <div title="{{ frame.path }}">{{ frame.path.split('/')[-1] }}</div>
+                  <div style="margin-top:4px;opacity:.85">Só metadado (sem ficheiro no servidor)</div>
+                  {% else %}
+                  <div>—</div>
+                  {% endif %}
+                </div>
+                {% endif %}
+              {% else %}
+              <div class="persp-meta-only">sem frames</div>
+              {% endfor %}
+            </div>
+          </div>
           {% endfor %}
         </div>
+
+        {% if ev.inference_at and ev.inference %}
+        <div class="inference-panel">
+          <h4>Inferência morfológica (MK1)</h4>
+          {% if ev.inference.error %}
+          <div class="infer-err">{{ ev.inference.error }}</div>
+          {% endif %}
+          {% if ev.inference.skipped %}
+            {% for sk, msg in ev.inference.skipped.items() %}
+            <div class="infer-skip"><b>{{ sk }}:</b> {{ msg }}</div>
+            {% endfor %}
+          {% endif %}
+          {% if ev.inference.views %}
+            {% for vname in ['lateral', 'posterior'] %}
+              {% set vd = ev.inference.views.get(vname) %}
+              {% if vd is mapping %}
+                {% set vrows = vd.get('frames', []) %}
+                {% set tmean = vd.get('traits_mean', {}) %}
+              {% elif vd %}
+                {% set vrows = vd %}
+                {% set tmean = {} %}
+              {% else %}
+                {% set vrows = [] %}
+                {% set tmean = {} %}
+              {% endif %}
+              {% if vrows or tmean %}
+              <div class="infer-view-block">
+                <div class="infer-view-title">{{ vname }}</div>
+                {% if tmean %}
+                <div class="traits-mean-box">
+                  <div class="mean-label">Média dos scores ({% if vd is mapping %}{{ vd.get('n_frames_inferred', vrows|length) }}{% else %}{{ vrows|length }}{% endif %} frame(s) com sucesso)</div>
+                  <div class="scale-legend">Cada trait: <b>raw</b> (−4…+4) · <b>escala</b> 1–9 (passo 0,5)</div>
+                  <ul class="trait-scores">
+                    {% set tmean_rs = (vd.get('traits_mean_rescaled') if vd is mapping else {}) or {} %}
+                    {% for name, val in tmean.items() %}
+                    <li>
+                      <span>{{ name }}</span>
+                      <strong title="raw">{{ '%.4f'|format(val) }}</strong>
+                      <span class="trait-scale-sep">·</span>
+                      {% set rs = tmean_rs.get(name) %}
+                      <strong class="trait-rescaled" title="escala 1–9 (Δ0,5)">{% if rs is not none and rs != '' %}{{ '%g'|format(rs|float) }}{% else %}{{ '%g'|format(val|perspicuus_rescaled) }}{% endif %}</strong>
+                    </li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% endif %}
+                {% for row in vrows %}
+                <div class="infer-frame">
+                  <div class="mono text-muted" style="font-size:10px;margin-bottom:6px">Por imagem · frame #{{ row.frame_index }}</div>
+                  {% if row.traits %}
+                  <ul class="trait-scores">
+                    {% set row_rs = row.get('traits_rescaled', {}) or {} %}
+                    {% for name, val in row.traits.items() %}
+                    <li>
+                      <span>{{ name }}</span>
+                      <strong title="raw">{{ '%.4f'|format(val) }}</strong>
+                      <span class="trait-scale-sep">·</span>
+                      {% set rsv = row_rs.get(name) %}
+                      <strong class="trait-rescaled" title="escala 1–9 (Δ0,5)">{% if rsv is not none and rsv != '' %}{{ '%g'|format(rsv|float) }}{% else %}{{ '%g'|format(val|perspicuus_rescaled) }}{% endif %}</strong>
+                    </li>
+                    {% endfor %}
+                  </ul>
+                  {% elif row.error %}
+                  <span class="infer-err">{{ row.error }}</span>
+                  {% endif %}
+                  <div class="infer-meta-line">
+                    {% if row.yolo_conf is not none %}yolo {{ '%.2f'|format(row.yolo_conf) }}{% endif %}
+                    {% if row.infer_ms is not none %} · {{ row.infer_ms }} ms{% endif %}
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+              {% endif %}
+            {% endfor %}
+          {% endif %}
+          {% if ev.inference.get('trigger') %}
+          <div class="infer-meta-line" style="margin-top:8px">Origem: <span class="mono">{{ ev.inference.trigger }}</span></div>
+          {% endif %}
+          {% if ev.inference.get('inferred_at_utc') %}
+          <div class="infer-meta-line" style="margin-top:10px">UTC: {{ ev.inference.inferred_at_utc }}</div>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+      {% else %}
+      <div class="persp-empty">
+        <div class="icon">🧠</div>
+        Nenhum evento Perspicuus encontrado para o filtro atual.
       </div>
       {% endfor %}
     </div>
 
-    {% if ev.inference_at and ev.inference %}
-    <div class="inference-panel">
-      <h4>Inferência morfológica (MK1)</h4>
-      {% if ev.inference.error %}
-      <div class="infer-err">{{ ev.inference.error }}</div>
+    {% if total_pages > 1 %}
+    <div class="pagination" style="margin-top:18px">
+      {% if page > 1 %}
+      <a class="page-link" href="{{ url_for('perspicuus', page=page-1, station=station_filter, rfid=rfid_filter, ready=ready_filter) }}">‹</a>
       {% endif %}
-      {% if ev.inference.skipped %}
-        {% for sk, msg in ev.inference.skipped.items() %}
-        <div class="infer-skip"><b>{{ sk }}:</b> {{ msg }}</div>
-        {% endfor %}
+      {% for p in range([1, page-3]|max, [total_pages+1, page+4]|min) %}
+      <a class="page-link {% if p == page %}current{% endif %}" href="{{ url_for('perspicuus', page=p, station=station_filter, rfid=rfid_filter, ready=ready_filter) }}">{{ p }}</a>
+      {% endfor %}
+      {% if page < total_pages %}
+      <a class="page-link" href="{{ url_for('perspicuus', page=page+1, station=station_filter, rfid=rfid_filter, ready=ready_filter) }}">›</a>
       {% endif %}
-      {% if ev.inference.views %}
-        {% for vname in ['lateral', 'posterior'] %}
-          {% set vd = ev.inference.views.get(vname) %}
-          {% if vd is mapping %}
-            {% set vrows = vd.get('frames', []) %}
-            {% set tmean = vd.get('traits_mean', {}) %}
-          {% elif vd %}
-            {% set vrows = vd %}
-            {% set tmean = {} %}
-          {% else %}
-            {% set vrows = [] %}
-            {% set tmean = {} %}
-          {% endif %}
-          {% if vrows or tmean %}
-          <div class="infer-view-block">
-            <div class="infer-view-title">{{ vname }}</div>
-            {% if tmean %}
-            <div class="traits-mean-box">
-              <div class="mean-label">Média dos scores ({% if vd is mapping %}{{ vd.get('n_frames_inferred', vrows|length) }}{% else %}{{ vrows|length }}{% endif %} frame(s) com sucesso)</div>
-              <div class="scale-legend">Cada trait: <b>raw</b> (−4…+4) · <b>escala</b> 1–9 (passo 0,5)</div>
-              <ul class="trait-scores">
-                {% set tmean_rs = (vd.get('traits_mean_rescaled') if vd is mapping else {}) or {} %}
-                {% for name, val in tmean.items() %}
-                <li>
-                  <span>{{ name }}</span>
-                  <strong title="raw">{{ '%.4f'|format(val) }}</strong>
-                  <span class="trait-scale-sep">·</span>
-                  {% set rs = tmean_rs.get(name) %}
-                  <strong class="trait-rescaled" title="escala 1–9 (Δ0,5)">{% if rs is not none and rs != '' %}{{ '%g'|format(rs|float) }}{% else %}{{ '%g'|format(val|perspicuus_rescaled) }}{% endif %}</strong>
-                </li>
-                {% endfor %}
-              </ul>
-            </div>
-            {% endif %}
-            {% for row in vrows %}
-            <div class="infer-frame">
-              <div class="mono text-muted" style="font-size:10px;margin-bottom:6px">Por imagem · frame #{{ row.frame_index }}</div>
-              {% if row.traits %}
-              <ul class="trait-scores">
-                {% set row_rs = row.get('traits_rescaled', {}) or {} %}
-                {% for name, val in row.traits.items() %}
-                <li>
-                  <span>{{ name }}</span>
-                  <strong title="raw">{{ '%.4f'|format(val) }}</strong>
-                  <span class="trait-scale-sep">·</span>
-                  {% set rsv = row_rs.get(name) %}
-                  <strong class="trait-rescaled" title="escala 1–9 (Δ0,5)">{% if rsv is not none and rsv != '' %}{{ '%g'|format(rsv|float) }}{% else %}{{ '%g'|format(val|perspicuus_rescaled) }}{% endif %}</strong>
-                </li>
-                {% endfor %}
-              </ul>
-              {% elif row.error %}
-              <span class="infer-err">{{ row.error }}</span>
-              {% endif %}
-              <div class="infer-meta-line">
-                {% if row.yolo_conf is not none %}yolo {{ '%.2f'|format(row.yolo_conf) }}{% endif %}
-                {% if row.infer_ms is not none %} · {{ row.infer_ms }} ms{% endif %}
-              </div>
-            </div>
-            {% endfor %}
-          </div>
-          {% endif %}
-        {% endfor %}
-      {% endif %}
-      {% if ev.inference.get('trigger') %}
-      <div class="infer-meta-line" style="margin-top:8px">Origem: <span class="mono">{{ ev.inference.trigger }}</span></div>
-      {% endif %}
-      {% if ev.inference.get('inferred_at_utc') %}
-      <div class="infer-meta-line" style="margin-top:10px">UTC: {{ ev.inference.inferred_at_utc }}</div>
-      {% endif %}
+      <span class="page-info">página {{ page }} / {{ total_pages }} · {{ total }} eventos</span>
     </div>
     {% endif %}
   </div>
-  {% else %}
-  <div class="empty-state">
-    <div class="icon">🧠</div>
-    Nenhum evento Perspicuus encontrado para o filtro atual.
-  </div>
-  {% endfor %}
 </div>
-
-{% if total_pages > 1 %}
-<div class="pagination">
-  {% if page > 1 %}
-  <a class="page-link" href="{{ url_for('perspicuus', page=page-1, station=station_filter, rfid=rfid_filter, ready=ready_filter) }}">‹</a>
-  {% endif %}
-  {% for p in range([1, page-3]|max, [total_pages+1, page+4]|min) %}
-  <a class="page-link {% if p == page %}current{% endif %}" href="{{ url_for('perspicuus', page=p, station=station_filter, rfid=rfid_filter, ready=ready_filter) }}">{{ p }}</a>
-  {% endfor %}
-  {% if page < total_pages %}
-  <a class="page-link" href="{{ url_for('perspicuus', page=page+1, station=station_filter, rfid=rfid_filter, ready=ready_filter) }}">›</a>
-  {% endif %}
-  <span class="page-info">página {{ page }} / {{ total_pages }} · {{ total }} eventos</span>
-</div>
-{% endif %}
 {% endblock %}
 
 {% block scripts %}

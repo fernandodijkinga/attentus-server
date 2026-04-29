@@ -1,24 +1,32 @@
 {% extends "base.html" %}
-{% block title %}Animais Perspicuus{% endblock %}
+{% from "_perspicuus_layout.html" import persp_styles, persp_tabs %}
+{% block title %}Perspicuus — animais{% endblock %}
 
 {% block head %}
+{{ persp_styles() }}
 <style>
 .animals-grid { display: grid; gap: 16px; }
 .animal-card {
   background: var(--surf);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 12px;
   padding: 16px;
+  transition: border-color .15s ease, box-shadow .15s ease;
 }
+.animal-card:hover { border-color: rgba(26,111,212,.35); box-shadow: var(--shadow-sm); }
 .animal-top {
   display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap;
   margin-bottom: 12px;
 }
-.rfid { font-family: var(--mono); font-size: 16px; color: var(--accent2); font-weight: 700; }
-.meta-line {
-  display: flex; flex-wrap: wrap; gap: 8px 14px;
-  font-size: 11px; color: var(--text2); font-family: var(--mono);
+.rfid {
+  font-family: var(--mono); font-size: 16px; color: var(--accent2); font-weight: 800;
+  letter-spacing: .2px;
 }
+.meta-line {
+  display: flex; flex-wrap: wrap; gap: 6px 14px;
+  font-size: 11px; color: var(--text2); font-family: var(--mono); margin-top: 6px;
+}
+.meta-line b { color: var(--text); font-weight: 700; }
 .layout-row {
   display: grid; grid-template-columns: 380px 1fr; gap: 12px;
 }
@@ -29,20 +37,17 @@
   background: var(--bg);
   padding: 10px;
 }
-.photo-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 10px;
-}
+.photo-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
 .photo-item img {
   width: 100%; height: 220px; object-fit: cover;
   border-radius: 8px; border: 1px solid var(--border);
   display: block;
   cursor: zoom-in;
+  background: #0b121c;
 }
 .photo-item .label {
-  font-family: var(--mono); color: var(--text2); font-size: 10px;
-  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px;
+  font-family: var(--mono); color: var(--muted); font-size: 10px;
+  letter-spacing: 1.4px; text-transform: uppercase; margin-bottom: 6px;
 }
 .photo-empty {
   display: flex; align-items: center; justify-content: center;
@@ -53,73 +58,44 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg);
-  padding: 12px;
+  padding: 12px 14px;
 }
 .traits-title {
-  font-size: 10px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: var(--muted);
-  font-family: var(--mono);
-  margin-bottom: 4px;
+  font-size: 10px; letter-spacing: 1.4px; text-transform: uppercase;
+  color: var(--muted); font-family: var(--mono); margin-bottom: 4px;
 }
 .traits-hint {
-  font-size: 10px;
-  color: var(--text2);
-  font-family: var(--mono);
-  margin-bottom: 8px;
-  line-height: 1.35;
+  font-size: 11px; color: var(--text2);
+  font-family: var(--mono); margin-bottom: 10px; line-height: 1.4;
 }
 .trait-name {
-  color: var(--text);
-  font-family: var(--mono);
-  letter-spacing: .2px;
+  color: var(--text); font-family: var(--mono);
+  letter-spacing: .2px; font-weight: 600;
 }
-.filters-row {
-  display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 16px;
-}
-/* Barra gradiente 1–9 (mesmo conceito que ECC 1–5; verde no centro = 5) */
-.persp-gauge-row { margin-bottom: 6px; }
+/* Barra gradiente 1–9 (verde central = 5) */
+.persp-gauge-row { margin-bottom: 10px; }
 .persp-gauge-row:last-child { margin-bottom: 0; }
 .persp-gauge-label-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: 2px;
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 10px; margin-bottom: 2px;
 }
 .persp-gauge-val {
-  font-family: var(--mono);
-  font-size: 14px;
-  font-weight: 700;
+  font-family: var(--mono); font-size: 14px; font-weight: 800;
   color: var(--primary);
 }
-.persp-gauge-val-wrap {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-}
-.persp-gauge-val-raw {
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--text2);
-}
+.persp-gauge-val-wrap { display: inline-flex; align-items: baseline; gap: 6px; }
+.persp-gauge-val-raw { font-family: var(--mono); font-size: 10px; font-weight: 500; color: var(--text2); }
 .persp-gauge-scale-head {
-  display: flex;
-  justify-content: space-between;
-  font-family: var(--mono);
-  color: var(--text2);
-  font-size: 10px;
-  letter-spacing: 0.5px;
-  margin-bottom: 3px;
+  display: flex; justify-content: space-between;
+  font-family: var(--mono); color: var(--muted);
+  font-size: 9.5px; letter-spacing: 0.5px; margin-bottom: 3px;
 }
 .persp-gauge-bar {
   position: relative;
-  height: 12px;
+  height: 10px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: linear-gradient(90deg, #ff4d6a 0%, #ff9f40 22%, #00e5a0 50%, #ff9f40 78%, #ff4d6a 100%);
+  background: linear-gradient(90deg, #c62841 0%, #d9782b 22%, #0d7a5e 50%, #d9782b 78%, #c62841 100%);
   overflow: visible;
   box-shadow: inset 0 1px 2px rgba(255,255,255,0.35);
 }
@@ -127,193 +103,211 @@
   position: absolute;
   top: -4px;
   width: 3px;
-  height: 20px;
-  background: #eaf8ff;
-  box-shadow: 0 0 0 1px rgba(0,0,0,.35);
+  height: 18px;
+  background: #1a2f45;
+  box-shadow: 0 0 0 2px rgba(255,255,255,.95);
+  border-radius: 2px;
   transform: translateX(-50%);
 }
 .img-lightbox {
-  position: fixed;
-  inset: 0;
-  background: rgba(6, 12, 20, 0.88);
-  display: none;
-  align-items: center;
-  justify-content: center;
-  z-index: 2200;
-  padding: 20px;
+  position: fixed; inset: 0; background: rgba(6, 12, 20, 0.88);
+  display: none; align-items: center; justify-content: center;
+  z-index: 2200; padding: 20px;
 }
-.img-lightbox.open {
-  display: flex;
-}
+.img-lightbox.open { display: flex; }
 .img-lightbox img {
-  max-width: min(94vw, 1400px);
-  max-height: 92vh;
-  border-radius: 10px;
-  border: 1px solid var(--border);
+  max-width: min(94vw, 1400px); max-height: 92vh;
+  border-radius: 10px; border: 1px solid var(--border);
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  background: #0b121c;
 }
 .img-lightbox-close {
-  position: absolute;
-  top: 18px;
-  right: 18px;
-  width: 36px;
-  height: 36px;
-  border-radius: 999px;
+  position: absolute; top: 18px; right: 18px;
+  width: 36px; height: 36px; border-radius: 999px;
   border: 1px solid var(--border);
   background: rgba(12, 22, 34, 0.85);
-  color: #fff;
-  font-size: 20px;
-  line-height: 1;
-  cursor: pointer;
+  color: #fff; font-size: 20px; line-height: 1; cursor: pointer;
 }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="page-header">
-  <div>
-    <div class="page-title">🐂 <span>Animais</span> <span style="color:var(--accent)">Perspicuus</span></div>
-    <div class="page-sub">Última inferência por RFID — escala <strong>1–9</strong> por trait e últimas fotos lateral/posterior</div>
-  </div>
-  <div class="flex gap-8">
-    <span class="pill pill-blue">{{ stats.animals_total }} animais totais</span>
-    <span class="pill pill-green">{{ stats.animals_with_inference }} com inferência</span>
-    <a href="{{ url_for('perspicuus') }}" class="btn btn-ghost btn-sm">Eventos</a>
-  </div>
-</div>
-
-<div class="card mb-16">
-  <form class="filters-row" method="get" action="{{ url_for('perspicuus_animais') }}">
-    <div class="field" style="margin:0">
-      <label>Estação</label>
-      <select name="station">
-        <option value="">Todas</option>
-        {% for s in stations %}
-        <option value="{{ s }}" {% if station_filter == s %}selected{% endif %}>{{ s }}</option>
-        {% endfor %}
-      </select>
+<div class="persp-hero">
+  <div class="persp-hero-top">
+    <div>
+      <div class="persp-hero-eyebrow">Animais · última inferência</div>
+      <div class="persp-hero-title">Animais <em>Perspicuus</em></div>
+      <div class="persp-hero-sub">Visão por RFID com a inferência mais recente em escala <b>1–9</b> por trait, fotos lateral e posterior, e contexto da estação.</div>
     </div>
-    <div class="field" style="margin:0; min-width:260px">
-      <label>Busca</label>
-      <input type="text" name="q" value="{{ q_filter }}" placeholder="RFID, status, estação">
-    </div>
-    <div class="flex gap-8">
-      <button class="btn btn-accent btn-sm" type="submit">Filtrar</button>
-      <a href="{{ url_for('perspicuus_animais') }}" class="btn btn-ghost btn-sm">Limpar</a>
-    </div>
-  </form>
-</div>
-
-<div class="animals-grid">
-  {% for card in cards %}
-  <div class="animal-card">
-    <div class="animal-top">
-      <div>
-        <div class="rfid">{{ card.rfid }}</div>
-        <div class="meta-line">
-          <span>status: {{ card.status }}</span>
-          <span>estação: {{ card.station_id }}</span>
-          <span>device: {{ card.device_id }}</span>
-          <span>último evento: {{ card.last_ts|br_dt }}</span>
-          <span>event_id: {{ card.last_event_id }}</span>
-        </div>
-      </div>
-      <div class="meta-line">
-        <span>{{ card.n_events }} evento(s)</span>
-        <span>{{ card.n_inferred }} inferência(s)</span>
-      </div>
-    </div>
-
-    <div class="layout-row">
-      <div class="photo-col">
-        <div class="photo-grid">
-          <div class="photo-item">
-            <div class="label">Lateral</div>
-            {% set lat_url = card.last_lateral_path|perspicuus_media_url %}
-            {% if lat_url %}
-            <img src="{{ lat_url }}" alt="lateral {{ card.rfid }}" class="js-zoomable" data-zoom-src="{{ lat_url }}" data-zoom-alt="lateral {{ card.rfid }}">
-            {% else %}
-            <div class="photo-empty">Sem imagem lateral</div>
-            {% endif %}
-          </div>
-          <div class="photo-item">
-            <div class="label">Posterior</div>
-            {% set post_url = card.last_posterior_path|perspicuus_media_url %}
-            {% if post_url %}
-            <img src="{{ post_url }}" alt="posterior {{ card.rfid }}" class="js-zoomable" data-zoom-src="{{ post_url }}" data-zoom-alt="posterior {{ card.rfid }}">
-            {% else %}
-            <div class="photo-empty">Sem imagem posterior</div>
-            {% endif %}
-          </div>
-        </div>
-      </div>
-
-      <div class="traits-col">
-        {% if card.trait_cards %}
-        <div class="traits-title">Escala 1–9 (última inferência)</div>
-        <p class="traits-hint" style="margin-top:2px">Vermelho nas pontas, <strong>ideal ao centro (5)</strong>; marcador = valor reescalado.</p>
-          {% for t in card.trait_cards %}
-          <div class="persp-gauge-row">
-            <div class="persp-gauge-label-row">
-              <span class="trait-name">{{ t.name }}</span>
-              {% if t.current_rescaled is not none %}
-              <span class="persp-gauge-val-wrap">
-                <span class="persp-gauge-val">{{ '%g'|format(t.current_rescaled) }}</span>
-                {% if t.current is not none %}
-                <span class="persp-gauge-val-raw">raw {{ '%.2f'|format(t.current) }}</span>
-                {% endif %}
-              </span>
-              {% else %}
-              <span class="persp-gauge-val" style="color:var(--muted);font-weight:600">—</span>
-              {% endif %}
-            </div>
-            <div class="persp-gauge-scale-head">
-              <span>1.00</span><span>5.00</span><span>9.00</span>
-            </div>
-            <div class="persp-gauge-bar">
-              {% if t.current_rescaled is not none %}
-              <div class="persp-gauge-marker" style="left: {{ t.current_rescaled|persp_gauge_left_pct }}%"></div>
-              {% endif %}
-            </div>
-          </div>
+    <form class="persp-filter-row" method="get" action="{{ url_for('perspicuus_animais') }}">
+      <div class="field" style="margin:0">
+        <label>Estação</label>
+        <select name="station">
+          <option value="">Todas</option>
+          {% for s in stations %}
+          <option value="{{ s }}" {% if station_filter == s %}selected{% endif %}>{{ s }}</option>
           {% endfor %}
-        {% else %}
-        <div class="empty-state" style="margin:0">
-          <div class="icon">◇</div>
-          Sem traits inferidas para este animal até ao momento.
-        </div>
-        {% endif %}
+        </select>
       </div>
+      <div class="field" style="margin:0; min-width:240px">
+        <label>Busca</label>
+        <input type="text" name="q" value="{{ q_filter }}" placeholder="RFID, status, estação">
+      </div>
+      <div class="flex gap-8">
+        <button class="btn btn-accent btn-sm" type="submit">Filtrar</button>
+        <a href="{{ url_for('perspicuus_animais') }}" class="btn btn-ghost btn-sm">Limpar</a>
+      </div>
+    </form>
+  </div>
+
+  <div class="persp-kpi-strip">
+    <div class="persp-kpi-card blue">
+      <div class="lbl">Animais (RFID)</div>
+      <div class="val">{{ overview.total }}</div>
+      <div class="extra">animais distintos no brete</div>
+    </div>
+    <div class="persp-kpi-card accent">
+      <div class="lbl">Com inferência</div>
+      <div class="val">{{ overview.with_inference }}</div>
+      <div class="extra">{{ '%.1f'|format(overview.coverage_pct) }}% cobertura</div>
+    </div>
+    <div class="persp-kpi-card">
+      <div class="lbl">Inferências/animal</div>
+      <div class="val">{{ '%.1f'|format(overview.avg_inferred) }}</div>
+      <div class="extra">média entre animais inferidos</div>
+    </div>
+    <div class="persp-kpi-card orange">
+      <div class="lbl">Estações</div>
+      <div class="val">{{ overview.stations }}</div>
+      <div class="extra">brete distintos</div>
+    </div>
+    <div class="persp-kpi-card warn">
+      <div class="lbl">Página</div>
+      <div class="val">{{ page }} <span style="font-size:13px;color:var(--muted);font-weight:500">/ {{ total_pages }}</span></div>
+      <div class="extra">{{ total_animals }} animal(is) no filtro</div>
+    </div>
+  </div>
+</div>
+
+{{ persp_tabs(active='animais') }}
+
+<div class="persp-section">
+  <div class="persp-section-head">
+    <h3 class="persp-section-title"><span class="ico accent">🐂</span> Cards por animal</h3>
+    <div class="persp-section-sub">Última passagem por brete · escala 1–9 com média raw acompanhante</div>
+  </div>
+  <div class="persp-section-body">
+    <div class="animals-grid">
+      {% for card in cards %}
+      <div class="animal-card">
+        <div class="animal-top">
+          <div>
+            <div class="rfid">{{ card.rfid }}</div>
+            <div class="meta-line">
+              <span><b>status:</b> {{ card.status }}</span>
+              <span><b>estação:</b> {{ card.station_id }}</span>
+              <span><b>device:</b> {{ card.device_id }}</span>
+              <span><b>último evento:</b> {{ card.last_ts|br_dt }}</span>
+              <span><b>event_id:</b> {{ card.last_event_id }}</span>
+            </div>
+          </div>
+          <div class="meta-line" style="margin-top:0">
+            <span class="persp-status-pill ok">{{ card.n_inferred }} inferência(s)</span>
+            <span class="persp-status-pill warn">{{ card.n_events }} evento(s)</span>
+          </div>
+        </div>
+
+        <div class="layout-row">
+          <div class="photo-col">
+            <div class="photo-grid">
+              <div class="photo-item">
+                <div class="label">Lateral</div>
+                {% set lat_url = card.last_lateral_path|perspicuus_media_url %}
+                {% if lat_url %}
+                <img src="{{ lat_url }}" alt="lateral {{ card.rfid }}" class="js-zoomable" data-zoom-src="{{ lat_url }}" data-zoom-alt="lateral {{ card.rfid }}">
+                {% else %}
+                <div class="photo-empty">Sem imagem lateral</div>
+                {% endif %}
+              </div>
+              <div class="photo-item">
+                <div class="label">Posterior</div>
+                {% set post_url = card.last_posterior_path|perspicuus_media_url %}
+                {% if post_url %}
+                <img src="{{ post_url }}" alt="posterior {{ card.rfid }}" class="js-zoomable" data-zoom-src="{{ post_url }}" data-zoom-alt="posterior {{ card.rfid }}">
+                {% else %}
+                <div class="photo-empty">Sem imagem posterior</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+          <div class="traits-col">
+            {% if card.trait_cards %}
+            <div class="traits-title">Escala 1–9 (última inferência)</div>
+            <p class="traits-hint">Vermelho nas pontas, <b>ideal ao centro (5)</b>; marcador = valor reescalado.</p>
+              {% for t in card.trait_cards %}
+              <div class="persp-gauge-row">
+                <div class="persp-gauge-label-row">
+                  <span class="trait-name">{{ t.name }}</span>
+                  {% if t.current_rescaled is not none %}
+                  <span class="persp-gauge-val-wrap">
+                    <span class="persp-gauge-val">{{ '%g'|format(t.current_rescaled) }}</span>
+                    {% if t.current is not none %}
+                    <span class="persp-gauge-val-raw">raw {{ '%.2f'|format(t.current) }}</span>
+                    {% endif %}
+                  </span>
+                  {% else %}
+                  <span class="persp-gauge-val" style="color:var(--muted);font-weight:600">—</span>
+                  {% endif %}
+                </div>
+                <div class="persp-gauge-scale-head">
+                  <span>1.00</span><span>5.00</span><span>9.00</span>
+                </div>
+                <div class="persp-gauge-bar">
+                  {% if t.current_rescaled is not none %}
+                  <div class="persp-gauge-marker" style="left: {{ t.current_rescaled|persp_gauge_left_pct }}%"></div>
+                  {% endif %}
+                </div>
+              </div>
+              {% endfor %}
+            {% else %}
+            <div class="persp-empty" style="padding:30px 12px">
+              <div class="icon">◇</div>
+              Sem traits inferidas para este animal até ao momento.
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <div class="persp-empty">
+        <div class="icon">🐂</div>
+        Nenhum animal encontrado com o filtro atual.
+      </div>
+      {% endfor %}
     </div>
 
+    {% if total_pages > 1 %}
+    <div class="pagination" style="margin-top:18px">
+      {% if page > 1 %}
+      <a class="page-link" href="{{ url_for('perspicuus_animais', page=page-1, station=station_filter, q=q_filter) }}">‹</a>
+      {% endif %}
+      {% for p in range([1, page-3]|max, [total_pages+1, page+4]|min) %}
+      <a class="page-link {% if p == page %}current{% endif %}" href="{{ url_for('perspicuus_animais', page=p, station=station_filter, q=q_filter) }}">{{ p }}</a>
+      {% endfor %}
+      {% if page < total_pages %}
+      <a class="page-link" href="{{ url_for('perspicuus_animais', page=page+1, station=station_filter, q=q_filter) }}">›</a>
+      {% endif %}
+      <span class="page-info">{{ total_animals }} animal(is) · página {{ page }} / {{ total_pages }}</span>
+    </div>
+    {% endif %}
   </div>
-  {% else %}
-  <div class="empty-state">
-    <div class="icon">🐂</div>
-    Nenhum animal encontrado com o filtro atual.
-  </div>
-  {% endfor %}
 </div>
 
 <div id="img-lightbox" class="img-lightbox" onclick="if(event.target===this) closeImgLightbox()">
   <button type="button" class="img-lightbox-close" aria-label="Fechar zoom" onclick="closeImgLightbox()">×</button>
   <img id="img-lightbox-target" src="" alt="">
 </div>
-
-{% if total_pages > 1 %}
-<div class="pagination">
-  {% if page > 1 %}
-  <a class="page-link" href="{{ url_for('perspicuus_animais', page=page-1, station=station_filter, q=q_filter) }}">‹</a>
-  {% endif %}
-  {% for p in range([1, page-3]|max, [total_pages+1, page+4]|min) %}
-  <a class="page-link {% if p == page %}current{% endif %}" href="{{ url_for('perspicuus_animais', page=p, station=station_filter, q=q_filter) }}">{{ p }}</a>
-  {% endfor %}
-  {% if page < total_pages %}
-  <a class="page-link" href="{{ url_for('perspicuus_animais', page=page+1, station=station_filter, q=q_filter) }}">›</a>
-  {% endif %}
-  <span class="page-info">{{ total_animals }} animal(is) · página {{ page }} / {{ total_pages }}</span>
-</div>
-{% endif %}
 {% endblock %}
 
 {% block scripts %}

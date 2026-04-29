@@ -2080,11 +2080,12 @@ def perspicuus():
     stations = [r[0] for r in db.execute(
         'SELECT DISTINCT station_id FROM perspicuus_events ORDER BY station_id'
     ).fetchall()]
+    overview = _perspicuus_eventos_overview(db)
     stats = {
-        'total': db.execute('SELECT COUNT(*) FROM perspicuus_events').fetchone()[0],
-        'ready': db.execute('SELECT COUNT(*) FROM perspicuus_events WHERE inference_ready = 1').fetchone()[0],
-        'stations': db.execute('SELECT COUNT(DISTINCT station_id) FROM perspicuus_events').fetchone()[0],
-        'rfids': db.execute('SELECT COUNT(DISTINCT animal_rfid) FROM perspicuus_events').fetchone()[0],
+        'total': overview['total'],
+        'ready': overview['ready'],
+        'stations': overview['stations'],
+        'rfids': overview['rfids'],
     }
 
     return render_template(
@@ -2098,6 +2099,7 @@ def perspicuus():
         total_pages=total_pages,
         total=total,
         stats=stats,
+        overview=overview,
         inference_engine_ready=_perspicuus_inference_engine_ready(),
     )
 
@@ -2398,6 +2400,280 @@ def _traits_detail_rows(
     return rows
 
 
+# ----------------------------------------------------------------------
+# KPI / Insight helpers — Perspicuus dashboard pages
+# ----------------------------------------------------------------------
+
+def _perspicuus_today_count(db) -> int:
+    """Eventos recebidos hoje (por received_at, fallback timestamp_utc)."""
+    try:
+        row = db.execute(
+            """
+            SELECT COUNT(*) FROM perspicuus_events
+            WHERE date(COALESCE(received_at, timestamp_utc)) = date('now')
+            """
+        ).fetchone()
+        return int(row[0] or 0)
+    except sqlite3.OperationalError:
+        return 0
+
+
+def _perspicuus_last_received(db) -> str | None:
+    try:
+        row = db.execute(
+            "SELECT received_at FROM perspicuus_events "
+            "WHERE received_at IS NOT NULL AND trim(received_at) != '' "
+            "ORDER BY received_at DESC LIMIT 1"
+        ).fetchone()
+        return row[0] if row else None
+    except sqlite3.OperationalError:
+        return None
+
+
+def _perspicuus_eventos_overview(db) -> dict:
+    """KPIs para /perspicuus (eventos do brete)."""
+    overview = {
+        'total': 0,
+        'ready': 0,
+        'pending': 0,
+        'stations': 0,
+        'rfids': 0,
+        'today': _perspicuus_today_count(db),
+    }
+    try:
+        overview['total'] = int(db.execute('SELECT COUNT(*) FROM perspicuus_events').fetchone()[0] or 0)
+        overview['ready'] = int(db.execute('SELECT COUNT(*) FROM perspicuus_events WHERE inference_ready = 1').fetchone()[0] or 0)
+        overview['pending'] = max(0, overview['total'] - overview['ready'])
+        overview['stations'] = int(db.execute('SELECT COUNT(DISTINCT station_id) FROM perspicuus_events').fetchone()[0] or 0)
+        overview['rfids'] = int(db.execute(
+            "SELECT COUNT(DISTINCT animal_rfid) FROM perspicuus_events "
+            "WHERE animal_rfid IS NOT NULL AND trim(animal_rfid) != ''"
+        ).fetchone()[0] or 0)
+    except sqlite3.OperationalError:
+        pass
+    return overview
+
+
+def _perspicuus_animais_overview(db) -> dict:
+    """KPIs para /perspicuus/animais."""
+    overview = {
+        'total': 0,
+        'with_inference': 0,
+        'coverage_pct': 0.0,
+        'avg_inferred': 0.0,
+        'stations': 0,
+    }
+    try:
+        overview['total'] = int(db.execute(
+            "SELECT COUNT(DISTINCT animal_rfid) FROM perspicuus_events "
+            "WHERE animal_rfid IS NOT NULL AND trim(animal_rfid) != ''"
+        ).fetchone()[0] or 0)
+        overview['with_inference'] = int(db.execute(
+            """
+            SELECT COUNT(DISTINCT animal_rfid)
+            FROM perspicuus_events
+            WHERE animal_rfid IS NOT NULL AND trim(animal_rfid) != ''
+              AND inference_at IS NOT NULL AND trim(inference_at) != ''
+            """
+        ).fetchone()[0] or 0)
+        if overview['total'] > 0:
+            overview['coverage_pct'] = round(
+                (overview['with_inference'] / overview['total']) * 100.0, 1
+            )
+        row = db.execute(
+            """
+            SELECT AVG(n_inf) FROM (
+              SELECT COUNT(*) AS n_inf
+              FROM perspicuus_events
+              WHERE animal_rfid IS NOT NULL AND trim(animal_rfid) != ''
+                AND inference_at IS NOT NULL AND trim(inference_at) != ''
+              GROUP BY animal_rfid
+            )
+            """
+        ).fetchone()
+        avg_v = row[0] if row else None
+        overview['avg_inferred'] = round(float(avg_v), 1) if avg_v is not None else 0.0
+        overview['stations'] = int(db.execute(
+            'SELECT COUNT(DISTINCT station_id) FROM perspicuus_events'
+        ).fetchone()[0] or 0)
+    except sqlite3.OperationalError:
+        pass
+    return overview
+
+
+def _perspicuus_inferencias_overview(db) -> dict:
+    """KPIs para /perspicuus/inferencias."""
+    overview = {
+        'total': 0,
+        'ok': 0,
+        'pending': 0,
+        'error': 0,
+        'last_received': _perspicuus_last_received(db),
+    }
+    try:
+        overview['total'] = int(db.execute('SELECT COUNT(*) FROM perspicuus_events').fetchone()[0] or 0)
+        overview['pending'] = int(db.execute(
+            "SELECT COUNT(*) FROM perspicuus_events "
+            "WHERE inference_at IS NULL OR trim(inference_at) = ''"
+        ).fetchone()[0] or 0)
+        overview['ok'] = int(db.execute(
+            "SELECT COUNT(*) FROM perspicuus_events "
+            "WHERE inference_at IS NOT NULL AND trim(inference_at) != '' "
+            "AND json_extract(inference_json, '$.error') IS NULL"
+        ).fetchone()[0] or 0)
+        overview['error'] = int(db.execute(
+            "SELECT COUNT(*) FROM perspicuus_events "
+            "WHERE json_extract(inference_json, '$.error') IS NOT NULL"
+        ).fetchone()[0] or 0)
+    except sqlite3.OperationalError:
+        pass
+    return overview
+
+
+def _perspicuus_rebanho_overview(events: list[dict],
+                                  trait_series: list[dict],
+                                  volume_series: list[dict]) -> dict:
+    """KPIs para /perspicuus/analise-rebanho."""
+    stations = sorted({str(ev.get('station_id') or '—').strip() or '—' for ev in events})
+    rfids = {str(ev.get('animal_rfid') or '').strip() for ev in events if (ev.get('animal_rfid') or '').strip()}
+    traits = sorted({r['trait'] for r in trait_series})
+    peak = {'date': None, 'station': None, 'count': 0}
+    for r in volume_series:
+        n = int((r.get('n_animals') or 0) or (r.get('n_records') or 0))
+        if n > peak['count']:
+            peak = {'date': r.get('date'), 'station': r.get('station_id') or '—', 'count': n}
+    return {
+        'events_in_chart': len(events),
+        'stations_in_chart': len(stations),
+        'rfids_in_chart': len(rfids),
+        'traits_active': len(traits),
+        'peak': peak,
+        'stations': stations,
+    }
+
+
+def _perspicuus_rebanho_insights(events: list[dict],
+                                  trait_series: list[dict],
+                                  trait_flat: list[dict],
+                                  volume_series: list[dict],
+                                  rebanho_kpis: dict,
+                                  station_filter: str = '',
+                                  q_filter: str = '') -> list[dict]:
+    """Gera 4–6 cartões de insight automáticos para o painel."""
+    out: list[dict] = []
+    if rebanho_kpis.get('events_in_chart'):
+        scope = 'no filtro selecionado' if (station_filter or q_filter) else 'em todo o rebanho'
+        out.append({
+            'icon': '🧠',
+            'text': (
+                f"<b>{rebanho_kpis['events_in_chart']}</b> eventos com inferência "
+                f"em <b>{rebanho_kpis['stations_in_chart']}</b> estação(ões) e "
+                f"<b>{rebanho_kpis['rfids_in_chart']}</b> animal(is) {scope}."
+            ),
+        })
+    else:
+        out.append({
+            'icon': '🧠',
+            'text': 'Ainda sem inferências para os critérios atuais.',
+        })
+
+    means_by_trait: dict[str, list[float]] = defaultdict(list)
+    for r in trait_series:
+        if r.get('mean') is None:
+            continue
+        try:
+            means_by_trait[str(r['trait'])].append(float(r['mean']))
+        except (TypeError, ValueError):
+            continue
+    if means_by_trait:
+        agg = [(t, sum(vs) / len(vs)) for t, vs in means_by_trait.items() if vs]
+        agg.sort(key=lambda kv: kv[1], reverse=True)
+        if agg:
+            top = agg[0]
+            bot = agg[-1]
+            out.append({
+                'icon': '📈',
+                'text': (
+                    f"Trait com maior média raw é <b>{top[0]}</b> "
+                    f"(<b>{top[1]:+.2f}</b>) — extremo positivo da escala."
+                ),
+            })
+            if bot[0] != top[0]:
+                out.append({
+                    'icon': '📉',
+                    'text': (
+                        f"<b>{bot[0]}</b> registra a menor média raw "
+                        f"(<b>{bot[1]:+.2f}</b>) — pode indicar viés inverso ou pouca expressão."
+                    ),
+                })
+
+    std_by_station: dict[str, list[float]] = defaultdict(list)
+    for r in trait_series:
+        try:
+            v = float(r.get('std')) if r.get('std') is not None else None
+        except (TypeError, ValueError):
+            v = None
+        if v is None:
+            continue
+        std_by_station[str(r.get('station_id') or '—').strip()].append(v)
+    if std_by_station:
+        rank = sorted(
+            ((s, sum(vs) / len(vs)) for s, vs in std_by_station.items() if vs),
+            key=lambda kv: kv[1],
+            reverse=True,
+        )
+        if rank:
+            most_var = rank[0]
+            least_var = rank[-1]
+            out.append({
+                'icon': '🎯',
+                'text': (
+                    f"Maior dispersão em <b>{most_var[0]}</b> "
+                    f"(σ médio = <b>{most_var[1]:.2f}</b>); menor em "
+                    f"<b>{least_var[0]}</b> (σ = <b>{least_var[1]:.2f}</b>)."
+                ),
+            })
+
+    peak = rebanho_kpis.get('peak') or {}
+    if peak.get('count'):
+        out.append({
+            'icon': '🚦',
+            'text': (
+                f"Maior volume diário em <b>{peak.get('station') or '—'}</b> "
+                f"({peak.get('date') or '—'}) com <b>{peak['count']}</b> animal(is)."
+            ),
+        })
+
+    bands = {'Baixa (1–3)': 0, 'Média (4–6)': 0, 'Alta (7–9)': 0}
+    for s in trait_flat:
+        rs = s.get('rs')
+        try:
+            n = float(rs) if rs is not None else None
+        except (TypeError, ValueError):
+            n = None
+        if n is None:
+            continue
+        if n <= 3:
+            bands['Baixa (1–3)'] += 1
+        elif n <= 6:
+            bands['Média (4–6)'] += 1
+        else:
+            bands['Alta (7–9)'] += 1
+    total_b = sum(bands.values())
+    if total_b:
+        pct = {k: round(v * 100.0 / total_b, 1) for k, v in bands.items()}
+        out.append({
+            'icon': '🏷️',
+            'text': (
+                f"Escala 1–9 (agregada): <b>{pct['Baixa (1–3)']}%</b> baixa · "
+                f"<b>{pct['Média (4–6)']}%</b> média · "
+                f"<b>{pct['Alta (7–9)']}%</b> alta."
+            ),
+        })
+
+    return out
+
+
 @app.route('/perspicuus/animais')
 @login_required
 def perspicuus_animais():
@@ -2481,20 +2757,10 @@ def perspicuus_animais():
     stations = [row[0] for row in db.execute(
         'SELECT DISTINCT station_id FROM perspicuus_events ORDER BY station_id'
     ).fetchall()]
+    overview = _perspicuus_animais_overview(db)
     stats = {
-        'animals_total': db.execute(
-            "SELECT COUNT(DISTINCT animal_rfid) FROM perspicuus_events WHERE animal_rfid IS NOT NULL AND trim(animal_rfid) != ''"
-        ).fetchone()[0],
-        'animals_with_inference': db.execute(
-            """
-            SELECT COUNT(DISTINCT animal_rfid)
-            FROM perspicuus_events
-            WHERE animal_rfid IS NOT NULL
-              AND trim(animal_rfid) != ''
-              AND inference_at IS NOT NULL
-              AND trim(inference_at) != ''
-            """
-        ).fetchone()[0],
+        'animals_total': overview['total'],
+        'animals_with_inference': overview['with_inference'],
     }
 
     return render_template(
@@ -2507,6 +2773,7 @@ def perspicuus_animais():
         q_filter=q,
         stations=stations,
         stats=stats,
+        overview=overview,
     )
 
 
@@ -2619,6 +2886,7 @@ def perspicuus_inferencias():
         ),
         'total_all': db.execute('SELECT COUNT(*) FROM perspicuus_events').fetchone()[0],
     }
+    overview = _perspicuus_inferencias_overview(db)
 
     return render_template(
         'perspicuus_inferencias.html',
@@ -2631,6 +2899,7 @@ def perspicuus_inferencias():
         total_pages=total_pages,
         total=total,
         infer_stats=infer_stats,
+        overview=overview,
         inference_engine_ready=_perspicuus_inference_engine_ready(),
     )
 
@@ -2675,6 +2944,11 @@ def perspicuus_analise_rebanho():
             "SELECT COUNT(*) FROM perspicuus_events WHERE inference_at IS NOT NULL AND trim(inference_at) != ''"
         ).fetchone()[0],
     }
+    rebanho_kpis = _perspicuus_rebanho_overview(events, trait_series, volume_series)
+    insights = _perspicuus_rebanho_insights(
+        events, trait_series, trait_flat, volume_series, rebanho_kpis,
+        station_filter=station_filter, q_filter=q,
+    )
     return render_template(
         'perspicuus_analise_rebanho.html',
         trait_series=trait_series,
@@ -2686,6 +2960,8 @@ def perspicuus_analise_rebanho():
         trait_names=trait_names,
         table_rows=table_rows,
         stats=stats,
+        rebanho_kpis=rebanho_kpis,
+        insights=insights,
     )
 
 
