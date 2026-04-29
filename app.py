@@ -60,7 +60,7 @@ from ecc_module import (
     ecc_recurrent_animal_trends,
     rescale_ecc_1_to_5_quarter,
 )
-from perspicuus_scoring import rescale_perspicuus_trait_score
+from perspicuus_scoring import rescale_perspicuus_trait_score, traits_rescaled_from_traits
 
 TZ_BR = ZoneInfo('America/Sao_Paulo')
 
@@ -350,6 +350,140 @@ def _perspicuus_score_pair_for_record(
             cal_lot['raw_max'] = mx
     except (TypeError, ValueError):
         pass
+    score_lot = _perspicuus_rescale_with_cal(raw_val, cal_lot)
+    return score_lot, score_global
+
+
+def _perspicuus_merge_table_raw_bounds(
+    table_mn: float | None,
+    table_mx: float | None,
+    include_raw: float | None,
+) -> tuple[float, float] | None:
+    """Igual a _perspicuus_raw_bounds mas usando min/max da tabela já em cache."""
+    mn_f = table_mn
+    mx_f = table_mx
+    if include_raw is not None:
+        try:
+            x = float(include_raw)
+            mn_f = x if mn_f is None else min(mn_f, x)
+            mx_f = x if mx_f is None else max(mx_f, x)
+        except (TypeError, ValueError):
+            pass
+    if mn_f is None or mx_f is None or mx_f <= mn_f:
+        return None
+    return (float(mn_f), float(mx_f))
+
+
+def _perspicuus_export_bounds_cache(db, breed: str) -> dict[str, Any]:
+    """Min/max global na tabela, min/max por (fazenda, lote) e médias para efeitos fixos — export XLSX sem N+1."""
+    table = PERSPICUUS_BREED_TABLE.get(breed)
+    if not table:
+        return {}
+    row = db.execute(
+        f"SELECT MIN(raw_score) AS mn, MAX(raw_score) AS mx FROM {table} WHERE raw_score IS NOT NULL"
+    ).fetchone()
+    try:
+        gmn = float(row['mn']) if row and row['mn'] is not None else None
+        gmx = float(row['mx']) if row and row['mx'] is not None else None
+    except (TypeError, ValueError):
+        gmn, gmx = None, None
+    lot_map: dict[tuple[str, str], tuple[float, float]] = {}
+    lot_sql = (
+        "SELECT farm_id, "
+        "CASE WHEN COALESCE(TRIM(lot_id), '') = '' THEN '' ELSE TRIM(lot_id) END AS lot_key, "
+        "MIN(raw_score) AS mn, MAX(raw_score) AS mx "
+        f"FROM {table} WHERE raw_score IS NOT NULL "
+        "GROUP BY farm_id, "
+        "CASE WHEN COALESCE(TRIM(lot_id), '') = '' THEN '' ELSE TRIM(lot_id) END"
+    )
+    for lr in db.execute(lot_sql):
+        try:
+            farm = str(lr['farm_id'] or '').strip()
+            lotk = str(lr['lot_key'] or '').strip()
+            mn = float(lr['mn']) if lr['mn'] is not None else None
+            mx = float(lr['mx']) if lr['mx'] is not None else None
+            if mn is not None and mx is not None and mx > mn:
+                lot_map[(farm, lotk)] = (mn, mx)
+        except (TypeError, ValueError):
+            continue
+    cal = _perspicuus_get_calibration(db, breed)
+    fixed_effects = cal.get('fixed_effects')
+    if not isinstance(fixed_effects, list):
+        fixed_effects = _perspicuus_parse_fixed_effects(cal.get('fixed_effect') or '', breed)
+    group_means: dict[str, float] = {}
+    global_mean: float | None = None
+    if fixed_effects:
+        sums: dict[str, list[float]] = {}
+        all_vals: list[float] = []
+        for r in db.execute(f"SELECT * FROM {table} WHERE raw_score IS NOT NULL"):
+            try:
+                v = float(r['raw_score'])
+            except (TypeError, ValueError):
+                continue
+            d = dict(r)
+            g = _perspicuus_record_group_key(d, fixed_effects)
+            if not g:
+                continue
+            sums.setdefault(g, []).append(v)
+            all_vals.append(v)
+        for g, arr in sums.items():
+            if arr:
+                group_means[g] = sum(arr) / len(arr)
+        if all_vals:
+            global_mean = sum(all_vals) / len(all_vals)
+    return {
+        'cal': cal,
+        'table_mn': gmn,
+        'table_mx': gmx,
+        'lot_map': lot_map,
+        'fixed_effects': fixed_effects,
+        'group_means': group_means,
+        'global_mean': global_mean,
+    }
+
+
+def _perspicuus_export_resolve_lot_global(d: dict[str, Any], cache: dict[str, Any]) -> tuple[Any, Any]:
+    """Valores da BD se ambos existem; senão recalcula com a mesma lógica de _perspicuus_score_pair_for_record (sem queries por linha)."""
+    lot_s, glob_s = d.get('score_lot'), d.get('score_global')
+    if lot_s is not None and glob_s is not None:
+        return lot_s, glob_s
+    raw_score = d.get('raw_score')
+    if raw_score is None:
+        return lot_s, glob_s
+    try:
+        raw_val = float(raw_score)
+    except (TypeError, ValueError):
+        return lot_s, glob_s
+    if not cache:
+        return lot_s, glob_s
+    cal = cache['cal']
+    table_mn, table_mx = cache['table_mn'], cache['table_mx']
+    adj = raw_val
+    fe = cache.get('fixed_effects') or []
+    gm = cache.get('global_mean')
+    gmeans = cache.get('group_means') or {}
+    if fe and gm is not None:
+        gk = _perspicuus_record_group_key(d, fe)
+        mu_g = gmeans.get(gk)
+        if mu_g is not None:
+            adj = raw_val - mu_g + gm
+    g_raw = adj
+    bounds_g = _perspicuus_merge_table_raw_bounds(table_mn, table_mx, g_raw)
+    cal_global = dict(cal)
+    if bounds_g:
+        cal_global['raw_min'], cal_global['raw_max'] = bounds_g[0], bounds_g[1]
+    score_global = _perspicuus_rescale_with_cal(g_raw, cal_global)
+
+    farm = str(d.get('farm_id') or '').strip()
+    lot = str(d.get('lot_id') or '').strip()
+    lot_key = (farm, lot)
+    cal_lot = dict(cal_global)
+    lm = cache.get('lot_map', {}).get(lot_key)
+    if lm:
+        mn, mx = lm
+        if mn is not None and mx is not None and mx > mn:
+            cal_lot['raw_min'] = mn
+            cal_lot['raw_max'] = mx
     score_lot = _perspicuus_rescale_with_cal(raw_val, cal_lot)
     return score_lot, score_global
 
@@ -6589,6 +6723,23 @@ def _perspicuus_traits_summary(traits_json: str | None) -> str:
     return '; '.join(parts)
 
 
+def _perspicuus_traits_reescalado_summary(traits_json: str | None) -> str:
+    """Traits em escala de apresentação 1…9 (mapeamento fixo −4…+4), por trait."""
+    try:
+        d = json.loads(traits_json or '{}')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return ''
+    if not isinstance(d, dict) or not d:
+        return ''
+    rs = traits_rescaled_from_traits(d)
+    if not rs:
+        return ''
+    parts: list[str] = []
+    for k in sorted(rs.keys(), key=lambda x: str(x)):
+        parts.append(f'{k}:{float(rs[k]):.4f}')
+    return '; '.join(parts)
+
+
 def _xlsx_from_rows(sheet_name: str, headers: list[str], rows: list[list[Any]]) -> io.BytesIO:
     wb = Workbook()
     ws = wb.active
@@ -6621,6 +6772,7 @@ def download_perspicuus_angus_dataset_xlsx():
         """,
         params + [max_n],
     ).fetchall()
+    cache = _perspicuus_export_bounds_cache(db, 'angus')
     headers = [
         'id',
         'criado_utc',
@@ -6632,13 +6784,14 @@ def download_perspicuus_angus_dataset_xlsx():
         'sexo',
         'ficheiro',
         'raw_score_media_traits',
-        'escore_lote_1_9',
-        'escore_global_1_9',
+        'escore_reescalado_lote_1_9',
+        'escore_reescalado_global_1_9',
         'escore_1_9_legado_bd',
         'url_imagem',
         'url_miniatura',
         'url_bbox',
         'traits_resumo',
+        'traits_resumo_reescalado_1_9',
         'traits_json',
         'meta_json',
         'erro',
@@ -6647,6 +6800,7 @@ def download_perspicuus_angus_dataset_xlsx():
     for row in rows:
         d = dict(row)
         legado = d.get('score_1_9')
+        sl, sg = _perspicuus_export_resolve_lot_global(d, cache)
         data.append(
             [
                 d.get('id'),
@@ -6659,13 +6813,14 @@ def download_perspicuus_angus_dataset_xlsx():
                 d.get('sex') or '',
                 d.get('filename'),
                 d.get('raw_score'),
-                d.get('score_lot'),
-                d.get('score_global'),
+                sl,
+                sg,
                 legado,
                 d.get('image_path') or '',
                 d.get('thumb_path') or '',
                 d.get('bbox_path') or '',
                 _perspicuus_traits_summary(d.get('traits_json')),
+                _perspicuus_traits_reescalado_summary(d.get('traits_json')),
                 d.get('traits_json') or '{}',
                 d.get('meta_json') or '{}',
                 d.get('error_text') or '',
@@ -6700,6 +6855,7 @@ def download_perspicuus_nelore_dataset_xlsx():
         """,
         params + [max_n],
     ).fetchall()
+    cache = _perspicuus_export_bounds_cache(db, 'nelore')
     headers = [
         'id',
         'criado_utc',
@@ -6711,13 +6867,14 @@ def download_perspicuus_nelore_dataset_xlsx():
         'sexo',
         'ficheiro',
         'raw_score_media_traits',
-        'escore_lote_1_9',
-        'escore_global_1_9',
+        'escore_reescalado_lote_1_9',
+        'escore_reescalado_global_1_9',
         'escore_1_9_legado_bd',
         'url_imagem',
         'url_miniatura',
         'url_bbox',
         'traits_resumo',
+        'traits_resumo_reescalado_1_9',
         'traits_json',
         'meta_json',
         'erro',
@@ -6726,6 +6883,7 @@ def download_perspicuus_nelore_dataset_xlsx():
     for row in rows:
         d = dict(row)
         legado = d.get('score_1_9')
+        sl, sg = _perspicuus_export_resolve_lot_global(d, cache)
         data.append(
             [
                 d.get('id'),
@@ -6738,13 +6896,14 @@ def download_perspicuus_nelore_dataset_xlsx():
                 d.get('sex') or '',
                 d.get('filename'),
                 d.get('raw_score'),
-                d.get('score_lot'),
-                d.get('score_global'),
+                sl,
+                sg,
                 legado,
                 d.get('image_path') or '',
                 d.get('thumb_path') or '',
                 d.get('bbox_path') or '',
                 _perspicuus_traits_summary(d.get('traits_json')),
+                _perspicuus_traits_reescalado_summary(d.get('traits_json')),
                 d.get('traits_json') or '{}',
                 d.get('meta_json') or '{}',
                 d.get('error_text') or '',

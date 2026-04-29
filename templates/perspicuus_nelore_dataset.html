@@ -44,7 +44,7 @@
     <div class="field"><label>Busca</label><input name="q" value="{{ q_filter }}" placeholder="fazenda, lote, brinco, arquivo"></div>
     <div class="field"><label>&nbsp;</label><button class="btn btn-ghost btn-sm" type="submit">Filtrar</button></div>
   </form>
-  <p class="page-sub" style="margin:0 0 8px;font-size:11px;color:var(--text2)">XLSX inclui brinco, fazenda, lote, nascimento, sexo, raw, escores lote/global (1–9), URLs de mídia, traits (resumo + JSON), meta da inferência e erro. Limite padrão 50&nbsp;000 linhas (<span class="mono">NELORE_DATASET_XLSX_MAX</span>).</p>
+  <p class="page-sub" style="margin:0 0 8px;font-size:11px;color:var(--text2)">XLSX inclui brinco, fazenda, lote, nascimento, sexo, raw, escores reescalados lote e global (1–9, calibragem), legado BD, URLs de mídia, traits em raw e em 1–9 (resumo + JSON), meta e erro. Limite padrão 50&nbsp;000 linhas (<span class="mono">NELORE_DATASET_XLSX_MAX</span>).</p>
   <div class="flex gap-8" style="flex-wrap:wrap;align-items:flex-start">
     <a class="btn btn-ghost btn-sm" href="{{ url_for('download_perspicuus_nelore_dataset_xlsx', farm=farm_filter, lot=lot_filter, animal=animal_filter, q=q_filter) }}">Baixar XLSX (filtros)</a>
     <button class="btn btn-accent btn-sm" id="btnReprocessAll" type="button">Reprocessar todos os animais</button>
