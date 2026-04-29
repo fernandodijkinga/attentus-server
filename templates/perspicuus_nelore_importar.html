@@ -72,7 +72,7 @@
   <div class="card-title">Últimos registros Nelore</div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Data</th><th>Fazenda</th><th>Lote</th><th>Brinco</th><th>Raw</th><th>Escore lote</th><th>Escore global</th><th>Imagem</th><th>Status</th></tr></thead>
+      <thead><tr><th>Data</th><th>Fazenda</th><th>Lote</th><th>Brinco</th><th>Raw</th><th>Escore lote</th><th>Escore global</th><th>Imagem</th><th>Status</th><th>Atalho</th></tr></thead>
       <tbody>
       {% for r in records %}
       <tr>
@@ -82,9 +82,10 @@
         <td class="mono">{{ '%g'|format(r.score_global) if r.score_global is not none else (('%g'|format(r.score_1_9)) if r.score_1_9 is not none else '—') }}</td>
         <td>{% if r.image_path %}<img class="thumb" src="{{ r.image_path }}" onclick="window.open('{{ r.image_path }}')">{% else %}—{% endif %}</td>
         <td class="mono">{{ r.error_text or 'ok' }}</td>
+        <td><a class="btn btn-ghost btn-sm" href="{{ url_for('perspicuus_nelore_analise_individual', farm=r.farm_id, lot=r.lot_id, animal=r.animal_tag) }}">Animal</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="9"><div class="empty-state"><div class="icon">📷</div>Sem registros ainda.</div></td></tr>
+      <tr><td colspan="10"><div class="empty-state"><div class="icon">📷</div>Sem registros ainda.</div></td></tr>
       {% endfor %}
       </tbody>
     </table>
