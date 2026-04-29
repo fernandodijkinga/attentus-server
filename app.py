@@ -483,50 +483,76 @@ def _anova_eta2_with_permutation(
 def _perspicuus_population_analysis(rows: list[sqlite3.Row], breed: str) -> dict[str, Any]:
     all_rows = [dict(r) for r in rows]
     raw_vals = []
-    res_vals = []
+    lot_vals = []
+    global_vals = []
     by_day: dict[str, dict[str, float]] = {}
     by_animal: dict[str, list[float]] = {}
-    dist = [0, 0, 0, 0]
+    dist_lot = [0, 0, 0, 0]
+    dist_global = [0, 0, 0, 0]
     traits_all: dict[str, list[float]] = defaultdict(list)
     traits_res_all: dict[str, list[float]] = defaultdict(list)
     trait_day: dict[str, dict[str, dict[str, float]]] = defaultdict(lambda: defaultdict(lambda: {'raw_sum': 0.0, 'res_sum': 0.0, 'n': 0}))
 
     for r in all_rows:
-        sc = r.get('score_1_9')
+        sc_lot = r.get('score_lot')
+        sc_global = r.get('score_global')
+        if sc_global is None:
+            sc_global = r.get('score_1_9')
         rw = r.get('raw_score')
         try:
             rwf = float(rw) if rw is not None else None
         except (TypeError, ValueError):
             rwf = None
         try:
-            scf = float(sc) if sc is not None else None
+            slf = float(sc_lot) if sc_lot is not None else None
         except (TypeError, ValueError):
-            scf = None
+            slf = None
+        try:
+            sgf = float(sc_global) if sc_global is not None else None
+        except (TypeError, ValueError):
+            sgf = None
         if rwf is not None:
             raw_vals.append(rwf)
-        if scf is not None:
-            res_vals.append(scf)
-            if scf < 3:
-                dist[0] += 1
-            elif scf < 5:
-                dist[1] += 1
-            elif scf < 7:
-                dist[2] += 1
+        if slf is not None:
+            lot_vals.append(slf)
+            if slf < 3:
+                dist_lot[0] += 1
+            elif slf < 5:
+                dist_lot[1] += 1
+            elif slf < 7:
+                dist_lot[2] += 1
             else:
-                dist[3] += 1
+                dist_lot[3] += 1
+        if sgf is not None:
+            global_vals.append(sgf)
+            if sgf < 3:
+                dist_global[0] += 1
+            elif sgf < 5:
+                dist_global[1] += 1
+            elif sgf < 7:
+                dist_global[2] += 1
+            else:
+                dist_global[3] += 1
 
         day = str(r.get('inference_date') or '')
-        if day and scf is not None:
-            box = by_day.setdefault(day, {'sum': 0.0, 'n': 0})
-            box['sum'] += scf
-            box['n'] += 1
+        if day:
+            box = by_day.setdefault(day, {'raw_sum': 0.0, 'raw_n': 0, 'lot_sum': 0.0, 'lot_n': 0, 'global_sum': 0.0, 'global_n': 0})
+            if rwf is not None:
+                box['raw_sum'] += rwf
+                box['raw_n'] += 1
+            if slf is not None:
+                box['lot_sum'] += slf
+                box['lot_n'] += 1
+            if sgf is not None:
+                box['global_sum'] += sgf
+                box['global_n'] += 1
 
-        if scf is not None:
+        if sgf is not None:
             if breed == 'nelore':
                 key = f"{r.get('farm_id','')}::{r.get('lot_id','')}::{r.get('animal_tag','')}"
             else:
                 key = f"{r.get('farm_id','')}::{r.get('animal_tag','')}"
-            by_animal.setdefault(key, []).append(scf)
+            by_animal.setdefault(key, []).append(sgf)
 
         traits = {}
         try:
@@ -548,10 +574,16 @@ def _perspicuus_population_analysis(rows: list[sqlite3.Row], breed: str) -> dict
                     bucket['res_sum'] += trs
                     bucket['n'] += 1
 
-    pop_series = [
-        {'date': d, 'mean': round(box['sum'] / box['n'], 3), 'n': int(box['n'])}
-        for d, box in sorted(by_day.items(), key=lambda x: x[0]) if box['n'] > 0
-    ]
+    pop_series = []
+    for d, box in sorted(by_day.items(), key=lambda x: x[0]):
+        entry = {'date': d}
+        entry['raw_mean'] = round(box['raw_sum'] / box['raw_n'], 4) if box['raw_n'] > 0 else None
+        entry['lot_mean'] = round(box['lot_sum'] / box['lot_n'], 3) if box['lot_n'] > 0 else None
+        entry['global_mean'] = round(box['global_sum'] / box['global_n'], 3) if box['global_n'] > 0 else None
+        entry['n_raw'] = int(box['raw_n'])
+        entry['n_lot'] = int(box['lot_n'])
+        entry['n_global'] = int(box['global_n'])
+        pop_series.append(entry)
 
     ranked = []
     for k, vals in by_animal.items():
@@ -576,6 +608,7 @@ def _perspicuus_population_analysis(rows: list[sqlite3.Row], breed: str) -> dict
     ranked.sort(key=lambda x: (-x['spread'], -x['n']))
 
     trait_summary = []
+    trait_dist: dict[str, list[int]] = {}
     for t in sorted(traits_all.keys()):
         arr_raw = sorted(traits_all[t])
         arr_res = sorted(traits_res_all[t])
@@ -592,6 +625,21 @@ def _perspicuus_population_analysis(rows: list[sqlite3.Row], breed: str) -> dict
             'res_mean': round(mu_res, 3) if mu_res is not None else None,
             'res_std': round(sd_res, 3) if sd_res is not None else None,
         })
+        d0 = d1 = d2 = d3 = 0
+        for v in arr_res:
+            try:
+                vv = float(v)
+            except (TypeError, ValueError):
+                continue
+            if vv < 3:
+                d0 += 1
+            elif vv < 5:
+                d1 += 1
+            elif vv < 7:
+                d2 += 1
+            else:
+                d3 += 1
+        trait_dist[t] = [d0, d1, d2, d3]
     trait_summary.sort(key=lambda x: x['n'], reverse=True)
     top_traits = [x['trait'] for x in trait_summary[:8]]
 
@@ -627,8 +675,11 @@ def _perspicuus_population_analysis(rows: list[sqlite3.Row], breed: str) -> dict
             except (TypeError, ValueError):
                 pass
             try:
-                if r.get('score_1_9') is not None:
-                    grp_res[gk].append(float(r.get('score_1_9')))
+                score_val = r.get('score_global')
+                if score_val is None:
+                    score_val = r.get('score_1_9')
+                if score_val is not None:
+                    grp_res[gk].append(float(score_val))
             except (TypeError, ValueError):
                 pass
             try:
@@ -680,26 +731,32 @@ def _perspicuus_population_analysis(rows: list[sqlite3.Row], breed: str) -> dict
     )
 
     raw_mu, raw_sd = _mean_std(raw_vals)
-    res_mu, res_sd = _mean_std(res_vals)
+    lot_mu, lot_sd = _mean_std(lot_vals)
+    global_mu, global_sd = _mean_std(global_vals)
     cards = {
         'records': len(all_rows),
         'with_raw': len(raw_vals),
-        'with_rescaled': len(res_vals),
+        'with_lot': len(lot_vals),
+        'with_global': len(global_vals),
         'traits': len(trait_summary),
         'raw_mean': round(raw_mu, 4) if raw_mu is not None else None,
         'raw_std': round(raw_sd, 4) if raw_sd is not None else None,
-        'res_mean': round(res_mu, 3) if res_mu is not None else None,
-        'res_std': round(res_sd, 3) if res_sd is not None else None,
+        'lot_mean': round(lot_mu, 3) if lot_mu is not None else None,
+        'lot_std': round(lot_sd, 3) if lot_sd is not None else None,
+        'global_mean': round(global_mu, 3) if global_mu is not None else None,
+        'global_std': round(global_sd, 3) if global_sd is not None else None,
     }
 
     return {
         'cards': cards,
-        'dist': dist,
+        'dist_lot': dist_lot,
+        'dist_global': dist_global,
         'pop_series': pop_series,
         'ranked': ranked[:120],
         'trait_summary': trait_summary,
         'top_traits': top_traits,
         'trait_series': trait_series,
+        'trait_dist': trait_dist,
         'effect_overall': effect_overall,
         'effect_traits': effect_traits[:80],
         'boxplot_by_effect': boxplot_by_effect,
@@ -3058,9 +3115,9 @@ def perspicuus_angus_analise_individual():
     if selected_farm and selected_animal:
         pr = db.execute(
             """
-            SELECT id, inference_date, raw_score, COALESCE(score_global, score_1_9) AS score_1_9
+            SELECT id, inference_date, raw_score, score_lot, COALESCE(score_global, score_1_9) AS score_global
             FROM perspicuus_angus_records
-            WHERE farm_id = ? AND animal_tag = ? AND score_1_9 IS NOT NULL
+            WHERE farm_id = ? AND animal_tag = ? AND COALESCE(score_global, score_lot, score_1_9) IS NOT NULL
             ORDER BY inference_date ASC, id ASC
             """,
             (selected_farm, selected_animal),
@@ -3068,7 +3125,9 @@ def perspicuus_angus_analise_individual():
         points = [dict(x) for x in pr]
         im = db.execute(
             """
-            SELECT id, inference_date, filename, image_path, raw_score, score_1_9, traits_json, error_text
+            SELECT id, inference_date, filename, image_path, raw_score,
+                   COALESCE(score_global, score_1_9) AS score_1_9,
+                   score_lot, score_global, traits_json, error_text
             FROM perspicuus_angus_records
             WHERE farm_id = ? AND animal_tag = ?
             ORDER BY inference_date DESC, id DESC
@@ -3125,12 +3184,14 @@ def perspicuus_angus_analise_populacao():
         q_filter=q,
         stats=stats,
         cards=deep['cards'],
-        dist=deep['dist'],
+        dist_lot=deep['dist_lot'],
+        dist_global=deep['dist_global'],
         pop_series=deep['pop_series'],
         ranked=deep['ranked'],
         trait_summary=deep['trait_summary'],
         top_traits=deep['top_traits'],
         trait_series=deep['trait_series'],
+        trait_dist=deep['trait_dist'],
         effect_overall=deep['effect_overall'],
         effect_traits=deep['effect_traits'],
         boxplot_by_effect=deep['boxplot_by_effect'],
@@ -3649,9 +3710,9 @@ def perspicuus_nelore_analise_individual():
     if selected_farm and selected_animal:
         pr = db.execute(
             """
-            SELECT id, inference_date, raw_score, COALESCE(score_global, score_1_9) AS score_1_9
+            SELECT id, inference_date, raw_score, score_lot, COALESCE(score_global, score_1_9) AS score_global
             FROM perspicuus_nelore_records
-            WHERE farm_id = ? AND animal_tag = ? AND (? = '' OR lot_id = ?) AND score_1_9 IS NOT NULL
+            WHERE farm_id = ? AND animal_tag = ? AND (? = '' OR lot_id = ?) AND COALESCE(score_global, score_lot, score_1_9) IS NOT NULL
             ORDER BY inference_date ASC, id ASC
             """,
             (selected_farm, selected_animal, lot_filter, lot_filter),
@@ -3659,7 +3720,9 @@ def perspicuus_nelore_analise_individual():
         points = [dict(x) for x in pr]
         im = db.execute(
             """
-            SELECT id, inference_date, lot_id, filename, image_path, raw_score, score_1_9, traits_json, error_text
+            SELECT id, inference_date, lot_id, filename, image_path, raw_score,
+                   COALESCE(score_global, score_1_9) AS score_1_9,
+                   score_lot, score_global, traits_json, error_text
             FROM perspicuus_nelore_records
             WHERE farm_id = ? AND animal_tag = ? AND (? = '' OR lot_id = ?)
             ORDER BY inference_date DESC, id DESC
@@ -3721,12 +3784,14 @@ def perspicuus_nelore_analise_populacao():
         q_filter=q,
         stats=stats,
         cards=deep['cards'],
-        dist=deep['dist'],
+        dist_lot=deep['dist_lot'],
+        dist_global=deep['dist_global'],
         pop_series=deep['pop_series'],
         ranked=deep['ranked'],
         trait_summary=deep['trait_summary'],
         top_traits=deep['top_traits'],
         trait_series=deep['trait_series'],
+        trait_dist=deep['trait_dist'],
         effect_overall=deep['effect_overall'],
         effect_traits=deep['effect_traits'],
         boxplot_by_effect=deep['boxplot_by_effect'],
@@ -4284,6 +4349,7 @@ def ecc_calibragem():
         stats=stats,
         calibration=cal,
         raw_bounds=raw_bounds,
+        calibration_scope='ECC / BCS',
         bucket_rows=bucket_rows,
     )
 
@@ -4291,7 +4357,75 @@ def ecc_calibragem():
 @app.route('/perspicuus-holandes/calibragem')
 @login_required
 def perspicuus_holandes_calibragem():
-    return redirect(url_for('ecc_calibragem'))
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    cal = _ecc_get_calibration(db)
+    cond = ["raw_score IS NOT NULL"]
+    params: list[Any] = []
+    if farm_filter:
+        cond.append("farm_id = ?")
+        params.append(farm_filter)
+    where = " AND ".join(cond)
+    rows = db.execute(
+        f"""
+        SELECT id, farm_id, animal_tag, raw_score, ecc_score, image_path, thumb_path, bbox_path
+        FROM ecc_bcs_records
+        WHERE {where}
+        ORDER BY raw_score ASC, id DESC
+        LIMIT 5000
+        """,
+        params,
+    ).fetchall()
+    buckets: dict[float, dict[str, Any]] = {}
+    for r in rows:
+        raw = float(r['raw_score'])
+        b = round(raw * 2.0) / 2.0
+        if b not in buckets:
+            buckets[b] = {
+                'raw_bucket': b,
+                'raw_min': b - 0.25,
+                'raw_max': b + 0.25,
+                'count': 0,
+                'samples': [],
+                'suggested_ecc': _ecc_rescale_with_calibration(b, cal),
+            }
+        buckets[b]['count'] += 1
+        buckets[b]['samples'].append({
+            'id': int(r['id']),
+            'farm_id': r['farm_id'],
+            'animal_tag': r['animal_tag'],
+            'raw_score': raw,
+            'ecc_score': r['ecc_score'],
+            'image_path': r['image_path'],
+            'thumb_path': r['thumb_path'],
+            'bbox_path': r['bbox_path'],
+        })
+    bucket_rows = [buckets[k] for k in sorted(buckets.keys())]
+    farms, _, stats = _ecc_base_lists(db)
+    stats['calibration_rows'] = db.execute(
+        f"SELECT COUNT(*) FROM ecc_bcs_records WHERE {where}",
+        params,
+    ).fetchone()[0]
+    row_bounds = db.execute(
+        f"SELECT MIN(raw_score) AS mn, MAX(raw_score) AS mx FROM ecc_bcs_records WHERE {where}",
+        params,
+    ).fetchone()
+    raw_bounds = None
+    try:
+        if row_bounds and row_bounds['mn'] is not None and row_bounds['mx'] is not None and float(row_bounds['mx']) > float(row_bounds['mn']):
+            raw_bounds = (float(row_bounds['mn']), float(row_bounds['mx']))
+    except (TypeError, ValueError):
+        raw_bounds = None
+    return render_template(
+        'ecc_calibragem.html',
+        farms=farms,
+        farm_filter=farm_filter,
+        stats=stats,
+        calibration=cal,
+        raw_bounds=raw_bounds,
+        calibration_scope='Perspicuus Holandês',
+        bucket_rows=bucket_rows,
+    )
 
 
 @app.route('/api/ecc/upload-one', methods=['POST'])
@@ -4329,15 +4463,21 @@ def api_ecc_calibragem_apply():
     if farm:
         cond.append("farm_id = ?")
         params.append(farm)
-    row_bounds = db.execute(
-        f"SELECT MIN(raw_score) AS mn, MAX(raw_score) AS mx FROM ecc_bcs_records WHERE {' AND '.join(cond)}",
-        params,
-    ).fetchone()
     try:
-        raw_min = float(row_bounds['mn']) if row_bounds and row_bounds['mn'] is not None else None
-        raw_max = float(row_bounds['mx']) if row_bounds and row_bounds['mx'] is not None else None
+        raw_min = float(data.get('raw_min')) if data.get('raw_min') is not None else None
+        raw_max = float(data.get('raw_max')) if data.get('raw_max') is not None else None
     except (TypeError, ValueError):
-        raw_min, raw_max = None, None
+        return jsonify({'error': 'raw_min/raw_max inválidos.'}), 400
+    if raw_min is None or raw_max is None:
+        row_bounds = db.execute(
+            f"SELECT MIN(raw_score) AS mn, MAX(raw_score) AS mx FROM ecc_bcs_records WHERE {' AND '.join(cond)}",
+            params,
+        ).fetchone()
+        try:
+            raw_min = float(row_bounds['mn']) if row_bounds and row_bounds['mn'] is not None else None
+            raw_max = float(row_bounds['mx']) if row_bounds and row_bounds['mx'] is not None else None
+        except (TypeError, ValueError):
+            raw_min, raw_max = None, None
     if raw_min is None or raw_max is None or raw_max <= raw_min:
         return jsonify({'error': 'Não há raw_score suficiente para calibrar.'}), 400
     now_iso = datetime.utcnow().isoformat() + 'Z'
