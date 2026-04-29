@@ -51,6 +51,9 @@
 .preview-row { display: grid; grid-template-columns: 70px 1fr 80px; gap: 8px; align-items: center; margin-top: 8px; }
 .preview-row .lbl { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .preview-row .val { font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 700; text-align: right; }
+.fx-list{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surf2)}
+.fx-item{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px;color:var(--text2)}
+.fx-item input{width:auto}
 </style>
 {% endblock %}
 {% block content %}
@@ -107,13 +110,13 @@
       </div>
       <div class="field">
         <label>Efeitos fixos (1 ou mais)</label>
-        <select id="cal-fixed-effects" multiple size="5">
+        <div class="fx-list" id="cal-fixed-effects">
           {% for fe in fixed_effects %}
           {% if fe %}
-          <option value="{{ fe }}" {% if fe in (calibration.fixed_effects or []) %}selected{% endif %}>{{ fixed_effect_labels[fe] }}</option>
+          <label class="fx-item"><input type="checkbox" value="{{ fe }}" {% if fe in (calibration.fixed_effects or []) %}checked{% endif %}> {{ fixed_effect_labels[fe] }}</label>
           {% endif %}
           {% endfor %}
-        </select>
+        </div>
       </div>
       <div class="field">
         <label>Aplicar só na fazenda (opcional)</label>
@@ -167,7 +170,7 @@ function readParams() {
     resMin: Number(document.getElementById('cal-res-min').value),
     resMax: Number(document.getElementById('cal-res-max').value),
     step: Number(document.getElementById('cal-step').value),
-    fixedEffects: Array.from(document.getElementById('cal-fixed-effects').selectedOptions).map((o) => o.value),
+    fixedEffects: Array.from(document.querySelectorAll('#cal-fixed-effects input[type=\"checkbox\"]:checked')).map((o) => o.value),
   };
 }
 
@@ -236,6 +239,7 @@ async function applyCalibration() {
 
 ['cal-raw-min','cal-raw-max','cal-res-min','cal-res-max','cal-step','cal-fixed-effects']
   .forEach((id) => document.getElementById(id).addEventListener('input', refreshPreview));
+document.querySelectorAll('#cal-fixed-effects input[type="checkbox"]').forEach((el)=>el.addEventListener('change', refreshPreview));
 document.getElementById('btnApply').addEventListener('click', applyCalibration);
 refreshPreview();
 </script>

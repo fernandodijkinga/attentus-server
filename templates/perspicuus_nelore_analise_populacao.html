@@ -21,10 +21,24 @@
   <div class="stat-card"><div class="stat-label">Esc reescalado mean ± sd</div><div class="stat-sub">{{ cards.res_mean if cards.res_mean is not none else '—' }} ± {{ cards.res_std if cards.res_std is not none else '—' }}</div></div>
 </div>
 <div class="grid-2 mb-16">
-  <div class="card"><div class="card-title">Distribuição de score (1-9)</div><div style="height:300px"><canvas id="nel-pop-dist"></canvas></div></div>
-  <div class="card"><div class="card-title">Média reescalada por dia</div><div style="height:300px"><canvas id="nel-pop-series"></canvas></div></div>
+  <div class="card"><div class="card-title">Distribuição de escore</div><div style="height:300px"><canvas id="nel-pop-dist"></canvas></div></div>
+  <div class="card"><div class="card-title">Média de escore por dia</div><div style="height:300px"><canvas id="nel-pop-series"></canvas></div></div>
 </div>
-<div class="card mb-16"><div class="flex-between mb-16"><div class="card-title">Evolução por trait (raw x reescalado)</div><div class="field" style="margin:0;min-width:240px"><label>Trait</label><select id="traitSel"></select></div></div><div style="height:320px"><canvas id="traitSeries"></canvas></div></div>
+{% for t in top_traits %}
+<div class="card mb-16">
+  <div class="card-title">Trait: {{ t }}</div>
+  <div class="grid-2">
+    <div>
+      <div class="page-sub" style="margin-bottom:8px">Média por dia (raw x escore)</div>
+      <div style="height:280px"><canvas id="trait-series-{{ loop.index0 }}"></canvas></div>
+    </div>
+    <div>
+      <div class="page-sub" style="margin-bottom:8px">Volume diário de registros</div>
+      <div style="height:280px"><canvas id="trait-volume-{{ loop.index0 }}"></canvas></div>
+    </div>
+  </div>
+</div>
+{% endfor %}
 <div class="grid-2 mb-16">
   <div class="card"><div class="card-title">Boxplot raw por efeito fixo</div><div class="field" style="max-width:260px"><label>Efeito</label><select id="effectSelRaw"></select></div><div id="boxRaw" style="height:320px"></div></div>
   <div class="card"><div class="card-title">Boxplot reescalado por efeito fixo</div><div class="field" style="max-width:260px"><label>Efeito</label><select id="effectSelRes"></select></div><div id="boxRes" style="height:320px"></div></div>
@@ -43,11 +57,24 @@
 </table></div></div>
 {% endblock %}
 {% block scripts %}
+<script id="nel-dist-json" type="application/json">{{ dist|tojson }}</script>
+<script id="nel-pop-series-json" type="application/json">{{ pop_series|tojson }}</script>
+<script id="nel-trait-series-json" type="application/json">{{ trait_series|tojson }}</script>
+<script id="nel-top-traits-json" type="application/json">{{ top_traits|tojson }}</script>
+<script id="nel-box-json" type="application/json">{{ boxplot_by_effect|tojson }}</script>
+<script id="nel-effects-json" type="application/json">{{ effect_overall|tojson }}</script>
 <script>
-const DIST={{ dist|tojson }}, SER={{ pop_series|tojson }};
-const TRAIT_SER={{ trait_series|tojson }}, TOP_TRAITS={{ top_traits|tojson }};
-const BOX={{ boxplot_by_effect|tojson }}, EFFECTS={{ effect_overall|tojson }};
-let traitChart=null;
+function readJson(id, fallback){
+  const el = document.getElementById(id);
+  if (!el) return fallback;
+  try { return JSON.parse(el.textContent || 'null') ?? fallback; } catch { return fallback; }
+}
+const DIST = readJson('nel-dist-json', []);
+const SER = readJson('nel-pop-series-json', []);
+const TRAIT_SER = readJson('nel-trait-series-json', {});
+const TOP_TRAITS = readJson('nel-top-traits-json', []);
+const BOX = readJson('nel-box-json', {});
+const EFFECTS = readJson('nel-effects-json', []);
 
 const distCanvas = document.getElementById('nel-pop-dist');
 if (distCanvas) {
@@ -68,7 +95,7 @@ if (seriesCanvas) {
     data: {
       labels: (SER || []).map((x) => x.date),
       datasets: [{
-        label: 'Média 1-9',
+        label: 'Média de escore',
         data: (SER || []).map((x) => x.mean),
         borderColor: '#1a6fd4',
         backgroundColor: 'rgba(26,111,212,.14)',
@@ -80,31 +107,41 @@ if (seriesCanvas) {
   });
 }
 
-function buildTrait() {
-  const sel = document.getElementById('traitSel');
-  if (!sel) return;
-  const t = sel.value;
-  const arr = (TRAIT_SER || {})[t] || [];
-  const ctx = document.getElementById('traitSeries')?.getContext('2d');
-  if (!ctx) return;
-  if (traitChart) traitChart.destroy();
-  traitChart = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: arr.map((x) => x.date),
-      datasets: [
-        { label: 'Raw mean', data: arr.map((x) => x.raw_mean), borderColor: '#d9782b', tension: 0.2, yAxisID: 'yRaw' },
-        { label: 'Rescaled mean', data: arr.map((x) => x.res_mean), borderColor: '#1a6fd4', tension: 0.2, yAxisID: 'yRes' },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        yRaw: { position: 'left' },
-        yRes: { position: 'right', min: 1, max: 9, grid: { drawOnChartArea: false } },
-      },
-    },
+function buildTraitSections() {
+  (TOP_TRAITS || []).forEach((t, idx) => {
+    const arr = (TRAIT_SER || {})[t] || [];
+    const c1 = document.getElementById(`trait-series-${idx}`);
+    if (c1) {
+      new Chart(c1.getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: arr.map((x) => x.date),
+          datasets: [
+            { label: 'Raw mean', data: arr.map((x) => x.raw_mean), borderColor: '#d9782b', tension: 0.2, yAxisID: 'yRaw' },
+            { label: 'Escore mean', data: arr.map((x) => x.res_mean), borderColor: '#1a6fd4', tension: 0.2, yAxisID: 'yRes' },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            yRaw: { position: 'left' },
+            yRes: { position: 'right', min: 1, max: 9, grid: { drawOnChartArea: false } },
+          },
+        },
+      });
+    }
+    const c2 = document.getElementById(`trait-volume-${idx}`);
+    if (c2) {
+      new Chart(c2.getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels: arr.map((x) => x.date),
+          datasets: [{ label: 'N registros', data: arr.map((x) => x.n), backgroundColor: 'rgba(13,122,94,.35)', borderColor: '#0d7a5e', borderWidth: 1 }],
+        },
+        options: { responsive: true, maintainAspectRatio: false },
+      });
+    }
   });
 }
 
@@ -126,21 +163,6 @@ function buildBox(targetId, effectKey, metric) {
   );
 }
 
-const traitSel = document.getElementById('traitSel');
-if (traitSel) {
-  (TOP_TRAITS || []).forEach((t) => {
-    const o = document.createElement('option');
-    o.value = t;
-    o.textContent = t;
-    traitSel.appendChild(o);
-  });
-  if ((TOP_TRAITS || []).length) {
-    traitSel.value = TOP_TRAITS[0];
-    buildTrait();
-  }
-  traitSel.addEventListener('change', buildTrait);
-}
-
 const effectKeys = (EFFECTS || []).map((x) => x.effect);
 function initEff(id, cb) {
   const el = document.getElementById(id);
@@ -159,5 +181,6 @@ function initEff(id, cb) {
 }
 initEff('effectSelRaw', () => buildBox('boxRaw', document.getElementById('effectSelRaw').value, 'raw'));
 initEff('effectSelRes', () => buildBox('boxRes', document.getElementById('effectSelRes').value, 'res'));
+buildTraitSections();
 </script>
 {% endblock %}

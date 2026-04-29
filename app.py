@@ -2983,14 +2983,31 @@ def perspicuus_angus_analise_individual():
         points = [dict(x) for x in pr]
         im = db.execute(
             """
-            SELECT id, inference_date, filename, image_path, raw_score, score_1_9, error_text
+            SELECT id, inference_date, filename, image_path, raw_score, score_1_9, traits_json, error_text
             FROM perspicuus_angus_records
             WHERE farm_id = ? AND animal_tag = ?
             ORDER BY inference_date DESC, id DESC
             """,
             (selected_farm, selected_animal),
         ).fetchall()
-        images = [dict(x) for x in im]
+        images = []
+        for x in im:
+            d = dict(x)
+            try:
+                traits = json.loads(d.get('traits_json') or '{}')
+            except (TypeError, ValueError, json.JSONDecodeError):
+                traits = {}
+            if not isinstance(traits, dict):
+                traits = {}
+            traits_items = []
+            for k, v in traits.items():
+                try:
+                    traits_items.append((str(k), float(v)))
+                except (TypeError, ValueError):
+                    continue
+            traits_items.sort(key=lambda t: t[0])
+            d['traits_items'] = traits_items
+            images.append(d)
     return render_template(
         'perspicuus_angus_analise_individual.html',
         records=records[:120],
@@ -3552,14 +3569,31 @@ def perspicuus_nelore_analise_individual():
         points = [dict(x) for x in pr]
         im = db.execute(
             """
-            SELECT id, inference_date, lot_id, filename, image_path, raw_score, score_1_9, error_text
+            SELECT id, inference_date, lot_id, filename, image_path, raw_score, score_1_9, traits_json, error_text
             FROM perspicuus_nelore_records
             WHERE farm_id = ? AND animal_tag = ? AND (? = '' OR lot_id = ?)
             ORDER BY inference_date DESC, id DESC
             """,
             (selected_farm, selected_animal, lot_filter, lot_filter),
         ).fetchall()
-        images = [dict(x) for x in im]
+        images = []
+        for x in im:
+            d = dict(x)
+            try:
+                traits = json.loads(d.get('traits_json') or '{}')
+            except (TypeError, ValueError, json.JSONDecodeError):
+                traits = {}
+            if not isinstance(traits, dict):
+                traits = {}
+            traits_items = []
+            for k, v in traits.items():
+                try:
+                    traits_items.append((str(k), float(v)))
+                except (TypeError, ValueError):
+                    continue
+            traits_items.sort(key=lambda t: t[0])
+            d['traits_items'] = traits_items
+            images.append(d)
     return render_template(
         'perspicuus_nelore_analise_individual.html',
         records=records[:120],
