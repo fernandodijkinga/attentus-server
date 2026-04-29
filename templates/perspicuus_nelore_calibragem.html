@@ -219,7 +219,13 @@ async function applyCalibration() {
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) { toast(data.error || ('HTTP ' + r.status), false); return; }
-    toast(`Atualizados: ${data.updated} · Grupos: ${data.groups}`);
+    const minUsed = (data.raw_min_used !== undefined && data.raw_min_used !== null)
+      ? Number(data.raw_min_used).toFixed(4)
+      : '—';
+    const maxUsed = (data.raw_max_used !== undefined && data.raw_max_used !== null)
+      ? Number(data.raw_max_used).toFixed(4)
+      : '—';
+    toast(`Atualizados: ${data.updated} · Grupos: ${data.groups} · intervalo raw usado: [${minUsed}, ${maxUsed}]`);
     setTimeout(() => window.location.reload(), 700);
   } catch (e) {
     toast('Falha de rede ao aplicar.', false);

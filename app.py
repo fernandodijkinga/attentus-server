@@ -263,6 +263,42 @@ def _perspicuus_rescale_with_cal(raw_score: Any, cal: dict[str, Any]) -> float |
     return float(round(y, 6))
 
 
+def _perspicuus_raw_bounds(db, breed: str, include_raw: float | None = None) -> tuple[float, float] | None:
+    table = PERSPICUUS_BREED_TABLE.get(breed)
+    if not table:
+        return None
+    row = db.execute(
+        f"SELECT MIN(raw_score) AS mn, MAX(raw_score) AS mx FROM {table} WHERE raw_score IS NOT NULL"
+    ).fetchone()
+    mn = row['mn'] if row else None
+    mx = row['mx'] if row else None
+    try:
+        mn_f = float(mn) if mn is not None else None
+        mx_f = float(mx) if mx is not None else None
+    except (TypeError, ValueError):
+        mn_f = None
+        mx_f = None
+    if include_raw is not None:
+        try:
+            x = float(include_raw)
+            mn_f = x if mn_f is None else min(mn_f, x)
+            mx_f = x if mx_f is None else max(mx_f, x)
+        except (TypeError, ValueError):
+            pass
+    if mn_f is None or mx_f is None or mx_f <= mn_f:
+        return None
+    return (mn_f, mx_f)
+
+
+def _perspicuus_cal_with_auto_bounds(db, breed: str, cal: dict[str, Any], include_raw: float | None = None) -> dict[str, Any]:
+    cal_eff = dict(cal or {})
+    bounds = _perspicuus_raw_bounds(db, breed, include_raw=include_raw)
+    if bounds:
+        cal_eff['raw_min'] = float(bounds[0])
+        cal_eff['raw_max'] = float(bounds[1])
+    return cal_eff
+
+
 def _perspicuus_birth_year(birth_date: str) -> str:
     s = str(birth_date or '').strip()
     if len(s) >= 4 and s[:4].isdigit():
@@ -641,9 +677,21 @@ def _perspicuus_apply_calibration(
         params,
     ).fetchall()
 
-    fixed_effects = cal.get('fixed_effects')
+    cal_eff = dict(cal or {})
+    raw_vals_for_bounds = []
+    for r in rows:
+        try:
+            if r['raw_score'] is not None:
+                raw_vals_for_bounds.append(float(r['raw_score']))
+        except (TypeError, ValueError):
+            continue
+    if raw_vals_for_bounds:
+        cal_eff['raw_min'] = min(raw_vals_for_bounds)
+        cal_eff['raw_max'] = max(raw_vals_for_bounds)
+
+    fixed_effects = cal_eff.get('fixed_effects')
     if not isinstance(fixed_effects, list):
-        fixed_effects = _perspicuus_parse_fixed_effects(cal.get('fixed_effect') or '', breed)
+        fixed_effects = _perspicuus_parse_fixed_effects(cal_eff.get('fixed_effect') or '', breed)
     group_means: dict[str, float] = {}
     global_mean: float | None = None
     if fixed_effects and rows:
@@ -679,7 +727,7 @@ def _perspicuus_apply_calibration(
             mu_g = group_means.get(g)
             if mu_g is not None:
                 adj = raw - mu_g + global_mean
-        new_val = _perspicuus_rescale_with_cal(adj, cal)
+        new_val = _perspicuus_rescale_with_cal(adj, cal_eff)
         db.execute(
             f"UPDATE {table} SET score_1_9 = ? WHERE id = ?",
             (new_val, int(r['id'])),
@@ -689,6 +737,8 @@ def _perspicuus_apply_calibration(
         'updated': updated,
         'groups': len(group_means),
         'global_mean': global_mean,
+        'raw_min_used': cal_eff.get('raw_min'),
+        'raw_max_used': cal_eff.get('raw_max'),
     }
 
 
@@ -2685,6 +2735,7 @@ def _angus_save_one(
             continue
     raw_score = round(sum(vals) / len(vals), 4) if vals else None
     cal = _perspicuus_get_calibration(db, 'angus')
+    cal = _perspicuus_cal_with_auto_bounds(db, 'angus', cal, include_raw=raw_score)
     score_1_9 = _perspicuus_rescale_with_cal(raw_score, cal)
     web_path = f"/api/perspicuus-angus/media/{safe_farm}/{safe_day}/{local_name}"
     db.execute(
@@ -2802,6 +2853,7 @@ def _angus_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
             continue
     raw_score = round(sum(vals) / len(vals), 4) if vals else None
     cal = _perspicuus_get_calibration(db, 'angus')
+    cal = _perspicuus_cal_with_auto_bounds(db, 'angus', cal, include_raw=raw_score)
     score_1_9 = _perspicuus_rescale_with_cal(raw_score, cal)
     db.execute(
         """
@@ -3136,6 +3188,8 @@ def api_perspicuus_angus_calibragem_apply():
         'updated': info['updated'],
         'groups': info['groups'],
         'global_mean': info['global_mean'],
+        'raw_min_used': info.get('raw_min_used'),
+        'raw_max_used': info.get('raw_max_used'),
         'farm_id_filter': farm or None,
         'calibration': cal,
     })
@@ -3232,6 +3286,7 @@ def _nelore_save_one(
             continue
     raw_score = round(sum(vals) / len(vals), 4) if vals else None
     cal = _perspicuus_get_calibration(db, 'nelore')
+    cal = _perspicuus_cal_with_auto_bounds(db, 'nelore', cal, include_raw=raw_score)
     score_1_9 = _perspicuus_rescale_with_cal(raw_score, cal)
     web_path = f"/api/perspicuus-nelore/media/{safe_farm}/{safe_day}/{local_name}"
     db.execute(
@@ -3361,6 +3416,7 @@ def _nelore_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
             continue
     raw_score = round(sum(vals) / len(vals), 4) if vals else None
     cal = _perspicuus_get_calibration(db, 'nelore')
+    cal = _perspicuus_cal_with_auto_bounds(db, 'nelore', cal, include_raw=raw_score)
     score_1_9 = _perspicuus_rescale_with_cal(raw_score, cal)
     db.execute(
         """
@@ -3713,6 +3769,8 @@ def api_perspicuus_nelore_calibragem_apply():
         'updated': info['updated'],
         'groups': info['groups'],
         'global_mean': info['global_mean'],
+        'raw_min_used': info.get('raw_min_used'),
+        'raw_max_used': info.get('raw_max_used'),
         'farm_id_filter': farm or None,
         'lot_id_filter': lot or None,
         'calibration': cal,
