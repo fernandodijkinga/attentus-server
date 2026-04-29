@@ -4418,6 +4418,9 @@ def ecc_calibragem():
         calibration=cal,
         raw_bounds=raw_bounds,
         calibration_scope='ECC / BCS',
+        calibration_home_endpoint='ecc_calibragem',
+        calibration_apply_endpoint='api_ecc_calibragem_apply',
+        calibration_is_perspicuus=False,
         bucket_rows=bucket_rows,
     )
 
@@ -4492,6 +4495,9 @@ def perspicuus_holandes_calibragem():
         calibration=cal,
         raw_bounds=raw_bounds,
         calibration_scope='Perspicuus Holandês',
+        calibration_home_endpoint='perspicuus_holandes_calibragem',
+        calibration_apply_endpoint='api_perspicuus_holandes_calibragem_apply',
+        calibration_is_perspicuus=True,
         bucket_rows=bucket_rows,
     )
 
@@ -4570,6 +4576,12 @@ def api_ecc_calibragem_apply():
         'farm_id_filter': farm or None,
         'calibration': cal,
     })
+
+
+@app.route('/api/perspicuus-holandes/calibragem/apply', methods=['POST'])
+@login_required
+def api_perspicuus_holandes_calibragem_apply():
+    return api_ecc_calibragem_apply()
 
 
 @app.route('/api/ecc/recalculate-all', methods=['POST'])

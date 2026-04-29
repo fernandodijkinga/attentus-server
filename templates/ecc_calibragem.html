@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% from "_bcs_layout.html" import bcs_styles, bcs_tabs %}
 {% block title %}{{ calibration_scope or 'Perspicuus BCS' }} — calibragem{% endblock %}
+{% set calibration_home_endpoint = calibration_home_endpoint or 'ecc_calibragem' %}
+{% set calibration_apply_endpoint = calibration_apply_endpoint or 'api_ecc_calibragem_apply' %}
+{% set calibration_is_perspicuus = calibration_is_perspicuus or false %}
 
 {% block head %}
 {{ bcs_styles() }}
@@ -160,6 +163,38 @@
   transform: translateX(-50%);
   border-radius: 2px;
 }
+.img-lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 12, 20, 0.88);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 2200;
+  padding: 20px;
+}
+.img-lightbox.open { display: flex; }
+.img-lightbox img {
+  max-width: min(94vw, 1400px);
+  max-height: 92vh;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+}
+.img-lightbox-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(12, 22, 34, 0.85);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
 </style>
 {% endblock %}
 
@@ -175,7 +210,7 @@
       </p>
     </div>
     <div class="bcs-hero-actions">
-      <form method="get" action="{{ url_for('ecc_calibragem') }}" class="bcs-filter-row">
+      <form method="get" action="{{ url_for(calibration_home_endpoint) }}" class="bcs-filter-row">
         <div class="field" style="margin:0;min-width:200px">
           <label>Fazenda</label>
           <select name="farm">
@@ -212,7 +247,9 @@
   </div>
 </div>
 
+{% if not calibration_is_perspicuus %}
 {{ bcs_tabs('calibragem') }}
+{% endif %}
 
 <div class="bcs-section">
   <div class="bcs-section-head">
@@ -258,7 +295,7 @@
         {% set s = b.samples[0] if b.samples else none %}
         <div class="cal-img-wrap">
           {% if s and (s.thumb_path or s.image_path) %}
-          <img class="js-carousel-image" src="{{ s.thumb_path or s.image_path }}" alt="raw {{ '%.2f'|format(b.raw_bucket) }}">
+          <img class="js-carousel-image js-zoomable" src="{{ s.thumb_path or s.image_path }}" data-zoom-src="{{ s.bbox_path or s.image_path or s.thumb_path or '' }}" alt="raw {{ '%.2f'|format(b.raw_bucket) }}">
           {% if b.samples|length > 1 %}
           <button class="cal-carousel-ctrl prev js-carousel-prev" type="button" aria-label="Anterior">‹</button>
           <button class="cal-carousel-ctrl next js-carousel-next" type="button" aria-label="Próxima">›</button>
@@ -291,11 +328,16 @@
     {% endif %}
   </div>
 </div>
+
+<div id="img-lightbox" class="img-lightbox" onclick="if(event.target===this) closeImgLightbox()">
+  <button type="button" class="img-lightbox-close" aria-label="Fechar zoom" onclick="closeImgLightbox()">×</button>
+  <img id="img-lightbox-target" src="" alt="">
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-const ECC_CAL_APPLY_URL = {{ url_for('api_ecc_calibragem_apply') | tojson }};
+const ECC_CAL_APPLY_URL = {{ url_for(calibration_apply_endpoint) | tojson }};
 const ECC_FARM_FILTER = {{ farm_filter | tojson }};
 const ECC_RAW_BOUNDS = {{ raw_bounds | tojson }};
 
@@ -343,7 +385,8 @@ function initCarousels() {
     function renderSample() {
       const s = samples[idx] || {};
       img.src = s.thumb_path || s.image_path || '';
-      img.onclick = () => window.open(s.bbox_path || s.image_path || '');
+      img.dataset.zoomSrc = s.bbox_path || s.image_path || s.thumb_path || '';
+      img.dataset.zoomAlt = `raw ${Number(card.dataset.raw || 0).toFixed(2)}`;
       if (meta) meta.textContent = `${idx + 1}/${samples.length}`;
     }
     prevBtn?.addEventListener('click', () => {
@@ -355,6 +398,30 @@ function initCarousels() {
       renderSample();
     });
     renderSample();
+  });
+}
+
+const lightboxEl = document.getElementById('img-lightbox');
+const lightboxImg = document.getElementById('img-lightbox-target');
+
+function openImgLightbox(src, altText) {
+  if (!lightboxEl || !lightboxImg || !src) return;
+  lightboxImg.src = src;
+  lightboxImg.alt = altText || 'Imagem ampliada';
+  lightboxEl.classList.add('open');
+}
+
+function closeImgLightbox() {
+  if (!lightboxEl || !lightboxImg) return;
+  lightboxEl.classList.remove('open');
+  lightboxImg.src = '';
+}
+
+function initZoomables() {
+  document.querySelectorAll('.js-zoomable').forEach((img) => {
+    img.addEventListener('click', () => {
+      openImgLightbox(img.dataset.zoomSrc || img.src, img.dataset.zoomAlt || img.alt || '');
+    });
   });
 }
 
@@ -394,5 +461,9 @@ document.getElementById('ecc-cal-raw-min')?.addEventListener('input', refreshPre
 document.getElementById('ecc-cal-raw-max')?.addEventListener('input', refreshPreview);
 refreshPreview();
 initCarousels();
+initZoomables();
+document.addEventListener('keydown', (evt) => {
+  if (evt.key === 'Escape') closeImgLightbox();
+});
 </script>
 {% endblock %}
