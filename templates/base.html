@@ -511,26 +511,21 @@ select { cursor: pointer; }
     {% endif %}
 
     {% if can_access_env('bcs') %}
-    <div class="nav-section">Perspicuus Holandês</div>
-    <a href="{{ url_for('perspicuus_holandes_calibragem') }}" class="nav-link {% if request.endpoint == 'perspicuus_holandes_calibragem' %}active{% endif %}">
-      <span class="icon">🐄</span> Holandês
-    </a>
-    <a href="{{ url_for('perspicuus_holandes_calibragem') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_holandes_calibragem' %}active{% endif %}">
-      <span class="icon">•</span> calibragem
-    </a>
-
     <div class="nav-section">ECC</div>
-    <a href="{{ url_for('ecc_importar') }}" class="nav-link {% if request.endpoint in ['ecc_importar', 'ecc_analise_rebanho', 'ecc_analise_individual', 'ecc_pontos_atencao', 'ecc_analise'] %}active{% endif %}">
+    <a href="{{ url_for('ecc_analise') }}" class="nav-link {% if request.endpoint in ['ecc_analise', 'ecc_importar', 'ecc_analise_rebanho', 'ecc_analise_individual', 'ecc_pontos_atencao'] %}active{% endif %}">
       <span class="icon">📈</span> ECC
     </a>
-    <a href="{{ url_for('ecc_importar') }}" class="nav-link nav-sub {% if request.endpoint in ['ecc_importar', 'ecc_analise'] %}active{% endif %}">
+    <a href="{{ url_for('ecc_analise') }}" class="nav-link nav-sub {% if request.endpoint == 'ecc_analise' %}active{% endif %}">
+      <span class="icon">•</span> visão geral
+    </a>
+    <a href="{{ url_for('ecc_importar') }}" class="nav-link nav-sub {% if request.endpoint == 'ecc_importar' %}active{% endif %}">
       <span class="icon">•</span> importar
     </a>
     <a href="{{ url_for('ecc_calibragem') }}" class="nav-link nav-sub {% if request.endpoint == 'ecc_calibragem' %}active{% endif %}">
       <span class="icon">•</span> calibragem BCS
     </a>
     <a href="{{ url_for('ecc_analise_rebanho') }}" class="nav-link nav-sub {% if request.endpoint == 'ecc_analise_rebanho' %}active{% endif %}">
-      <span class="icon">•</span> análise rebanho
+      <span class="icon">•</span> grupos & tendências
     </a>
     <a href="{{ url_for('ecc_analise_individual') }}" class="nav-link nav-sub {% if request.endpoint == 'ecc_analise_individual' %}active{% endif %}">
       <span class="icon">•</span> análise individual

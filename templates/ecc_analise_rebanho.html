@@ -1,40 +1,102 @@
 {% extends "base.html" %}
 {% from "_bcs_layout.html" import bcs_styles, bcs_tabs %}
-{% block title %}Perspicuus BCS — análise rebanho{% endblock %}
+{% block title %}ECC — Grupos e tendências{% endblock %}
 
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 {{ bcs_styles() }}
 <style>
-.chart-wrap { position: relative; height: 320px; width: 100%; }
-.chart-wrap canvas { display: block; width: 100% !important; height: 100% !important; }
-.chart-wrap.tall { height: 360px; }
-.chart-empty {
-  min-height: 260px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 12px;
-  border: 1px dashed var(--border);
-  border-radius: 10px;
+.ecc-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2.6fr) minmax(0, 1fr);
+  gap: 16px;
 }
-.trend-mini-list {
-  margin-top: 10px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+@media (max-width: 1100px) { .ecc-overview-grid { grid-template-columns: 1fr; } }
+
+.ecc-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin: 14px 0 0 0;
 }
-.trend-mini {
-  font-family: var(--mono);
-  font-size: 10px;
+.ecc-kpi-card {
+  background: var(--surf);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 3px 8px;
-  color: var(--text2);
-  background: var(--surf2);
+  border-radius: 12px;
+  padding: 14px 16px 12px;
+  display: flex; flex-direction: column; gap: 8px;
+  box-shadow: var(--shadow-sm);
 }
+.ecc-kpi-card .ico-circle {
+  width: 36px; height: 36px;
+  border-radius: 999px;
+  background: rgba(13,122,94,.10);
+  color: var(--accent);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 18px;
+}
+.ecc-kpi-card.blue .ico-circle { background: rgba(26,111,212,.12); color: var(--accent2); }
+.ecc-kpi-card.orange .ico-circle { background: rgba(217,120,43,.14); color: var(--accent3); }
+.ecc-kpi-card.warn .ico-circle { background: rgba(184,134,11,.14); color: var(--warn); }
+.ecc-kpi-card.danger .ico-circle { background: rgba(198,40,65,.12); color: var(--err); }
+.ecc-kpi-card .lbl { font-family: var(--mono); font-size: 11px; letter-spacing: 1.4px;
+  text-transform: uppercase; color: var(--muted); }
+.ecc-kpi-card .val { font-family: var(--mono); font-weight: 700; font-size: 26px; color: var(--text); line-height: 1.05; }
+.ecc-kpi-card.accent .val { color: var(--accent); }
+.ecc-kpi-card.blue .val { color: var(--accent2); }
+.ecc-kpi-card.orange .val { color: var(--accent3); }
+.ecc-kpi-card.warn .val { color: var(--warn); }
+.ecc-kpi-card.danger .val { color: var(--err); }
+
+.ecc-chart-wrap { position: relative; height: 280px; width: 100%; }
+.ecc-chart-wrap canvas { display: block; width: 100% !important; height: 100% !important; }
+.ecc-chart-wrap.short { height: 230px; }
+
+.heatmap-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.heatmap-table th, .heatmap-table td {
+  padding: 9px 12px;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+}
+.heatmap-table thead th {
+  background: var(--surf2);
+  font-family: var(--mono); font-size: 10px;
+  letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted);
+  text-align: left;
+}
+.heatmap-table tbody th {
+  text-align: left; font-weight: 600; color: var(--text);
+  background: var(--surf2);
+  font-family: var(--sans);
+}
+.heatmap-table .cell { font-family: var(--mono); font-weight: 600; color: var(--text); }
+.heatmap-table .num { font-family: var(--mono); }
+
+.ecc-insight-panel {
+  background: linear-gradient(180deg, rgba(26,111,212,.05) 0%, var(--surf) 100%);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 16px 20px;
+  position: sticky; top: 12px;
+  box-shadow: var(--shadow-sm);
+}
+.ecc-insight-head {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--sans);
+  font-size: 14px; font-weight: 800;
+  background: var(--accent2); color: #fff;
+  padding: 6px 14px; border-radius: 999px;
+  margin-bottom: 14px;
+}
+.ecc-insight-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
+.ecc-insight-list li { display: flex; align-items: flex-start; gap: 10px; }
+.ecc-insight-list .ico-circle {
+  width: 30px; height: 30px; border-radius: 999px;
+  background: rgba(26,111,212,.10); color: var(--accent2);
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; font-size: 14px;
+}
+.ecc-insight-list p { margin: 0; font-size: 12.5px; color: var(--text); line-height: 1.4; }
 </style>
 {% endblock %}
 
@@ -42,117 +104,148 @@
 <div class="bcs-hero">
   <div class="bcs-hero-top">
     <div>
-      <div class="bcs-hero-eyebrow">Perspicuus BCS · análise</div>
-      <h1 class="bcs-hero-title">Análise de <em>rebanho</em></h1>
+      <div class="bcs-hero-eyebrow">Perspicuus BCS · grupos & tendências</div>
+      <h1 class="bcs-hero-title">Análise por <em>grupos</em> e tendências</h1>
       <p class="bcs-hero-sub">
-        Média e desvio padrão por fazenda no tempo, volume diário avaliado e distribuição entre faixas
-        (magras / ideal / acima do ideal).
+        Comparativo por fazenda (proxy de "grupo"), evolução mensal do ECC médio,
+        distribuição entre bandas e tendências de animais recorrentes.
       </p>
     </div>
     <div class="bcs-hero-actions">
-      <a href="{{ url_for('ecc_analise_individual') }}" class="btn btn-ghost btn-sm">→ Análise individual</a>
+      <form method="get" class="bcs-filter-row" style="margin:0">
+        <div class="field" style="margin:0; min-width:180px">
+          <label>Fazenda</label>
+          <select name="farm" onchange="this.form.submit()">
+            <option value="">Todas</option>
+            {% for f in farms %}
+            <option value="{{ f }}" {% if farm_filter == f %}selected{% endif %}>{{ f }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field" style="margin:0; min-width:200px">
+          <label>Busca</label>
+          <input name="q" value="{{ q_filter }}" placeholder="fazenda ou brinco">
+        </div>
+        <div class="flex gap-8">
+          <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
+          <a href="{{ url_for('ecc_analise_rebanho') }}" class="btn btn-ghost btn-sm">Limpar</a>
+        </div>
+      </form>
     </div>
   </div>
 
-  <div class="bcs-kpi-strip">
-    <div class="bcs-kpi accent">
-      <div class="lbl"><span class="ico">📚</span> Registros totais</div>
-      <div class="val">{{ stats.total_records }}</div>
+  <div class="ecc-kpi-strip">
+    <div class="ecc-kpi-card blue">
+      <div class="ico-circle">🏡</div>
+      <div class="lbl">Fazendas monitoradas</div>
+      <div class="val">{{ rebanho_kpis.lotes }}</div>
     </div>
-    <div class="bcs-kpi blue">
-      <div class="lbl"><span class="ico">🏡</span> Fazendas</div>
-      <div class="val">{{ stats.farms }}</div>
+    <div class="ecc-kpi-card blue">
+      <div class="ico-circle">📉</div>
+      <div class="lbl">Δ médio (animais recorrentes)</div>
+      <div class="val">{{ '%+.2f'|format(rebanho_kpis.delta_avg) if rebanho_kpis.delta_avg is not none else '—' }}</div>
     </div>
-    <div class="bcs-kpi orange">
-      <div class="lbl"><span class="ico">🐂</span> Animais</div>
-      <div class="val">{{ stats.animals }}</div>
+    <div class="ecc-kpi-card orange">
+      <div class="ico-circle">⚑</div>
+      <div class="lbl">Animais críticos</div>
+      <div class="val">{{ rebanho_kpis.animais_criticos }}</div>
+    </div>
+    <div class="ecc-kpi-card accent">
+      <div class="ico-circle">🩺</div>
+      <div class="lbl">% abaixo da faixa</div>
+      <div class="val">{{ '%.0f'|format(rebanho_kpis.alto_risco_pct) }}%</div>
     </div>
   </div>
 </div>
 
 {{ bcs_tabs('rebanho') }}
 
-<div class="bcs-section">
-  <div class="bcs-section-head">
-    <div class="bcs-section-title"><span class="ico">🔎</span> Filtros</div>
-    <div class="bcs-section-sub">por fazenda ou texto livre</div>
-  </div>
-  <div class="bcs-section-body">
-    <form method="get" class="bcs-filter-row">
-      <div class="field">
-        <label>Fazenda</label>
-        <select name="farm">
-          <option value="">Todas</option>
-          {% for f in farms %}
-          <option value="{{ f }}" {% if farm_filter == f %}selected{% endif %}>{{ f }}</option>
-          {% endfor %}
-        </select>
+<div class="ecc-overview-grid">
+  <div>
+    <div class="bcs-section">
+      <div class="bcs-section-head">
+        <div class="bcs-section-title"><span class="ico">📊</span> 1. Comparativo por fazenda</div>
+        <div class="bcs-section-sub">substitui "por grupo" — heatmap com bandas low/target/high</div>
       </div>
-      <div class="field" style="min-width:240px">
-        <label>Busca</label>
-        <input name="q" value="{{ q_filter }}" placeholder="fazenda ou brinco">
+      <div class="bcs-section-body" style="overflow-x:auto">
+        <table class="heatmap-table">
+          <thead>
+            <tr>
+              <th>Fazenda</th>
+              <th>n</th>
+              <th>ECC médio</th>
+              <th>% abaixo</th>
+              <th>% alvo</th>
+              <th>% acima</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for fb in farm_breakdown %}
+            <tr>
+              <th>{{ fb.farm_id }}</th>
+              <td class="num">{{ fb.n }}</td>
+              <td class="cell">{{ '%.2f'|format(fb.mean) if fb.mean is not none else '—' }}</td>
+              <td class="cell" style="background: rgba(217,120,43,{{ (fb.pct_below or 0) / 100 * 0.6 + 0.05 }})">{{ '%.0f'|format(fb.pct_below) }}%</td>
+              <td class="cell" style="background: rgba(13,122,94,{{ (fb.pct_target or 0) / 100 * 0.6 + 0.05 }})">{{ '%.0f'|format(fb.pct_target) }}%</td>
+              <td class="cell" style="background: rgba(198,40,65,{{ (fb.pct_above or 0) / 100 * 0.6 + 0.05 }})">{{ '%.0f'|format(fb.pct_above) }}%</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6"><div class="bcs-empty">Sem dados para o filtro atual.</div></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
-      <div class="flex gap-8">
-        <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
-        <a href="{{ url_for('ecc_analise_rebanho') }}" class="btn btn-ghost btn-sm">Limpar</a>
+    </div>
+
+    <div class="bcs-section">
+      <div class="bcs-section-head">
+        <div class="bcs-section-title"><span class="ico blue">📦</span> 2. Distribuição (min / Q1 / mediana / Q3 / máx) por fazenda</div>
+        <div class="bcs-section-sub">substitui "por nº de lactações"</div>
       </div>
-    </form>
-  </div>
-</div>
+      <div class="bcs-section-body">
+        <div class="ecc-chart-wrap"><canvas id="ch-box"></canvas></div>
+      </div>
+    </div>
 
-<div class="bcs-section">
-  <div class="bcs-section-head">
-    <div class="bcs-section-title"><span class="ico">📈</span> Média + desvio padrão por fazenda</div>
-    <div class="bcs-section-sub">linhas: média e desvio · barras: volume diário</div>
-  </div>
-  <div class="bcs-section-body">
-    <div class="chart-wrap tall"><canvas id="ch-farm"></canvas></div>
-  </div>
-</div>
+    <div class="bcs-section">
+      <div class="bcs-section-head">
+        <div class="bcs-section-title"><span class="ico">📈</span> 3. Evolução mensal do ECC médio</div>
+        <div class="bcs-section-sub">últimos {{ monthly|length }} mês(es) com dados</div>
+      </div>
+      <div class="bcs-section-body">
+        <div class="ecc-chart-wrap short"><canvas id="ch-monthly"></canvas></div>
+      </div>
+    </div>
 
-<div class="bcs-grid-2">
-  <div class="bcs-section">
-    <div class="bcs-section-head">
-      <div class="bcs-section-title"><span class="ico blue">📊</span> Volume diário avaliado</div>
-      <div class="bcs-section-sub">brincos distintos · ou registros</div>
-    </div>
-    <div class="bcs-section-body">
-      <div class="chart-wrap"><canvas id="ch-farm-volume"></canvas></div>
-    </div>
-  </div>
-
-  <div class="bcs-section">
-    <div class="bcs-section-head">
-      <div class="bcs-section-title"><span class="ico warn">🎯</span> Distribuição por faixas ECC</div>
-      <div class="bcs-section-sub">magra · ideal · acima do ideal</div>
-    </div>
-    <div class="bcs-section-body">
-      <div class="chart-wrap"><canvas id="ch-farm-bands"></canvas></div>
-    </div>
-  </div>
-</div>
-
-<div class="bcs-grid-2">
-  <div class="bcs-section">
-    <div class="bcs-section-head">
-      <div class="bcs-section-title"><span class="ico orange">📉</span> Tendência BCS por animal recorrente</div>
-      <div class="bcs-section-sub">animais com 3+ medições (top 10)</div>
-    </div>
-    <div class="bcs-section-body">
-      <div class="chart-wrap"><canvas id="ch-rec-trend"></canvas></div>
-      <div id="rec-trend-tags" class="trend-mini-list"></div>
+    <div class="bcs-section">
+      <div class="bcs-section-head">
+        <div class="bcs-section-title"><span class="ico orange">🎯</span> 4. Distribuição de classes por fazenda</div>
+        <div class="bcs-section-sub">% por banda (abaixo / faixa-alvo / acima)</div>
+      </div>
+      <div class="bcs-section-body">
+        <div class="ecc-chart-wrap"><canvas id="ch-bands"></canvas></div>
+      </div>
     </div>
   </div>
 
-  <div class="bcs-section">
-    <div class="bcs-section-head">
-      <div class="bcs-section-title"><span class="ico warn">↕</span> Variação primeiro → último BCS</div>
-      <div class="bcs-section-sub">delta por animal recorrente</div>
+  <aside>
+    <div class="ecc-insight-panel">
+      <div class="ecc-insight-head"><span>💡</span> Insights</div>
+      <ul class="ecc-insight-list">
+        {% for ins in insights %}
+        <li>
+          <div class="ico-circle">{{ ins.icon }}</div>
+          <p>{{ ins.text }}</p>
+        </li>
+        {% else %}
+        <li>
+          <div class="ico-circle">ℹ</div>
+          <p>Sem insights — colete mais inferências para o filtro atual.</p>
+        </li>
+        {% endfor %}
+      </ul>
     </div>
-    <div class="bcs-section-body">
-      <div class="chart-wrap"><canvas id="ch-rec-delta"></canvas></div>
-    </div>
-  </div>
+  </aside>
 </div>
 
 <div class="bcs-section">
@@ -201,332 +294,171 @@
 
 {% block scripts %}
 <script>
-const FARM_SERIES = {{ farm_series | tojson }};
-const FARM_RECORDS = {{ farm_records | tojson }};
-const RECURRENT_TRENDS = {{ recurrent_trends | tojson }};
-const ECC_COLORS = ['#0d7a5e', '#1a6fd4', '#d9782b', '#cc66ff', '#c62841', '#7dd3fc', '#a3e635'];
+const FARM_BREAKDOWN = {{ farm_breakdown | tojson }};
+const FARM_BOX = {{ farm_box | tojson }};
+const MONTHLY = {{ monthly | tojson }};
+const TARGET = {{ overview.target_band | tojson }};
+
 const TICK_COLOR = '#5a6f82';
 const GRID_COLOR = '#dde4ed';
-
-function normDay(d) {
-  if (d == null || d === '') return '';
-  const s = String(d).trim();
-  if (s.length >= 10) return s.slice(0, 10);
-  return s;
-}
-
-function uniqueSortedLabelsFromSeries(rows) {
-  const s = new Set();
-  (rows || []).forEach((r) => {
-    const d = normDay(r.date);
-    if (d) s.add(d);
-  });
-  return [...s].sort();
-}
-
-function groupedFarmSeries(rows) {
-  const out = {};
-  (rows || []).forEach((r) => {
-    const farm = r.farm_id || '—';
-    if (!out[farm]) out[farm] = [];
-    out[farm].push(r);
-  });
-  Object.keys(out).forEach((k) => out[k].sort((a, b) => String(a.date).localeCompare(String(b.date))));
-  return out;
-}
-
-function rowMapByDay(rows) {
-  const m = {};
-  (rows || []).forEach((r) => {
-    const d = normDay(r.date);
-    if (d) m[d] = r;
-  });
-  return m;
-}
+const ACCENT = '#0d7a5e';
+const ACCENT2 = '#1a6fd4';
+const WARN = '#d9782b';
+const DANGER = '#c62841';
 
 function showEmpty(canvasId, text) {
   const c = document.getElementById(canvasId); if (!c) return;
   const p = document.createElement('div');
-  p.className = 'chart-empty';
+  p.className = 'bcs-empty';
+  p.style.padding = '24px 8px';
   p.textContent = text;
   c.replaceWith(p);
 }
 
-function buildFarmChart() {
-  const c = document.getElementById('ch-farm'); if (!c) return;
-  const ctx = c.getContext('2d');
-  const labels = uniqueSortedLabelsFromSeries(FARM_SERIES);
-  const byFarm = groupedFarmSeries(FARM_SERIES);
-  if (!labels.length || !Object.keys(byFarm).length) {
-    showEmpty('ch-farm', 'Sem dados para o período/filtro selecionado.');
-    return;
-  }
-  const hasMean = (FARM_SERIES || []).some((r) => r && r.mean != null && Number.isFinite(Number(r.mean)));
-  const dsBars = [];
-  const dsLines = [];
-  let i = 0;
-  Object.entries(byFarm).forEach(([farm, rows]) => {
-    const color = ECC_COLORS[i % ECC_COLORS.length]; i += 1;
-    const m = rowMapByDay(rows);
-    const meanData = labels.map((d) => {
-      const r = m[d];
-      if (!r || r.mean == null || !Number.isFinite(Number(r.mean))) return null;
-      return Number(r.mean);
-    });
-    const stdData = labels.map((d) => {
-      const r = m[d];
-      if (!r || r.std == null || !Number.isFinite(Number(r.std))) return null;
-      return Number(r.std);
-    });
-    const barData = labels.map((d) => {
-      const r = m[d];
-      if (!r) return null;
-      return Number((r.n_animals > 0 ? r.n_animals : r.n_records) || 0);
-    });
-    if (barData.some((v) => v != null && v > 0)) {
-      dsBars.push({
-        type: 'bar',
-        label: `${farm} · volume`,
-        data: barData,
-        backgroundColor: color + '33',
-        borderColor: color + 'AA',
-        borderWidth: 1,
-        yAxisID: 'y2',
-        maxBarThickness: 14,
-        order: 0,
-      });
-    }
-    if (meanData.some((v) => v != null)) {
-      dsLines.push({
-        type: 'line',
-        label: `${farm} · média`,
-        data: meanData,
-        borderColor: color,
-        backgroundColor: color,
-        tension: 0.25,
-        borderWidth: 2.4,
-        pointRadius: 3,
-        spanGaps: true,
-        yAxisID: 'y',
-        order: 1,
-      });
-    }
-    if (stdData.some((v) => v != null)) {
-      dsLines.push({
-        type: 'line',
-        label: `${farm} · desv. padrão`,
-        data: stdData,
-        borderColor: color + 'CC',
-        borderDash: [5, 4],
-        pointRadius: 0,
-        borderWidth: 1.4,
-        spanGaps: true,
-        yAxisID: 'y1',
-        order: 2,
-      });
-    }
-  });
-  const datasets = [...dsBars, ...dsLines];
-  if (!datasets.length) {
-    showEmpty('ch-farm', 'Sem pontos válidos para o gráfico.');
-    return;
-  }
-  new Chart(ctx, {
-    type: 'bar',
-    data: { labels, datasets },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: { legend: { labels: { color: TICK_COLOR, font: { family: 'JetBrains Mono', size: 10 } } } },
-      scales: {
-        x: { type: 'category', ticks: { color: TICK_COLOR, maxRotation: 40, autoSkip: true, maxTicksLimit: 20 }, grid: { color: GRID_COLOR } },
-        y: { display: hasMean, min: 1, max: 5, ticks: { color: TICK_COLOR }, grid: { color: GRID_COLOR }, title: { display: true, text: 'ECC médio', color: TICK_COLOR } },
-        y1: { display: hasMean, position: 'right', min: 0, suggestedMax: 1.2, ticks: { color: TICK_COLOR }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Desvio padrão', color: TICK_COLOR } },
-        y2: { position: 'right', min: 0, suggestedMax: 8, ticks: { color: TICK_COLOR }, grid: { drawOnChartArea: false }, title: { display: true, text: hasMean ? '# anim./reg.' : '# por dia', color: TICK_COLOR } },
-      },
-    },
-  });
-}
-buildFarmChart();
-
-function buildFarmVolumeChart() {
-  const c = document.getElementById('ch-farm-volume'); if (!c) return;
-  const ctx = c.getContext('2d');
-  const labels = uniqueSortedLabelsFromSeries(FARM_SERIES);
-  const byFarm = groupedFarmSeries(FARM_SERIES);
-  const farms = Object.keys(byFarm);
-  if (!labels.length || !farms.length) {
-    showEmpty('ch-farm-volume', 'Sem dados para volume diário.');
-    return;
-  }
-  const datasets = farms.map((farm, j) => {
-    const m = rowMapByDay(byFarm[farm]);
-    const data = labels.map((d) => {
-      const r = m[d];
-      if (!r) return null;
-      return Number((r.n_animals > 0 ? r.n_animals : r.n_records) || 0);
-    });
-    const color = ECC_COLORS[j % ECC_COLORS.length];
-    return {
-      type: 'bar',
-      label: farm,
-      data,
-      backgroundColor: color + '66',
-      borderColor: color + 'CC',
-      borderWidth: 1.2,
-      maxBarThickness: 18,
-    };
-  });
-  new Chart(ctx, {
-    type: 'bar',
-    data: { labels, datasets },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: { legend: { labels: { color: TICK_COLOR, font: { family: 'JetBrains Mono', size: 10 } } } },
-      scales: {
-        x: { type: 'category', ticks: { color: TICK_COLOR, maxRotation: 40, maxTicksLimit: 20 }, grid: { color: GRID_COLOR } },
-        y: { min: 0, ticks: { color: TICK_COLOR }, grid: { color: GRID_COLOR }, title: { display: true, text: '# animais ou registros', color: TICK_COLOR } },
-      },
-    },
-  });
-}
-
-function eccBandKey(v) {
-  if (v == null || Number.isNaN(Number(v))) return null;
-  const n = Number(v);
-  if (n <= 2.5) return 'Magra (≤ 2.50)';
-  if (n <= 3.25) return 'Ideal (2.75 – 3.25)';
-  return 'Acima ideal (≥ 3.50)';
-}
-
-function buildFarmBandsChart() {
-  const c = document.getElementById('ch-farm-bands'); if (!c) return;
-  const ctx = c.getContext('2d');
-  const rows = (Array.isArray(FARM_RECORDS) ? FARM_RECORDS : []).filter((r) => r && r.ecc_score != null);
-  if (!rows.length) {
-    showEmpty('ch-farm-bands', 'Sem dados para distribuição.');
-    return;
-  }
-  const farms = [...new Set(rows.map((r) => String(r.farm_id || '—')))].sort();
-  const bands = ['Magra (≤ 2.50)', 'Ideal (2.75 – 3.25)', 'Acima ideal (≥ 3.50)'];
-  const colors = ['#d9782b', '#0d7a5e', '#c62841'];
-  const byFarmBand = {};
-  farms.forEach((f) => { byFarmBand[f] = Object.fromEntries(bands.map((b) => [b, 0])); });
-  rows.forEach((r) => {
-    const farm = String(r.farm_id || '—');
-    const b = eccBandKey(r.ecc_score);
-    if (b && byFarmBand[farm]) byFarmBand[farm][b] += 1;
-  });
-  const datasets = bands.map((b, i) => ({
-    label: b,
-    data: farms.map((f) => byFarmBand[f][b] || 0),
-    backgroundColor: colors[i],
-    borderRadius: 4,
-  }));
-  new Chart(ctx, {
-    type: 'bar',
-    data: { labels: farms, datasets },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: TICK_COLOR, font: { family: 'JetBrains Mono', size: 10 } } } },
-      scales: {
-        x: { ticks: { color: TICK_COLOR }, grid: { color: GRID_COLOR }, stacked: true },
-        y: { min: 0, ticks: { color: TICK_COLOR }, grid: { color: GRID_COLOR }, stacked: true, title: { display: true, text: '# registros', color: TICK_COLOR } },
-      },
-    },
-  });
-}
-
-buildFarmVolumeChart();
-buildFarmBandsChart();
-
-function buildRecurrentTrendCharts() {
-  const trendCanvas = document.getElementById('ch-rec-trend');
-  const deltaCanvas = document.getElementById('ch-rec-delta');
-  const tagsWrap = document.getElementById('rec-trend-tags');
-  if (!trendCanvas || !deltaCanvas) return;
-  const rows = Array.isArray(RECURRENT_TRENDS) ? RECURRENT_TRENDS : [];
-  if (!rows.length) {
-    showEmpty('ch-rec-trend', 'Sem animais com recorrência suficiente (mín. 3 medições).');
-    showEmpty('ch-rec-delta', 'Sem deltas de tendência para exibir.');
-    if (tagsWrap) tagsWrap.innerHTML = '';
-    return;
-  }
-
-  const labels = [...new Set(rows.flatMap((r) => (r.points || []).map((p) => String(p.date || '').slice(0, 10))))].filter(Boolean).sort();
-  const datasets = rows.map((r, idx) => {
-    const c = ECC_COLORS[idx % ECC_COLORS.length];
-    const map = {};
-    (r.points || []).forEach((p) => { map[String(p.date || '').slice(0, 10)] = Number(p.ecc); });
-    const data = labels.map((d) => (Number.isFinite(map[d]) ? map[d] : null));
-    return {
-      label: `${r.animal_tag} (${r.n_points}x)`,
-      data,
-      borderColor: c,
-      backgroundColor: c,
-      borderWidth: 2.2,
-      pointRadius: 2.5,
-      pointHoverRadius: 5,
-      tension: 0.2,
-      spanGaps: true,
-    };
-  });
-
-  new Chart(trendCanvas.getContext('2d'), {
-    type: 'line',
-    data: { labels, datasets },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { labels: { color: TICK_COLOR, font: { family: 'JetBrains Mono', size: 10 } } },
-      },
-      scales: {
-        x: { ticks: { color: TICK_COLOR, maxRotation: 45, maxTicksLimit: 20 }, grid: { color: GRID_COLOR } },
-        y: { min: 1, max: 5, ticks: { color: TICK_COLOR, stepSize: 0.25 }, grid: { color: GRID_COLOR } },
-      },
-    },
-  });
-
-  const deltaLabels = rows.map((r) => `${r.animal_tag} (${r.n_points}x)`);
-  const deltaData = rows.map((r) => Number(r.delta || 0));
-  const deltaColors = deltaData.map((v) => (v >= 0 ? '#c62841' : '#1a6fd4'));
-  new Chart(deltaCanvas.getContext('2d'), {
+function buildBoxChart() {
+  const c = document.getElementById('ch-box'); if (!c) return;
+  const rows = FARM_BOX || [];
+  if (!rows.length) { showEmpty('ch-box', 'Sem dados para distribuição por fazenda.'); return; }
+  const labels = rows.map((r) => r.group);
+  const minMax = rows.map((r) => [Number(r.min), Number(r.max)]);
+  const iqr = rows.map((r) => [Number(r.q1), Number(r.q3)]);
+  const median = rows.map((r) => Number(r.median));
+  new Chart(c.getContext('2d'), {
     type: 'bar',
     data: {
-      labels: deltaLabels,
+      labels,
+      datasets: [
+        {
+          label: 'Min – Max',
+          data: minMax,
+          backgroundColor: 'rgba(26,111,212,.18)',
+          borderColor: 'rgba(26,111,212,.45)',
+          borderWidth: 1,
+          borderSkipped: false,
+          barPercentage: 0.55,
+          categoryPercentage: 0.7,
+        },
+        {
+          label: 'Q1 – Q3 (IQR)',
+          data: iqr,
+          backgroundColor: 'rgba(26,111,212,.55)',
+          borderColor: ACCENT2,
+          borderWidth: 1.4,
+          borderSkipped: false,
+          barPercentage: 0.55,
+          categoryPercentage: 0.7,
+        },
+        {
+          type: 'scatter',
+          label: 'Mediana',
+          data: median.map((y, i) => ({ x: i, y })),
+          backgroundColor: ACCENT,
+          borderColor: ACCENT,
+          pointRadius: 6,
+          pointStyle: 'rectRot',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: TICK_COLOR, font: { family: 'JetBrains Mono', size: 10 } } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const i = ctx.dataIndex;
+              const r = rows[i];
+              if (ctx.dataset.label === 'Mediana') return `Mediana: ${r.median.toFixed(2)} (n=${r.n})`;
+              if (ctx.dataset.label.startsWith('Min')) return `Min/Max: ${r.min.toFixed(2)} – ${r.max.toFixed(2)}`;
+              return `IQR: ${r.q1.toFixed(2)} – ${r.q3.toFixed(2)}`;
+            },
+          },
+        },
+      },
+      indexAxis: 'x',
+      scales: {
+        x: { ticks: { color: TICK_COLOR }, grid: { color: GRID_COLOR } },
+        y: { min: 1, max: 5, ticks: { color: TICK_COLOR, stepSize: 0.25 }, grid: { color: GRID_COLOR },
+             title: { display: true, text: 'ECC', color: TICK_COLOR } },
+      },
+    },
+  });
+}
+
+function buildMonthlyChart() {
+  const c = document.getElementById('ch-monthly'); if (!c) return;
+  const rows = MONTHLY || [];
+  if (!rows.length) { showEmpty('ch-monthly', 'Sem evolução mensal disponível.'); return; }
+  const labels = rows.map((r) => r.month);
+  const data = rows.map((r) => Number(r.mean));
+  new Chart(c.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
       datasets: [{
-        label: 'Delta BCS (último - primeiro)',
-        data: deltaData,
-        backgroundColor: deltaColors,
-        borderColor: deltaColors,
-        borderWidth: 1.2,
-        borderRadius: 6,
+        label: 'ECC médio',
+        data,
+        borderColor: ACCENT2,
+        backgroundColor: 'rgba(26,111,212,.20)',
+        borderWidth: 2.6,
+        pointRadius: 4,
+        pointBackgroundColor: ACCENT2,
+        tension: 0.3,
+        fill: true,
       }],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { labels: { color: TICK_COLOR, font: { family: 'JetBrains Mono', size: 10 } } },
+        legend: { display: false },
+        tooltip: {
+          callbacks: { label: (ctx) => `ECC médio: ${Number(ctx.parsed.y).toFixed(2)} (n=${rows[ctx.dataIndex].n})` },
+        },
       },
       scales: {
-        x: { ticks: { color: TICK_COLOR, maxRotation: 45, maxTicksLimit: 16 }, grid: { color: GRID_COLOR } },
-        y: { ticks: { color: TICK_COLOR }, grid: { color: GRID_COLOR }, title: { display: true, text: 'Δ BCS', color: TICK_COLOR } },
+        x: { ticks: { color: TICK_COLOR }, grid: { color: GRID_COLOR } },
+        y: { min: 1, max: 5, ticks: { color: TICK_COLOR, stepSize: 0.25 }, grid: { color: GRID_COLOR },
+             title: { display: true, text: 'ECC médio', color: TICK_COLOR } },
       },
     },
   });
-
-  if (tagsWrap) {
-    tagsWrap.innerHTML = rows.map((r) =>
-      `<span class="trend-mini">${r.farm_id} · ${r.animal_tag} · ${r.n_points} medições · Δ ${Number(r.delta).toFixed(2)}</span>`
-    ).join('');
-  }
 }
 
-buildRecurrentTrendCharts();
+function buildBandsChart() {
+  const c = document.getElementById('ch-bands'); if (!c) return;
+  const rows = FARM_BREAKDOWN || [];
+  if (!rows.length) { showEmpty('ch-bands', 'Sem distribuição por bandas para o filtro atual.'); return; }
+  const labels = rows.map((r) => r.farm_id);
+  new Chart(c.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Abaixo', data: rows.map((r) => Number(r.pct_below || 0)), backgroundColor: WARN, stack: 'b', borderRadius: 4 },
+        { label: 'Faixa-alvo', data: rows.map((r) => Number(r.pct_target || 0)), backgroundColor: ACCENT, stack: 'b', borderRadius: 4 },
+        { label: 'Acima', data: rows.map((r) => Number(r.pct_above || 0)), backgroundColor: DANGER, stack: 'b', borderRadius: 4 },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: TICK_COLOR, font: { family: 'JetBrains Mono', size: 10 } } },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${Number(ctx.parsed.y).toFixed(1)}%` } },
+      },
+      scales: {
+        x: { stacked: true, ticks: { color: TICK_COLOR }, grid: { display: false } },
+        y: { stacked: true, beginAtZero: true, max: 100, ticks: { color: TICK_COLOR, callback: (v) => v + '%' },
+             grid: { color: GRID_COLOR }, title: { display: true, text: '% por banda', color: TICK_COLOR } },
+      },
+    },
+  });
+}
+
+buildBoxChart();
+buildMonthlyChart();
+buildBandsChart();
 </script>
 {% endblock %}

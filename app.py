@@ -1055,7 +1055,6 @@ def _environment_for_request() -> str | None:
     bcs_eps = {
         'serve_ecc_media', 'ecc_analise', 'ecc_importar', 'api_ecc_upload_one',
         'api_ecc_recalculate_all', 'api_ecc_calibragem_apply', 'ecc_calibragem',
-        'perspicuus_holandes_calibragem',
         'ecc_analise_rebanho', 'ecc_analise_individual',
         'ecc_pontos_atencao', 'ecc_pontos_atencao_pdf',
         'download_ecc_xlsx',
@@ -1515,31 +1514,6 @@ def init_db():
         updated_at  TEXT    NOT NULL,
         updated_by  TEXT    NOT NULL DEFAULT 'system'
     );
-    CREATE TABLE IF NOT EXISTS perspicuus_holandes_records (
-        id             INTEGER PRIMARY KEY AUTOINCREMENT,
-        created_at     TEXT    NOT NULL,
-        farm_id        TEXT    NOT NULL,
-        inference_date TEXT    NOT NULL,   -- YYYY-MM-DD (data funcional da inferência)
-        animal_tag     TEXT    NOT NULL,   -- brinco
-        view           TEXT    NOT NULL DEFAULT 'posterior',
-        filename       TEXT    NOT NULL,
-        image_path     TEXT    NOT NULL,   -- /api/ecc/media/...
-        thumb_path     TEXT    DEFAULT '', -- thumbnail cropada (bbox)
-        bbox_path      TEXT    DEFAULT '', -- imagem original com bbox desenhado
-        trait_name     TEXT    DEFAULT '',
-        raw_score      REAL,
-        ecc_score      REAL,
-        traits_json    TEXT    NOT NULL DEFAULT '{}',
-        meta_json      TEXT    NOT NULL DEFAULT '{}',
-        error_text     TEXT
-    );
-    CREATE TABLE IF NOT EXISTS perspicuus_holandes_calibration (
-        id          INTEGER PRIMARY KEY CHECK (id = 1),
-        raw_min     REAL    NOT NULL DEFAULT -4.0,
-        raw_max     REAL    NOT NULL DEFAULT 4.0,
-        updated_at  TEXT    NOT NULL,
-        updated_by  TEXT    NOT NULL DEFAULT 'system'
-    );
     CREATE TABLE IF NOT EXISTS attentus_users (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         username    TEXT    NOT NULL UNIQUE,
@@ -1618,8 +1592,6 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_persp_rfid       ON perspicuus_events(animal_rfid);
     CREATE INDEX IF NOT EXISTS idx_ecc_farm_date    ON ecc_bcs_records(farm_id, inference_date);
     CREATE INDEX IF NOT EXISTS idx_ecc_animal_date  ON ecc_bcs_records(farm_id, animal_tag, inference_date);
-    CREATE INDEX IF NOT EXISTS idx_holandes_farm_date   ON perspicuus_holandes_records(farm_id, inference_date);
-    CREATE INDEX IF NOT EXISTS idx_holandes_animal_date ON perspicuus_holandes_records(farm_id, animal_tag, inference_date);
     CREATE INDEX IF NOT EXISTS idx_attentus_users_username ON attentus_users(username);
     CREATE INDEX IF NOT EXISTS idx_angus_farm_date   ON perspicuus_angus_records(farm_id, inference_date);
     CREATE INDEX IF NOT EXISTS idx_angus_animal_date ON perspicuus_angus_records(farm_id, animal_tag, inference_date);
@@ -1712,19 +1684,6 @@ def init_db():
         db.commit()
     except sqlite3.OperationalError as e:
         log.warning("Migração ecc calibration: %s", e)
-    try:
-        row = db.execute("SELECT id FROM perspicuus_holandes_calibration WHERE id = 1").fetchone()
-        if not row:
-            db.execute(
-                """
-                INSERT INTO perspicuus_holandes_calibration (id, raw_min, raw_max, updated_at, updated_by)
-                VALUES (1, -4.0, 4.0, ?, 'system')
-                """,
-                (datetime.utcnow().isoformat() + 'Z',),
-            )
-        db.commit()
-    except sqlite3.OperationalError as e:
-        log.warning("Migração holandes calibration: %s", e)
     try:
         for tname in ('perspicuus_angus_calibration', 'perspicuus_nelore_calibration'):
             row = db.execute(f"SELECT id FROM {tname} WHERE id = 1").fetchone()
@@ -4131,20 +4090,6 @@ def _ecc_get_calibration(db) -> dict[str, Any]:
     }
 
 
-def _perspicuus_holandes_get_calibration(db) -> dict[str, Any]:
-    row = db.execute(
-        "SELECT raw_min, raw_max, updated_at, updated_by FROM perspicuus_holandes_calibration WHERE id = 1"
-    ).fetchone()
-    if not row:
-        return {'raw_min': -4.0, 'raw_max': 4.0, 'updated_at': None, 'updated_by': 'system'}
-    return {
-        'raw_min': float(row['raw_min']),
-        'raw_max': float(row['raw_max']),
-        'updated_at': row['updated_at'],
-        'updated_by': row['updated_by'],
-    }
-
-
 def _ecc_rescale_with_calibration(raw_score: float | None, cal: dict[str, Any]) -> float | None:
     if raw_score is None:
         return None
@@ -4177,27 +4122,6 @@ def _ecc_apply_calibration_to_all_scores(db, cal: dict[str, Any], farm_id: str =
         val = _ecc_rescale_with_calibration(r['raw_score'], cal)
         db.execute(
             "UPDATE ecc_bcs_records SET ecc_score = ? WHERE id = ?",
-            (val, int(r['id'])),
-        )
-        n += 1
-    return n
-
-
-def _perspicuus_holandes_apply_calibration_to_all_scores(db, cal: dict[str, Any], farm_id: str = '') -> int:
-    cond = "raw_score IS NOT NULL"
-    params: list[Any] = []
-    if farm_id:
-        cond += " AND farm_id = ?"
-        params.append(farm_id)
-    rows = db.execute(
-        f"SELECT id, raw_score FROM perspicuus_holandes_records WHERE {cond}",
-        params,
-    ).fetchall()
-    n = 0
-    for r in rows:
-        val = _ecc_rescale_with_calibration(r['raw_score'], cal)
-        db.execute(
-            "UPDATE perspicuus_holandes_records SET ecc_score = ? WHERE id = ?",
             (val, int(r['id'])),
         )
         n += 1
@@ -4353,10 +4277,394 @@ def _ecc_base_lists(db):
     return farms, animals, stats
 
 
+# Faixa-alvo (target band) usada nos relatórios visuais. Quartos de ECC.
+ECC_TARGET_LO = 2.75
+ECC_TARGET_HI = 3.50
+ECC_LOW_HI = 2.50   # ≤ 2.50 => abaixo / magra
+ECC_HIGH_LO = 3.75  # ≥ 3.75 => acima / gorda
+
+
+def _ecc_extract_scored(records: list[dict]) -> list[float]:
+    out: list[float] = []
+    for r in records or []:
+        v = r.get('ecc_score')
+        if v is None:
+            continue
+        try:
+            out.append(float(v))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _ecc_band_of(score: float | None) -> str | None:
+    if score is None:
+        return None
+    try:
+        s = float(score)
+    except (TypeError, ValueError):
+        return None
+    if s <= ECC_LOW_HI:
+        return 'low'
+    if s >= ECC_HIGH_LO:
+        return 'high'
+    if ECC_TARGET_LO <= s <= ECC_TARGET_HI:
+        return 'target'
+    return 'near'  # 2.50 < s < 2.75 ou 3.50 < s < 3.75 (fora da faixa-alvo, mas perto)
+
+
+def _ecc_band_distribution(scored: list[float]) -> dict[str, Any]:
+    n = len(scored)
+    if not n:
+        return {'n': 0, 'low': 0, 'near': 0, 'target': 0, 'high': 0,
+                'pct_low': 0.0, 'pct_near': 0.0, 'pct_target': 0.0, 'pct_high': 0.0,
+                'pct_below': 0.0, 'pct_above': 0.0}
+    counts = {'low': 0, 'near': 0, 'target': 0, 'high': 0}
+    for s in scored:
+        b = _ecc_band_of(s) or 'near'
+        counts[b] += 1
+    pct = {f'pct_{k}': round(v * 100.0 / n, 1) for k, v in counts.items()}
+    pct_below = round((counts['low'] + sum(1 for s in scored if ECC_LOW_HI < s < ECC_TARGET_LO)) * 100.0 / n, 1)
+    pct_above = round((counts['high'] + sum(1 for s in scored if ECC_TARGET_HI < s < ECC_HIGH_LO)) * 100.0 / n, 1)
+    return {'n': n, **counts, **pct, 'pct_below': pct_below, 'pct_above': pct_above}
+
+
+def _ecc_histogram_quarters(scored: list[float]) -> list[dict[str, Any]]:
+    """Histograma com passo 0.25 entre 1.00 e 5.00 (17 buckets)."""
+    buckets: list[dict[str, Any]] = []
+    cur = 1.00
+    while cur <= 5.001:
+        buckets.append({'bucket': round(cur, 2), 'count': 0})
+        cur = round(cur + 0.25, 2)
+    if not scored:
+        return buckets
+    for s in scored:
+        try:
+            x = float(s)
+        except (TypeError, ValueError):
+            continue
+        x = max(1.0, min(5.0, x))
+        idx = int(round((x - 1.0) / 0.25))
+        idx = max(0, min(len(buckets) - 1, idx))
+        buckets[idx]['count'] += 1
+    return buckets
+
+
+def _ecc_farm_band_breakdown(records: list[dict]) -> list[dict[str, Any]]:
+    """Para cada fazenda calcula contagem de registros, ECC médio e % por banda."""
+    by_farm: dict[str, list[float]] = {}
+    for r in records or []:
+        v = r.get('ecc_score')
+        if v is None:
+            continue
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            continue
+        farm = str(r.get('farm_id') or '—')
+        by_farm.setdefault(farm, []).append(x)
+    out: list[dict[str, Any]] = []
+    for farm in sorted(by_farm.keys()):
+        vals = by_farm[farm]
+        dist = _ecc_band_distribution(vals)
+        mean = sum(vals) / len(vals) if vals else None
+        out.append({
+            'farm_id': farm,
+            'n': dist['n'],
+            'mean': round(mean, 2) if mean is not None else None,
+            'pct_low': dist['pct_low'],
+            'pct_near': dist['pct_near'],
+            'pct_target': dist['pct_target'],
+            'pct_high': dist['pct_high'],
+            'pct_below': dist['pct_below'],
+            'pct_above': dist['pct_above'],
+        })
+    return out
+
+
+def _ecc_monthly_means(records: list[dict], months: int = 6) -> list[dict[str, Any]]:
+    """Agrega ECC por mês (YYYY-MM) usando inference_date; retorna últimos `months` meses presentes."""
+    by_month: dict[str, list[float]] = {}
+    for r in records or []:
+        d = str(r.get('inference_date') or '')[:7]
+        if not d or len(d) < 7:
+            continue
+        v = r.get('ecc_score')
+        if v is None:
+            continue
+        try:
+            by_month.setdefault(d, []).append(float(v))
+        except (TypeError, ValueError):
+            continue
+    keys = sorted(by_month.keys())
+    if months and len(keys) > months:
+        keys = keys[-months:]
+    return [
+        {'month': k, 'mean': round(sum(by_month[k]) / len(by_month[k]), 2), 'n': len(by_month[k])}
+        for k in keys
+    ]
+
+
+def _ecc_farm_box_stats(records: list[dict]) -> list[dict[str, Any]]:
+    """Min/Q1/median/Q3/max por fazenda (substituto do boxplot 'por nº de lactações')."""
+    def _q(arr: list[float], p: float) -> float:
+        if not arr:
+            return 0.0
+        a = sorted(arr)
+        if len(a) == 1:
+            return a[0]
+        idx = (len(a) - 1) * p
+        lo = int(idx)
+        hi = min(len(a) - 1, lo + 1)
+        frac = idx - lo
+        return a[lo] * (1 - frac) + a[hi] * frac
+
+    by_farm: dict[str, list[float]] = {}
+    for r in records or []:
+        v = r.get('ecc_score')
+        if v is None:
+            continue
+        try:
+            by_farm.setdefault(str(r.get('farm_id') or '—'), []).append(float(v))
+        except (TypeError, ValueError):
+            continue
+    out: list[dict[str, Any]] = []
+    for farm in sorted(by_farm.keys()):
+        vals = by_farm[farm]
+        if not vals:
+            continue
+        m = sum(vals) / len(vals)
+        out.append({
+            'group': farm,
+            'n': len(vals),
+            'min': round(min(vals), 2),
+            'q1': round(_q(vals, 0.25), 2),
+            'median': round(_q(vals, 0.5), 2),
+            'q3': round(_q(vals, 0.75), 2),
+            'max': round(max(vals), 2),
+            'mean': round(m, 2),
+        })
+    return out
+
+
+def _ecc_overview(records: list[dict]) -> dict[str, Any]:
+    """KPIs e séries usadas na 'Visão Geral'."""
+    scored = _ecc_extract_scored(records)
+    n_records = len(records or [])
+    n_animals = len({(r.get('farm_id') or '—', r.get('animal_tag') or '') for r in (records or []) if r.get('animal_tag')})
+    n_farms = len({(r.get('farm_id') or '') for r in (records or []) if r.get('farm_id')})
+    dist = _ecc_band_distribution(scored)
+    mean = round(sum(scored) / len(scored), 2) if scored else None
+    return {
+        'n_records': n_records,
+        'n_animals': n_animals,
+        'n_farms': n_farms,
+        'ecc_mean': mean,
+        'pct_target': dist['pct_target'],
+        'pct_below': dist['pct_below'],
+        'pct_above': dist['pct_above'],
+        'pct_low': dist['pct_low'],
+        'pct_high': dist['pct_high'],
+        'histogram': _ecc_histogram_quarters(scored),
+        'farm_breakdown': _ecc_farm_band_breakdown(records),
+        'monthly': _ecc_monthly_means(records, months=6),
+        'target_band': {'lo': ECC_TARGET_LO, 'hi': ECC_TARGET_HI},
+    }
+
+
+def _ecc_overview_insights(ov: dict[str, Any]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    mean = ov.get('ecc_mean')
+    pct_target = ov.get('pct_target') or 0
+    pct_below = ov.get('pct_below') or 0
+    pct_above = ov.get('pct_above') or 0
+    if mean is not None:
+        if ECC_TARGET_LO <= mean <= ECC_TARGET_HI:
+            out.append({'icon': '📊', 'text': f'O rebanho apresenta ECC médio adequado ({mean:.2f}), dentro da faixa-alvo {ECC_TARGET_LO:.2f}–{ECC_TARGET_HI:.2f}.'})
+        elif mean < ECC_TARGET_LO:
+            out.append({'icon': '📉', 'text': f'ECC médio do rebanho ({mean:.2f}) está abaixo da faixa-alvo. Recomenda-se reforço nutricional.'})
+        else:
+            out.append({'icon': '📈', 'text': f'ECC médio do rebanho ({mean:.2f}) está acima da faixa-alvo. Avaliar manejo alimentar.'})
+    if pct_below >= 25:
+        out.append({'icon': '⚠', 'text': f'{pct_below:.0f}% dos animais estão abaixo da faixa-alvo — atenção a perdas de condição.'})
+    elif pct_above >= 25:
+        out.append({'icon': '⚠', 'text': f'{pct_above:.0f}% dos animais estão acima da faixa-alvo — risco de superalimentação.'})
+    if pct_target >= 60:
+        out.append({'icon': '✅', 'text': f'{pct_target:.0f}% dos registros caem na faixa-alvo — boa homogeneidade do rebanho.'})
+    farms = ov.get('farm_breakdown') or []
+    if farms:
+        best = max(farms, key=lambda x: (x.get('pct_target') or 0, x.get('n') or 0))
+        worst = min(farms, key=lambda x: (x.get('pct_target') or 0, -(x.get('n') or 0)))
+        if best.get('farm_id') != worst.get('farm_id'):
+            out.append({'icon': '🏡', 'text': f"Maior aderência à faixa-alvo: {best['farm_id']} ({best.get('pct_target', 0):.0f}%); menor: {worst['farm_id']} ({worst.get('pct_target', 0):.0f}%)."})
+        else:
+            out.append({'icon': '🏡', 'text': f"Fazenda destaque: {best['farm_id']} com {best.get('pct_target', 0):.0f}% na faixa-alvo."})
+    monthly = ov.get('monthly') or []
+    if len(monthly) >= 2:
+        delta = (monthly[-1]['mean'] or 0) - (monthly[0]['mean'] or 0)
+        if abs(delta) >= 0.1:
+            seta = '↗' if delta > 0 else '↘'
+            out.append({'icon': seta, 'text': f"Tendência mensal: variação de {delta:+.2f} entre {monthly[0]['month']} e {monthly[-1]['month']}."})
+        else:
+            out.append({'icon': '→', 'text': 'Tendência mensal estável nos últimos meses.'})
+    if not out:
+        out.append({'icon': 'ℹ', 'text': 'Sem dados suficientes para gerar insights — cadastre mais inferências ECC.'})
+    return out[:6]
+
+
+def _ecc_critical_animals_count(records: list[dict]) -> int:
+    """Animais (farm, tag) com pelo menos um ECC fora da faixa-alvo (≤2.50 ou ≥3.75)."""
+    crit: set[tuple[str, str]] = set()
+    for r in records or []:
+        v = r.get('ecc_score')
+        if v is None:
+            continue
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            continue
+        if x <= ECC_LOW_HI or x >= ECC_HIGH_LO:
+            tag = str(r.get('animal_tag') or '').strip()
+            farm = str(r.get('farm_id') or '').strip()
+            if tag:
+                crit.add((farm, tag))
+    return len(crit)
+
+
+def _ecc_rebanho_insights(overview: dict[str, Any],
+                          farm_breakdown: list[dict[str, Any]],
+                          monthly: list[dict[str, Any]],
+                          kpis: dict[str, Any]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    if farm_breakdown:
+        worst = max(farm_breakdown, key=lambda x: (x.get('pct_below') or 0, x.get('n') or 0))
+        if (worst.get('pct_below') or 0) >= 25:
+            out.append({'icon': '⚠', 'text': f"Fazenda {worst['farm_id']} concentra {worst['pct_below']:.0f}% abaixo da faixa-alvo — foco prioritário."})
+        best = max(farm_breakdown, key=lambda x: (x.get('pct_target') or 0, x.get('n') or 0))
+        out.append({'icon': '🏆', 'text': f"Melhor aderência: {best['farm_id']} com {best.get('pct_target', 0):.0f}% na faixa-alvo (n={best.get('n', 0)})."})
+    delta = kpis.get('delta_avg')
+    if delta is not None:
+        if delta <= -0.25:
+            out.append({'icon': '📉', 'text': f'Animais recorrentes mostram perda média de {abs(delta):.2f} pts — sinal de queda de condição.'})
+        elif delta >= 0.25:
+            out.append({'icon': '📈', 'text': f'Animais recorrentes ganham {delta:.2f} pts em média — recuperação de condição.'})
+    if (kpis.get('alto_risco_pct') or 0) >= 20:
+        out.append({'icon': '🩺', 'text': f"{kpis['alto_risco_pct']:.0f}% dos registros abaixo da faixa-alvo — risco metabólico elevado."})
+    if (kpis.get('animais_criticos') or 0) >= 5:
+        out.append({'icon': '⚑', 'text': f"{kpis['animais_criticos']} animais críticos identificados (ECC ≤ {ECC_LOW_HI:.2f} ou ≥ {ECC_HIGH_LO:.2f})."})
+    if len(monthly) >= 2:
+        d = (monthly[-1]['mean'] or 0) - (monthly[0]['mean'] or 0)
+        if abs(d) >= 0.1:
+            out.append({'icon': '🗓', 'text': f"Variação mensal {d:+.2f} entre {monthly[0]['month']} e {monthly[-1]['month']}."})
+    if not out:
+        out.append({'icon': 'ℹ', 'text': 'Sem variações relevantes para o filtro atual.'})
+    return out[:6]
+
+
+def _ecc_animal_summary(history: list[dict], farm_mean: float | None, herd_mean: float | None) -> dict[str, Any]:
+    """Resumo individual: último ECC, banda, tendência, deltas e referências."""
+    hist = list(history or [])
+    scored = _ecc_extract_scored(hist)
+    last = hist[-1] if hist else None
+    last_score = float(last['ecc_score']) if (last and last.get('ecc_score') is not None) else None
+    mean_animal = round(sum(scored) / len(scored), 2) if scored else None
+    mn = round(min(scored), 2) if scored else None
+    mx = round(max(scored), 2) if scored else None
+    delta = round(scored[-1] - scored[0], 2) if len(scored) >= 2 else None
+    trend = 'flat'
+    if delta is not None:
+        if delta >= 0.25:
+            trend = 'up'
+        elif delta <= -0.25:
+            trend = 'down'
+    band = _ecc_band_of(last_score)
+    band_label = {
+        'low': 'Abaixo da faixa-alvo',
+        'near': 'Próximo da faixa-alvo',
+        'target': 'Dentro da faixa-alvo',
+        'high': 'Acima da faixa-alvo',
+        None: '—',
+    }.get(band, '—')
+    return {
+        'n': len(hist),
+        'n_scored': len(scored),
+        'first_date': str(hist[0].get('inference_date') or '') if hist else '',
+        'last_date': str(hist[-1].get('inference_date') or '') if hist else '',
+        'first_score': round(scored[0], 2) if scored else None,
+        'last_score': round(last_score, 2) if last_score is not None else None,
+        'mean': mean_animal,
+        'min': mn,
+        'max': mx,
+        'delta': delta,
+        'trend': trend,
+        'band': band,
+        'band_label': band_label,
+        'comparison': {
+            'animal_mean': mean_animal,
+            'farm_mean': round(farm_mean, 2) if farm_mean is not None else None,
+            'herd_mean': round(herd_mean, 2) if herd_mean is not None else None,
+            'target': round((ECC_TARGET_LO + ECC_TARGET_HI) / 2.0, 2),
+        },
+    }
+
+
+def _ecc_animal_insights(summary: dict[str, Any]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    band = summary.get('band')
+    last = summary.get('last_score')
+    if band == 'low':
+        out.append({'icon': '⚠', 'text': 'ECC abaixo da faixa-alvo no estágio atual.'})
+    elif band == 'high':
+        out.append({'icon': '⚠', 'text': 'ECC acima da faixa-alvo no estágio atual.'})
+    elif band == 'target':
+        out.append({'icon': '✅', 'text': 'ECC dentro da faixa-alvo na última inferência.'})
+    elif band == 'near':
+        out.append({'icon': 'ℹ', 'text': 'ECC próximo, mas fora da faixa-alvo na última inferência.'})
+    delta = summary.get('delta')
+    if delta is not None:
+        if delta <= -0.25:
+            out.append({'icon': '↘', 'text': f'Perda de condição no histórico (Δ {delta:+.2f}).'})
+        elif delta >= 0.25:
+            out.append({'icon': '↗', 'text': f'Ganho de condição no histórico (Δ {delta:+.2f}).'})
+        else:
+            out.append({'icon': '→', 'text': f'Estabilidade no histórico (Δ {delta:+.2f}).'})
+    cmp = summary.get('comparison') or {}
+    a, f, h = cmp.get('animal_mean'), cmp.get('farm_mean'), cmp.get('herd_mean')
+    if a is not None and h is not None:
+        d = a - h
+        if abs(d) >= 0.1:
+            sign = 'acima' if d > 0 else 'abaixo'
+            out.append({'icon': '⚖', 'text': f'Animal {abs(d):.2f} pts {sign} da média do rebanho.'})
+    n_scored = summary.get('n_scored') or 0
+    if n_scored >= 3:
+        out.append({'icon': '📈', 'text': f'Histórico com {n_scored} medições válidas — base suficiente para acompanhamento.'})
+    elif n_scored:
+        out.append({'icon': 'ℹ', 'text': f'Apenas {n_scored} medição(ões) — colete mais para confiabilidade da tendência.'})
+    if last is not None:
+        out.append({'icon': '🎯', 'text': f'Faixa-alvo de referência: {ECC_TARGET_LO:.2f}–{ECC_TARGET_HI:.2f}.'})
+    if not out:
+        out.append({'icon': 'ℹ', 'text': 'Sem dados suficientes para gerar análise individual.'})
+    return out[:6]
+
+
 @app.route('/ecc/analise')
 @login_required
 def ecc_analise():
-    return redirect(url_for('ecc_importar'), code=302)
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    records = _ecc_load_rows(db, farm_filter, '', '', limit=10000)
+    farms, _, stats = _ecc_base_lists(db)
+    overview = _ecc_overview(records)
+    insights = _ecc_overview_insights(overview)
+    return render_template(
+        'ecc_analise.html',
+        records=records[:10],
+        farms=farms,
+        farm_filter=farm_filter,
+        stats=stats,
+        overview=overview,
+        insights=insights,
+    )
 
 
 @app.route('/ecc/importar', methods=['GET', 'POST'])
@@ -4500,89 +4808,6 @@ def ecc_calibragem():
     )
 
 
-@app.route('/perspicuus-holandes/calibragem')
-@login_required
-def perspicuus_holandes_calibragem():
-    db = get_db()
-    farm_filter = str(request.args.get('farm', '')).strip()
-    cal = _perspicuus_holandes_get_calibration(db)
-    cond = ["raw_score IS NOT NULL"]
-    params: list[Any] = []
-    if farm_filter:
-        cond.append("farm_id = ?")
-        params.append(farm_filter)
-    where = " AND ".join(cond)
-    rows = db.execute(
-        f"""
-        SELECT id, farm_id, animal_tag, raw_score, ecc_score, image_path, thumb_path, bbox_path
-        FROM perspicuus_holandes_records
-        WHERE {where}
-        ORDER BY raw_score ASC, id DESC
-        LIMIT 5000
-        """,
-        params,
-    ).fetchall()
-    buckets: dict[float, dict[str, Any]] = {}
-    for r in rows:
-        raw = float(r['raw_score'])
-        b = round(raw * 2.0) / 2.0
-        if b not in buckets:
-            buckets[b] = {
-                'raw_bucket': b,
-                'raw_min': b - 0.25,
-                'raw_max': b + 0.25,
-                'count': 0,
-                'samples': [],
-                'suggested_ecc': _ecc_rescale_with_calibration(b, cal),
-            }
-        buckets[b]['count'] += 1
-        buckets[b]['samples'].append({
-            'id': int(r['id']),
-            'farm_id': r['farm_id'],
-            'animal_tag': r['animal_tag'],
-            'raw_score': raw,
-            'ecc_score': r['ecc_score'],
-            'image_path': r['image_path'],
-            'thumb_path': r['thumb_path'],
-            'bbox_path': r['bbox_path'],
-        })
-    bucket_rows = [buckets[k] for k in sorted(buckets.keys())]
-    farms = [r[0] for r in db.execute("SELECT DISTINCT farm_id FROM perspicuus_holandes_records ORDER BY farm_id").fetchall()]
-    stats = {
-        'total_records': db.execute("SELECT COUNT(*) FROM perspicuus_holandes_records").fetchone()[0],
-        'farms': db.execute("SELECT COUNT(DISTINCT farm_id) FROM perspicuus_holandes_records").fetchone()[0],
-        'animals': db.execute("SELECT COUNT(DISTINCT farm_id || '::' || animal_tag) FROM perspicuus_holandes_records").fetchone()[0],
-        'with_score': db.execute("SELECT COUNT(*) FROM perspicuus_holandes_records WHERE ecc_score IS NOT NULL").fetchone()[0],
-    }
-    stats['calibration_rows'] = db.execute(
-        f"SELECT COUNT(*) FROM perspicuus_holandes_records WHERE {where}",
-        params,
-    ).fetchone()[0]
-    row_bounds = db.execute(
-        f"SELECT MIN(raw_score) AS mn, MAX(raw_score) AS mx FROM perspicuus_holandes_records WHERE {where}",
-        params,
-    ).fetchone()
-    raw_bounds = None
-    try:
-        if row_bounds and row_bounds['mn'] is not None and row_bounds['mx'] is not None and float(row_bounds['mx']) > float(row_bounds['mn']):
-            raw_bounds = (float(row_bounds['mn']), float(row_bounds['mx']))
-    except (TypeError, ValueError):
-        raw_bounds = None
-    return render_template(
-        'ecc_calibragem.html',
-        farms=farms,
-        farm_filter=farm_filter,
-        stats=stats,
-        calibration=cal,
-        raw_bounds=raw_bounds,
-        calibration_scope='Perspicuus Holandês',
-        calibration_home_endpoint='perspicuus_holandes_calibragem',
-        calibration_apply_endpoint='api_perspicuus_holandes_calibragem_apply',
-        calibration_is_perspicuus=True,
-        bucket_rows=bucket_rows,
-    )
-
-
 @app.route('/api/ecc/upload-one', methods=['POST'])
 @login_required
 def api_ecc_upload_one():
@@ -4659,59 +4884,6 @@ def api_ecc_calibragem_apply():
     })
 
 
-@app.route('/api/perspicuus-holandes/calibragem/apply', methods=['POST'])
-@login_required
-def api_perspicuus_holandes_calibragem_apply():
-    data = request.get_json(silent=True) or {}
-
-    farm = str(data.get('farm_id') or '').strip()
-    db = get_db()
-    cond = ["raw_score IS NOT NULL"]
-    params: list[Any] = []
-    if farm:
-        cond.append("farm_id = ?")
-        params.append(farm)
-    try:
-        raw_min = float(data.get('raw_min')) if data.get('raw_min') is not None else None
-        raw_max = float(data.get('raw_max')) if data.get('raw_max') is not None else None
-    except (TypeError, ValueError):
-        return jsonify({'error': 'raw_min/raw_max inválidos.'}), 400
-    if raw_min is None or raw_max is None:
-        row_bounds = db.execute(
-            f"SELECT MIN(raw_score) AS mn, MAX(raw_score) AS mx FROM perspicuus_holandes_records WHERE {' AND '.join(cond)}",
-            params,
-        ).fetchone()
-        try:
-            raw_min = float(row_bounds['mn']) if row_bounds and row_bounds['mn'] is not None else None
-            raw_max = float(row_bounds['mx']) if row_bounds and row_bounds['mx'] is not None else None
-        except (TypeError, ValueError):
-            raw_min, raw_max = None, None
-    if raw_min is None or raw_max is None or raw_max <= raw_min:
-        return jsonify({'error': 'Não há raw_score suficiente para calibrar.'}), 400
-    now_iso = datetime.utcnow().isoformat() + 'Z'
-    db.execute(
-        """
-        INSERT INTO perspicuus_holandes_calibration (id, raw_min, raw_max, updated_at, updated_by)
-        VALUES (1, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            raw_min = excluded.raw_min,
-            raw_max = excluded.raw_max,
-            updated_at = excluded.updated_at,
-            updated_by = excluded.updated_by
-        """,
-        (raw_min, raw_max, now_iso, str(session.get('username') or 'unknown')),
-    )
-    cal = _perspicuus_holandes_get_calibration(db)
-    updated = _perspicuus_holandes_apply_calibration_to_all_scores(db, cal, farm_id=farm)
-    db.commit()
-    return jsonify({
-        'status': 'ok',
-        'updated': updated,
-        'farm_id_filter': farm or None,
-        'calibration': cal,
-    })
-
-
 @app.route('/api/ecc/recalculate-all', methods=['POST'])
 @login_required
 def api_ecc_recalculate_all():
@@ -4774,9 +4946,26 @@ def ecc_analise_rebanho():
     db = get_db()
     farm_filter = str(request.args.get('farm', '')).strip()
     q = str(request.args.get('q', '')).strip()
-    records = _ecc_load_rows(db, farm_filter, '', q, limit=3000)
+    records = _ecc_load_rows(db, farm_filter, '', q, limit=10000)
     farms, _, stats = _ecc_base_lists(db)
     recurrent_trends = ecc_recurrent_animal_trends(records, min_points=3, top_n=10)
+    overview = _ecc_overview(records)
+    farm_breakdown = overview['farm_breakdown']
+    farm_box = _ecc_farm_box_stats(records)
+    monthly = overview['monthly']
+
+    # KPIs específicos da página de grupos e tendências.
+    deltas = [float(r.get('delta') or 0) for r in (recurrent_trends or [])]
+    delta_avg = round(sum(deltas) / len(deltas), 2) if deltas else None
+    critical_animals = _ecc_critical_animals_count(records)
+    pct_below = overview.get('pct_below') or 0.0
+    rebanho_kpis = {
+        'lotes': overview.get('n_farms', 0),
+        'delta_avg': delta_avg,
+        'animais_criticos': critical_animals,
+        'alto_risco_pct': pct_below,
+    }
+    insights = _ecc_rebanho_insights(overview, farm_breakdown, monthly, rebanho_kpis)
     return render_template(
         'ecc_analise_rebanho.html',
         records=records[:120], farms=farms, farm_filter=farm_filter, q_filter=q,
@@ -4784,6 +4973,12 @@ def ecc_analise_rebanho():
         farm_records=records,
         recurrent_trends=recurrent_trends,
         stats=stats,
+        overview=overview,
+        farm_breakdown=farm_breakdown,
+        farm_box=farm_box,
+        monthly=monthly,
+        rebanho_kpis=rebanho_kpis,
+        insights=insights,
     )
 
 
@@ -4825,6 +5020,10 @@ def ecc_analise_individual():
         selected_animal = rr[0] if rr else ''
     animal_points = []
     animal_images = []
+    animal_summary: dict[str, Any] | None = None
+    animal_insights: list[dict[str, str]] = []
+    farm_mean: float | None = None
+    herd_mean: float | None = None
     if selected_farm and selected_animal:
         ar = db.execute(
             """
@@ -4846,12 +5045,33 @@ def ecc_analise_individual():
             (selected_farm, selected_animal),
         ).fetchall()
         animal_images = [dict(x) for x in ai]
+        farm_row = db.execute(
+            "SELECT AVG(ecc_score) FROM ecc_bcs_records WHERE farm_id = ? AND ecc_score IS NOT NULL",
+            (selected_farm,),
+        ).fetchone()
+        if farm_row and farm_row[0] is not None:
+            try:
+                farm_mean = float(farm_row[0])
+            except (TypeError, ValueError):
+                farm_mean = None
+        herd_row = db.execute(
+            "SELECT AVG(ecc_score) FROM ecc_bcs_records WHERE ecc_score IS NOT NULL"
+        ).fetchone()
+        if herd_row and herd_row[0] is not None:
+            try:
+                herd_mean = float(herd_row[0])
+            except (TypeError, ValueError):
+                herd_mean = None
+        animal_summary = _ecc_animal_summary(animal_points, farm_mean, herd_mean)
+        animal_insights = _ecc_animal_insights(animal_summary)
     return render_template(
         'ecc_analise_individual.html',
         records=records[:120], farms=farms, animals=animals, animal_options=animal_options,
         farm_filter=farm_filter, animal_filter=animal_filter, q_filter=q,
         selected_farm=selected_farm, selected_animal=selected_animal,
         animal_points=animal_points, animal_images=animal_images, stats=stats,
+        animal_summary=animal_summary, animal_insights=animal_insights,
+        target_band={'lo': ECC_TARGET_LO, 'hi': ECC_TARGET_HI},
     )
 
 

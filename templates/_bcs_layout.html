@@ -340,6 +340,9 @@
 
 {% macro bcs_tabs(active='') -%}
 <div class="bcs-tabs" role="tablist">
+  <a class="bcs-tab {% if active == 'visao' %}active{% endif %}" href="{{ url_for('ecc_analise') }}">
+    <span class="tab-ico">🧭</span> Visão geral
+  </a>
   <a class="bcs-tab {% if active == 'importar' %}active{% endif %}" href="{{ url_for('ecc_importar') }}">
     <span class="tab-ico">📥</span> Importar
   </a>
@@ -347,7 +350,7 @@
     <span class="tab-ico">⚖️</span> Calibragem
   </a>
   <a class="bcs-tab {% if active == 'rebanho' %}active{% endif %}" href="{{ url_for('ecc_analise_rebanho') }}">
-    <span class="tab-ico">🐄</span> Análise rebanho
+    <span class="tab-ico">🐄</span> Grupos & tendências
   </a>
   <a class="bcs-tab {% if active == 'individual' %}active{% endif %}" href="{{ url_for('ecc_analise_individual') }}">
     <span class="tab-ico">🐂</span> Análise individual

@@ -1,331 +1,386 @@
 {% extends "base.html" %}
-{% block title %}Análise ECC{% endblock %}
+{% from "_bcs_layout.html" import bcs_styles, bcs_tabs %}
+{% block title %}ECC — Visão geral{% endblock %}
 
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+{{ bcs_styles() }}
 <style>
-.grid-forms { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
-@media (max-width: 980px) { .grid-forms { grid-template-columns: 1fr; } }
-.form-card { background: var(--surf); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
-.form-sub { font-size: 12px; color: var(--text2); margin-top: 4px; margin-bottom: 10px; line-height: 1.4; }
-.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-@media (max-width: 680px) { .row-2 { grid-template-columns: 1fr; } }
-.flash-bar { padding: 10px 12px; border-radius: 8px; margin-bottom: 10px; font-size: 12px; }
-.flash-bar.success { background: rgba(0,229,160,.12); border: 1px solid rgba(0,229,160,.3); color: var(--accent); }
-.flash-bar.error { background: rgba(255,77,106,.12); border: 1px solid rgba(255,77,106,.28); color: var(--err); }
-.chart-grid-ecc { display: grid; grid-template-columns: 1fr; gap: 16px; margin-bottom: 16px; }
-.chart-card-ecc { background: var(--surf); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
-.chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
-.chart-title { font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
-.chart-sub { font-size: 11px; color: var(--text2); font-family: var(--mono); }
-.chart-card-ecc canvas { width: 100% !important; height: 260px !important; }
-.table-wrap { overflow: auto; }
-.thumb { width: 72px; height: 54px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; }
+.ecc-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2.6fr) minmax(0, 1fr);
+  gap: 16px;
+}
+@media (max-width: 1100px) { .ecc-overview-grid { grid-template-columns: 1fr; } }
+
+.ecc-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin: 14px 0 0 0;
+}
+.ecc-kpi-card {
+  background: var(--surf);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px 12px;
+  display: flex; flex-direction: column; gap: 8px;
+  box-shadow: var(--shadow-sm);
+}
+.ecc-kpi-card .ico-circle {
+  width: 36px; height: 36px;
+  border-radius: 999px;
+  background: rgba(13,122,94,.10);
+  color: var(--accent);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 18px;
+}
+.ecc-kpi-card.blue .ico-circle { background: rgba(26,111,212,.12); color: var(--accent2); }
+.ecc-kpi-card.orange .ico-circle { background: rgba(217,120,43,.14); color: var(--accent3); }
+.ecc-kpi-card.warn .ico-circle { background: rgba(184,134,11,.14); color: var(--warn); }
+.ecc-kpi-card.danger .ico-circle { background: rgba(198,40,65,.12); color: var(--err); }
+.ecc-kpi-card .lbl { font-family: var(--mono); font-size: 11px; letter-spacing: 1.4px;
+  text-transform: uppercase; color: var(--muted); }
+.ecc-kpi-card .val { font-family: var(--mono); font-weight: 700; font-size: 26px; color: var(--text); line-height: 1.05; }
+.ecc-kpi-card.accent .val { color: var(--accent); }
+.ecc-kpi-card.blue .val { color: var(--accent2); }
+.ecc-kpi-card.orange .val { color: var(--accent3); }
+.ecc-kpi-card.warn .val { color: var(--warn); }
+.ecc-kpi-card.danger .val { color: var(--err); }
+
+.ecc-chart-wrap { position: relative; height: 280px; width: 100%; }
+.ecc-chart-wrap canvas { display: block; width: 100% !important; height: 100% !important; }
+.ecc-chart-wrap.short { height: 240px; }
+
+.ecc-insight-panel {
+  background: linear-gradient(180deg, rgba(26,111,212,.05) 0%, var(--surf) 100%);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 16px 20px;
+  position: sticky; top: 12px;
+  box-shadow: var(--shadow-sm);
+}
+.ecc-insight-head {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--sans);
+  font-size: 14px; font-weight: 800;
+  background: var(--accent2); color: #fff;
+  padding: 6px 14px; border-radius: 999px;
+  margin-bottom: 14px;
+}
+.ecc-insight-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
+.ecc-insight-list li { display: flex; align-items: flex-start; gap: 10px; }
+.ecc-insight-list .ico-circle {
+  width: 30px; height: 30px; border-radius: 999px;
+  background: rgba(26,111,212,.10); color: var(--accent2);
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; font-size: 14px;
+}
+.ecc-insight-list p { margin: 0; font-size: 12.5px; color: var(--text); line-height: 1.4; }
+
+.ecc-target-legend {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 11px; color: var(--text2);
+  padding: 3px 10px; border-radius: 999px;
+  background: rgba(13,122,94,.10); border: 1px dashed rgba(13,122,94,.45);
+  color: var(--accent);
+}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="page-header">
+<div class="bcs-hero">
+  <div class="bcs-hero-top">
+    <div>
+      <div class="bcs-hero-eyebrow">Perspicuus BCS · visão geral</div>
+      <h1 class="bcs-hero-title">Escore de <em>condição corporal (ECC)</em></h1>
+      <p class="bcs-hero-sub">
+        Visão consolidada do rebanho em escala 1.00–5.00 (passo 0.25). Faixa-alvo de referência:
+        <span class="ecc-target-legend">{{ '%.2f'|format(overview.target_band.lo) }} – {{ '%.2f'|format(overview.target_band.hi) }}</span>.
+      </p>
+    </div>
+    <div class="bcs-hero-actions">
+      <form method="get" class="bcs-filter-row" style="margin:0">
+        <div class="field" style="margin:0; min-width:200px">
+          <label>Fazenda</label>
+          <select name="farm" onchange="this.form.submit()">
+            <option value="">Todas</option>
+            {% for f in farms %}
+            <option value="{{ f }}" {% if farm_filter == f %}selected{% endif %}>{{ f }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="flex gap-8">
+          <button type="submit" class="btn btn-accent btn-sm">Aplicar</button>
+          <a href="{{ url_for('ecc_analise') }}" class="btn btn-ghost btn-sm">Limpar</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="ecc-kpi-strip">
+    <div class="ecc-kpi-card blue">
+      <div class="ico-circle">🐄</div>
+      <div class="lbl">Animais avaliados</div>
+      <div class="val">{{ overview.n_animals }}</div>
+    </div>
+    <div class="ecc-kpi-card blue">
+      <div class="ico-circle">📊</div>
+      <div class="lbl">ECC médio</div>
+      <div class="val">{{ '%.2f'|format(overview.ecc_mean) if overview.ecc_mean is not none else '—' }}</div>
+    </div>
+    <div class="ecc-kpi-card accent">
+      <div class="ico-circle">🎯</div>
+      <div class="lbl">% na faixa-alvo</div>
+      <div class="val">{{ '%.0f'|format(overview.pct_target) }}%</div>
+    </div>
+    <div class="ecc-kpi-card warn">
+      <div class="ico-circle">↓</div>
+      <div class="lbl">% abaixo da faixa</div>
+      <div class="val">{{ '%.0f'|format(overview.pct_below) }}%</div>
+    </div>
+    <div class="ecc-kpi-card danger">
+      <div class="ico-circle">↑</div>
+      <div class="lbl">% acima da faixa</div>
+      <div class="val">{{ '%.0f'|format(overview.pct_above) }}%</div>
+    </div>
+  </div>
+</div>
+
+{{ bcs_tabs('visao') }}
+
+<div class="ecc-overview-grid">
   <div>
-    <div class="page-title">📈 <span>Sistema de</span> <span style="color:var(--accent)">Análise ECC</span></div>
-    <div class="page-sub">Dataset separado do Perspicuus para escore de condição corporal (1.00–5.00, passo 0.25)</div>
-  </div>
-  <div class="flex gap-8">
-    <span class="pill pill-blue">{{ stats.total_records }} registros</span>
-    <span class="pill pill-orange">{{ stats.farms }} fazenda(s)</span>
-    <span class="pill pill-green">{{ stats.animals }} animal(is)</span>
-  </div>
-</div>
-
-{% with messages = get_flashed_messages(with_categories=true) %}
-  {% if messages %}
-    {% for category, message in messages %}
-      <div class="flash-bar {{ category }}">{{ message }}</div>
-    {% endfor %}
-  {% endif %}
-{% endwith %}
-
-<div class="grid-forms">
-  <div class="form-card">
-    <div class="card-title">Upload único / Mobile</div>
-    <p class="form-sub">Pipeline fixo ECC: <span class="mono">ObjId + Perspicuus</span>. Suba um arquivo ou capture na hora em dispositivo móvel.</p>
-    <form method="post" enctype="multipart/form-data">
-      <input type="hidden" name="mode" value="single">
-      <div class="row-2">
-        <div class="field">
-          <label>Fazenda</label>
-          <input name="farm_id" required placeholder="fazenda-001">
-        </div>
-        <div class="field">
-          <label>Data da inferência</label>
-          <input type="date" name="inference_date" required>
-        </div>
+    <div class="bcs-section">
+      <div class="bcs-section-head">
+        <div class="bcs-section-title"><span class="ico">📊</span> 1. Distribuição do ECC do rebanho</div>
+        <div class="bcs-section-sub">faixa-alvo {{ '%.2f'|format(overview.target_band.lo) }}–{{ '%.2f'|format(overview.target_band.hi) }}</div>
       </div>
-      <div class="field">
-        <label>Brinco do animal</label>
-        <input name="animal_tag" required placeholder="001">
+      <div class="bcs-section-body">
+        <div class="ecc-chart-wrap"><canvas id="ch-hist"></canvas></div>
       </div>
-      <div class="field">
-        <label>Imagem</label>
-        <input type="file" name="image" accept="image/*" capture="environment" required>
+    </div>
+
+    <div class="bcs-section">
+      <div class="bcs-section-head">
+        <div class="bcs-section-title"><span class="ico blue">📈</span> 2. ECC médio por fazenda</div>
+        <div class="bcs-section-sub">substitui "estágio de lactação" — usamos as fazendas como agrupamento disponível</div>
       </div>
-      <button class="btn btn-accent btn-sm" type="submit">Inferir e guardar</button>
-    </form>
+      <div class="bcs-section-body">
+        <div class="ecc-chart-wrap short"><canvas id="ch-farm-mean"></canvas></div>
+      </div>
+    </div>
+
+    <div class="bcs-section">
+      <div class="bcs-section-head">
+        <div class="bcs-section-title"><span class="ico">🎯</span> 3. % de animais na faixa-alvo por fazenda</div>
+        <div class="bcs-section-sub">substitui "por lote"</div>
+      </div>
+      <div class="bcs-section-body">
+        <div class="ecc-chart-wrap short"><canvas id="ch-farm-target"></canvas></div>
+      </div>
+    </div>
   </div>
 
-  <div class="form-card">
-    <div class="card-title">Upload em lote</div>
-    <p class="form-sub">Use o brinco como nome do arquivo (ex.: <span class="mono">1323.png</span>). Data única para todo o lote. Inferência sempre na vista posterior.</p>
-    <form method="post" enctype="multipart/form-data">
-      <input type="hidden" name="mode" value="batch">
-      <div class="row-2">
-        <div class="field">
-          <label>Fazenda</label>
-          <input name="farm_id_batch" required placeholder="fazenda-001">
-        </div>
-        <div class="field">
-          <label>Data da inferência (lote)</label>
-          <input type="date" name="inference_date_batch" required>
-        </div>
-      </div>
-      <div class="field">
-        <label>Arquivos</label>
-        <input type="file" name="images_batch" multiple accept=".jpg,.jpeg,.png,.webp" required>
-      </div>
-      <button class="btn btn-accent btn-sm" type="submit">Processar lote</button>
-    </form>
-  </div>
-</div>
-
-<div class="card mb-16">
-  <form method="get" class="filters-row">
-    <div class="field" style="margin:0">
-      <label>Fazenda (filtro)</label>
-      <select name="farm">
-        <option value="">Todas</option>
-        {% for f in farms %}
-        <option value="{{ f }}" {% if farm_filter == f %}selected{% endif %}>{{ f }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="field" style="margin:0">
-      <label>Brinco (filtro)</label>
-      <select name="animal">
-        <option value="">Todos</option>
-        {% for a in animals %}
-        <option value="{{ a }}" {% if animal_filter == a %}selected{% endif %}>{{ a }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="field" style="margin:0; min-width:220px">
-      <label>Busca livre</label>
-      <input name="q" value="{{ q_filter }}" placeholder="fazenda ou brinco">
-    </div>
-    <div class="flex gap-8">
-      <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
-      <a href="{{ url_for('ecc_analise') }}" class="btn btn-ghost btn-sm">Limpar</a>
-    </div>
-  </form>
-</div>
-
-<div class="chart-grid-ecc">
-  <div class="chart-card-ecc">
-    <div class="chart-head">
-      <div class="chart-title">Média + desvio padrão por fazenda</div>
-      <div class="chart-sub">ao longo do tempo (nº de animais em barras)</div>
-    </div>
-    <canvas id="ch-farm"></canvas>
-  </div>
-
-  <div class="chart-card-ecc">
-    <div class="chart-head">
-      <div class="chart-title">Evolução do escore por animal</div>
-      <div class="chart-sub">{{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
-    </div>
-    <canvas id="ch-animal"></canvas>
-  </div>
-</div>
-
-<div class="card">
-  <div class="card-title">Últimos registros (dataset ECC)</div>
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Data inf.</th><th>Fazenda</th><th>Brinco</th><th>Vista</th><th>ECC</th><th>Raw</th><th>Trait</th><th>Imagem</th><th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in records %}
-        <tr>
-          <td class="mono">{{ r.inference_date }}</td>
-          <td>{{ r.farm_id }}</td>
-          <td class="mono">{{ r.animal_tag }}</td>
-          <td class="mono">{{ r.view }}</td>
-          <td class="mono">{{ '%.2f' % r.ecc_score if r.ecc_score is not none else '—' }}</td>
-          <td class="mono">{{ '%.4f' % r.raw_score if r.raw_score is not none else '—' }}</td>
-          <td class="mono">{{ r.trait_name or '—' }}</td>
-          <td>
-            {% if r.thumb_path or r.image_path %}
-            <img class="thumb" src="{{ r.thumb_path or r.image_path }}" alt="ecc" onclick="window.open('{{ r.image_path }}')">
-            {% else %}
-            —
-            {% endif %}
-          </td>
-          <td class="mono" style="color:{% if r.error_text %}var(--err){% else %}var(--accent){% endif %}">
-            {{ r.error_text or 'ok' }}
-          </td>
-        </tr>
+  <aside>
+    <div class="ecc-insight-panel">
+      <div class="ecc-insight-head"><span>💡</span> Insights</div>
+      <ul class="ecc-insight-list">
+        {% for ins in insights %}
+        <li>
+          <div class="ico-circle">{{ ins.icon }}</div>
+          <p>{{ ins.text }}</p>
+        </li>
         {% else %}
-        <tr><td colspan="9"><div class="empty-state"><div class="icon">📈</div>Sem dados ECC ainda.</div></td></tr>
+        <li>
+          <div class="ico-circle">ℹ</div>
+          <p>Sem insights — colete mais inferências para o filtro atual.</p>
+        </li>
         {% endfor %}
-      </tbody>
-    </table>
-  </div>
+      </ul>
+    </div>
+  </aside>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-const FARM_SERIES = {{ farm_series | tojson }};
-const ANIMAL_POINTS = {{ animal_points | tojson }};
+const OV_HISTOGRAM = {{ overview.histogram | tojson }};
+const OV_FARM_BREAKDOWN = {{ overview.farm_breakdown | tojson }};
+const OV_TARGET = {{ overview.target_band | tojson }};
+const TICK_COLOR = '#5a6f82';
+const GRID_COLOR = '#dde4ed';
+const ACCENT = '#0d7a5e';
+const ACCENT2 = '#1a6fd4';
+const WARN = '#d9782b';
+const DANGER = '#c62841';
 
-const ECC_COLORS = ['#00e5a0', '#0099ff', '#ff9f40', '#cc66ff', '#ff4d6a', '#7dd3fc', '#a3e635'];
-const TZ_BR = 'America/Sao_Paulo';
-
-function groupedFarmSeries(rows) {
-  const out = {};
-  (rows || []).forEach((r) => {
-    const farm = r.farm_id || '—';
-    if (!out[farm]) out[farm] = [];
-    out[farm].push(r);
-  });
-  Object.keys(out).forEach((k) => out[k].sort((a, b) => String(a.date).localeCompare(String(b.date))));
-  return out;
+function fmtBucket(v) {
+  return Number(v).toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }
 
-function buildFarmChart() {
-  const c = document.getElementById('ch-farm');
-  if (!c) return;
-  const ctx = c.getContext('2d');
-  const byFarm = groupedFarmSeries(FARM_SERIES);
-  const datasets = [];
-  let i = 0;
-  Object.entries(byFarm).forEach(([farm, rows]) => {
-    const color = ECC_COLORS[i % ECC_COLORS.length];
-    i += 1;
-    datasets.push({
-      type: 'line',
-      label: `${farm} · média`,
-      data: rows.map((r) => ({ x: r.date, y: r.mean, n: r.n_animals, std: r.std })),
-      parsing: false,
-      borderColor: color,
-      backgroundColor: color,
-      tension: 0.3,
-      borderWidth: 2.2,
-      pointRadius: 2.5,
-      yAxisID: 'y',
-    });
-    datasets.push({
-      type: 'line',
-      label: `${farm} · desvio padrão`,
-      data: rows.map((r) => ({ x: r.date, y: r.std, n: r.n_animals })),
-      parsing: false,
-      borderColor: color + 'AA',
-      borderDash: [5, 4],
-      pointRadius: 0,
-      borderWidth: 1.4,
-      yAxisID: 'y1',
-    });
-    datasets.push({
-      type: 'bar',
-      label: `${farm} · # animais`,
-      data: rows.map((r) => ({ x: r.date, y: r.n_animals })),
-      parsing: false,
-      backgroundColor: color + '33',
-      borderColor: color + '66',
-      borderWidth: 1,
-      yAxisID: 'y2',
-      barPercentage: 0.65,
-      categoryPercentage: 0.8,
-    });
+function buildHistogram() {
+  const c = document.getElementById('ch-hist'); if (!c) return;
+  const total = (OV_HISTOGRAM || []).reduce((acc, b) => acc + (Number(b.count) || 0), 0);
+  const labels = (OV_HISTOGRAM || []).map((b) => Number(b.bucket).toFixed(2));
+  const pct = (OV_HISTOGRAM || []).map((b) => total > 0 ? Math.round(Number(b.count) * 1000 / total) / 10 : 0);
+  const inTarget = (Number(OV_TARGET.lo) || 0);
+  const inTargetMax = (Number(OV_TARGET.hi) || 0);
+  const colors = (OV_HISTOGRAM || []).map((b) => {
+    const v = Number(b.bucket);
+    if (v < inTarget - 0.001) return WARN;
+    if (v > inTargetMax + 0.001) return DANGER;
+    return ACCENT2;
   });
-  new Chart(ctx, {
-    data: { datasets },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'nearest', intersect: false },
-      plugins: {
-        legend: { labels: { color: '#5a6f82', font: { family: 'JetBrains Mono', size: 10 } } },
-        tooltip: {
-          backgroundColor: '#0c1820',
-          borderColor: '#dde4ed',
-          borderWidth: 1,
-          callbacks: {
-            title: (items) => items?.[0]?.raw?.x || '',
-            label: (ctx) => {
-              const y = ctx.raw?.y;
-              const n = ctx.raw?.n;
-              if (ctx.dataset.label.includes('média')) return `${ctx.dataset.label}: ${Number(y).toFixed(2)} (n=${n ?? '—'})`;
-              if (ctx.dataset.label.includes('desvio')) return `${ctx.dataset.label}: ${Number(y).toFixed(2)}`;
-              return `${ctx.dataset.label}: ${y}`;
-            },
-          },
-        },
-      },
-      scales: {
-        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#5a6f82' }, grid: { color: '#dde4ed' } },
-        y: { min: 1, max: 5, ticks: { color: '#5a6f82' }, grid: { color: '#dde4ed' }, title: { display: true, text: 'ECC médio' } },
-        y1: { position: 'right', min: 0, ticks: { color: '#5a6f82' }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Desvio padrão' } },
-        y2: { position: 'right', min: 0, ticks: { color: '#5a6f82', display: false }, grid: { drawOnChartArea: false }, display: false },
-      },
-    },
-  });
-}
-
-function buildAnimalChart() {
-  const c = document.getElementById('ch-animal');
-  if (!c) return;
-  const ctx = c.getContext('2d');
-  const ds = (ANIMAL_POINTS || []).map((r) => ({ x: r.inference_date, y: r.ecc_score, raw: r.raw_score }));
-  new Chart(ctx, {
-    type: 'line',
+  new Chart(c.getContext('2d'), {
+    type: 'bar',
     data: {
+      labels,
       datasets: [{
-        label: 'ECC (1-5, passo 0.25)',
-        data: ds,
-        parsing: false,
-        borderColor: '#00e5a0',
-        backgroundColor: 'rgba(0,229,160,.18)',
-        borderWidth: 2.4,
-        pointRadius: 3,
-        tension: 0.25,
-        fill: true,
+        label: '% animais',
+        data: pct,
+        backgroundColor: colors,
+        borderRadius: 6,
+        maxBarThickness: 30,
       }],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { labels: { color: '#5a6f82', font: { family: 'JetBrains Mono', size: 10 } } },
+        legend: { display: false },
         tooltip: {
           callbacks: {
-            title: (items) => items?.[0]?.raw?.x || '',
-            label: (ctx) => `ECC: ${Number(ctx.raw?.y).toFixed(2)} · raw: ${ctx.raw?.raw != null ? Number(ctx.raw.raw).toFixed(4) : '—'}`,
+            label: (ctx) => `${ctx.parsed.y}% (n=${OV_HISTOGRAM[ctx.dataIndex].count})`,
           },
         },
       },
       scales: {
-        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#5a6f82' }, grid: { color: '#dde4ed' } },
-        y: { min: 1, max: 5, ticks: { color: '#5a6f82', stepSize: 0.25 }, grid: { color: '#dde4ed' } },
+        x: {
+          ticks: { color: TICK_COLOR },
+          grid: { display: false },
+          title: { display: true, text: 'Escore de Condição Corporal (ECC)', color: TICK_COLOR },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: { color: TICK_COLOR, callback: (v) => v + '%' },
+          grid: { color: GRID_COLOR },
+          title: { display: true, text: '% de animais', color: TICK_COLOR },
+        },
+      },
+    },
+    plugins: [{
+      id: 'targetBand',
+      beforeDraw: (chart) => {
+        const { ctx, chartArea, scales } = chart;
+        if (!chartArea) return;
+        const x = scales.x;
+        const lo = Math.max(0, x.getPixelForValue(labels.indexOf(Number(OV_TARGET.lo).toFixed(2)) - 0.5));
+        const hi = Math.min(chartArea.right, x.getPixelForValue(labels.indexOf(Number(OV_TARGET.hi).toFixed(2)) + 0.5));
+        if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return;
+        ctx.save();
+        ctx.fillStyle = 'rgba(13,122,94,.10)';
+        ctx.fillRect(lo, chartArea.top, hi - lo, chartArea.bottom - chartArea.top);
+        ctx.strokeStyle = 'rgba(13,122,94,.55)';
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(lo, chartArea.top); ctx.lineTo(lo, chartArea.bottom);
+        ctx.moveTo(hi, chartArea.top); ctx.lineTo(hi, chartArea.bottom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = ACCENT;
+        ctx.font = '600 11px JetBrains Mono, monospace';
+        ctx.fillText(`Faixa-alvo: ${Number(OV_TARGET.lo).toFixed(2)} – ${Number(OV_TARGET.hi).toFixed(2)}`, lo + 6, chartArea.top + 14);
+        ctx.restore();
+      },
+    }],
+  });
+}
+
+function buildFarmMean() {
+  const c = document.getElementById('ch-farm-mean'); if (!c) return;
+  const rows = OV_FARM_BREAKDOWN || [];
+  if (!rows.length) {
+    c.replaceWith(Object.assign(document.createElement('div'), {
+      className: 'bcs-empty', textContent: 'Sem dados por fazenda.',
+    }));
+    return;
+  }
+  const labels = rows.map((r) => r.farm_id);
+  const data = rows.map((r) => r.mean);
+  new Chart(c.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'ECC médio',
+        data,
+        borderColor: ACCENT2,
+        backgroundColor: 'rgba(26,111,212,.18)',
+        borderWidth: 2.6,
+        pointRadius: 5,
+        pointBackgroundColor: ACCENT2,
+        tension: 0.25,
+        fill: false,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (ctx) => `ECC médio: ${Number(ctx.parsed.y).toFixed(2)} (n=${rows[ctx.dataIndex].n})` } },
+      },
+      scales: {
+        x: { ticks: { color: TICK_COLOR }, grid: { color: GRID_COLOR } },
+        y: { min: 1, max: 5, ticks: { color: TICK_COLOR, stepSize: 0.25 }, grid: { color: GRID_COLOR },
+             title: { display: true, text: 'ECC médio', color: TICK_COLOR } },
       },
     },
   });
 }
 
-buildFarmChart();
-buildAnimalChart();
+function buildFarmTarget() {
+  const c = document.getElementById('ch-farm-target'); if (!c) return;
+  const rows = OV_FARM_BREAKDOWN || [];
+  if (!rows.length) {
+    c.replaceWith(Object.assign(document.createElement('div'), {
+      className: 'bcs-empty', textContent: 'Sem dados de faixa-alvo por fazenda.',
+    }));
+    return;
+  }
+  const labels = rows.map((r) => r.farm_id);
+  const data = rows.map((r) => Number(r.pct_target || 0));
+  new Chart(c.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: '% na faixa-alvo',
+        data,
+        backgroundColor: 'rgba(26,111,212,.78)',
+        borderRadius: 6,
+        maxBarThickness: 36,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (ctx) => `${Number(ctx.parsed.y).toFixed(1)}% (n=${rows[ctx.dataIndex].n})` } },
+      },
+      scales: {
+        x: { ticks: { color: TICK_COLOR }, grid: { display: false } },
+        y: { beginAtZero: true, max: 100, ticks: { color: TICK_COLOR, callback: (v) => v + '%' },
+             grid: { color: GRID_COLOR }, title: { display: true, text: '% de vacas na faixa-alvo', color: TICK_COLOR } },
+      },
+    },
+  });
+}
+
+buildHistogram();
+buildFarmMean();
+buildFarmTarget();
 </script>
 {% endblock %}

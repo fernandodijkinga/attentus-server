@@ -1,39 +1,160 @@
 {% extends "base.html" %}
 {% from "_bcs_layout.html" import bcs_styles, bcs_tabs %}
-{% block title %}Perspicuus BCS — análise individual{% endblock %}
+{% block title %}ECC — Análise individual{% endblock %}
 
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 {{ bcs_styles() }}
 <style>
-.chart-wrap { position: relative; height: 320px; width: 100%; }
-.chart-wrap canvas { display: block; width: 100% !important; height: 100% !important; }
-.chart-empty {
-  min-height: 260px;
-  display: flex; align-items: center; justify-content: center;
-  color: var(--muted); font-family: var(--mono); font-size: 12px;
-  border: 1px dashed var(--border); border-radius: 10px;
-}
+.ecc-chart-wrap { position: relative; height: 280px; width: 100%; }
+.ecc-chart-wrap canvas { display: block; width: 100% !important; height: 100% !important; }
+.ecc-chart-wrap.short { height: 220px; }
 
-.ind-viewer {
+.ecc-grid-2 {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  grid-template-columns: 1fr 1fr;
   gap: 16px;
   margin-bottom: 16px;
 }
-@media (max-width: 1080px) { .ind-viewer { grid-template-columns: 1fr; } }
+@media (max-width: 1080px) { .ecc-grid-2 { grid-template-columns: 1fr; } }
+
+.animal-info-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 14px 0 0 0;
+}
+.info-card {
+  background: var(--surf);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 6px;
+  text-align: center;
+  box-shadow: var(--shadow-sm);
+}
+.info-card .ico-circle {
+  width: 36px; height: 36px;
+  border-radius: 999px;
+  background: rgba(26,111,212,.10);
+  color: var(--accent2);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 17px;
+  margin: 0 auto;
+}
+.info-card .lbl { font-family: var(--mono); font-size: 11px; letter-spacing: 1.4px;
+  text-transform: uppercase; color: var(--muted); }
+.info-card .val { font-family: var(--mono); font-weight: 700; font-size: 17px; color: var(--text); line-height: 1.05; }
+
+/* Gauge */
+.gauge-wrap {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0 12px;
+}
+.gauge-svg { width: 100%; max-width: 320px; height: auto; }
+.gauge-value {
+  font-family: var(--mono); font-weight: 800;
+  font-size: 36px; color: var(--text);
+  line-height: 1; margin-top: -28px;
+}
+.gauge-band {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--text2); margin-top: 4px;
+}
+.gauge-band.low { color: var(--err); }
+.gauge-band.high { color: var(--err); }
+.gauge-band.target { color: var(--accent); }
+.gauge-band.near { color: var(--warn); }
+
+/* Faixas (color scale) */
+.scale-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+  margin-top: 12px;
+}
+.scale-cell {
+  text-align: center;
+  padding: 6px 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: .3px;
+  border-radius: 4px;
+}
+.scale-cell.s1 { background: #1a4f8a; }
+.scale-cell.s2 { background: #2d7bbf; }
+.scale-cell.s3 { background: #0d7a5e; }
+.scale-cell.s4 { background: #2da5b3; }
+.scale-cell.s5 { background: #1f3a78; }
+.scale-axis {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text2);
+  margin-top: 4px;
+}
+.scale-axis span { text-align: center; }
+.scale-marker-row {
+  display: flex; justify-content: center; align-items: center;
+  margin-top: 10px;
+}
+.scale-marker {
+  position: relative;
+  width: 100%; height: 30px;
+}
+.scale-marker .pin {
+  position: absolute;
+  bottom: 0;
+  transform: translate(-50%, 0);
+  background: var(--accent2); color: #fff;
+  font-family: var(--mono); font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px; border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0,0,0,.18);
+  white-space: nowrap;
+}
+.scale-marker .pin::after {
+  content: '';
+  position: absolute;
+  top: -8px; left: 50%; transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-bottom-color: var(--accent2);
+}
+
+.summary-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
+.summary-list li { display: flex; align-items: flex-start; gap: 10px; }
+.summary-list .ico-circle {
+  width: 30px; height: 30px; border-radius: 999px;
+  background: rgba(26,111,212,.10); color: var(--accent2);
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; font-size: 13px;
+}
+.summary-list p { margin: 0; font-size: 12.5px; color: var(--text); line-height: 1.4; }
 
 .ind-photo-wrap {
   width: 100%;
-  height: min(60vh, 540px);
+  height: min(50vh, 380px);
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--surf2);
+  background: #0b121c;
   display: flex; align-items: center; justify-content: center;
   overflow: hidden;
   position: relative;
 }
-.ind-photo-wrap img { width: 100%; height: 100%; object-fit: contain; cursor: zoom-in; }
+.ind-photo-wrap img {
+  width: 100%; height: 100%;
+  object-fit: contain;
+  cursor: zoom-in;
+  display: block;
+}
 .ind-photo-empty {
   color: var(--muted); font-family: var(--mono); font-size: 12px;
 }
@@ -44,62 +165,12 @@
   padding: 4px 10px; border-radius: 8px;
   font-family: var(--mono); font-size: 11px;
 }
-
 .ind-carousel-controls {
-  margin-top: 12px;
+  margin-top: 10px;
   display: flex; justify-content: space-between; align-items: center; gap: 8px;
 }
 .ind-carousel-counter {
   font-family: var(--mono); font-size: 11px; color: var(--text2);
-}
-
-.ind-metric-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
-}
-.ind-metric {
-  border: 1px solid var(--border); border-radius: 12px;
-  padding: 12px 14px; background: var(--surf2);
-  display: flex; flex-direction: column; gap: 4px;
-}
-.ind-metric .k {
-  font-family: var(--mono); font-size: 10px; letter-spacing: 1.4px;
-  text-transform: uppercase; color: var(--muted);
-}
-.ind-metric .v {
-  font-family: var(--mono); font-size: 26px; font-weight: 700; color: var(--text);
-  line-height: 1.05;
-}
-.ind-metric.accent .v { color: var(--accent); }
-.ind-metric.blue .v { color: var(--accent2); }
-
-.ind-meta-list {
-  margin-top: 12px; display: grid; gap: 6px;
-  font-family: var(--mono); font-size: 11.5px; color: var(--text2);
-}
-.ind-meta-list .row { display: flex; gap: 8px; }
-.ind-meta-list .row b { color: var(--text); min-width: 70px; }
-
-.ind-score-bar-wrap { margin-top: 14px; }
-.ind-score-scale-head {
-  display: flex; justify-content: space-between;
-  font-family: var(--mono); color: var(--text2); font-size: 10px;
-  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px;
-}
-.ind-score-bar {
-  position: relative; height: 12px; border-radius: 999px;
-  border: 1px solid var(--border);
-  background: linear-gradient(90deg, #c62841 0%, #d9782b 28%, #0d7a5e 50%, #d9782b 72%, #c62841 100%);
-}
-.ind-score-marker {
-  position: absolute; top: -4px; width: 3px; height: 20px;
-  background: #ffffff; box-shadow: 0 0 0 1px rgba(0,0,0,.35);
-  transform: translateX(-50%); left: 50%;
-}
-.ind-score-desc {
-  margin-top: 10px;
-  font-family: var(--mono); font-size: 12px; color: var(--text);
-  border: 1px solid var(--border); border-radius: 8px;
-  padding: 8px 12px; background: var(--surf2);
 }
 </style>
 {% endblock %}
@@ -108,183 +179,178 @@
 <div class="bcs-hero">
   <div class="bcs-hero-top">
     <div>
-      <div class="bcs-hero-eyebrow">Perspicuus BCS · análise</div>
-      <h1 class="bcs-hero-title">Análise <em>individual</em> · brinco no tempo</h1>
+      <div class="bcs-hero-eyebrow">Perspicuus BCS · análise individual</div>
+      <h1 class="bcs-hero-title">Análise <em>individual</em> da vaca</h1>
       <p class="bcs-hero-sub">
-        Evolução do escore (1–5, passo 0.25) com galeria de fotos sincronizada e descrição da faixa.
+        Histórico do escore (1.00–5.00, passo 0.25), comparação com referências e descrição da faixa.
+        Faixa-alvo: {{ '%.2f'|format(target_band.lo) }}–{{ '%.2f'|format(target_band.hi) }}.
       </p>
     </div>
     <div class="bcs-hero-actions">
-      <a href="{{ url_for('ecc_analise_rebanho') }}" class="btn btn-ghost btn-sm">← Análise rebanho</a>
+      <form method="get" class="bcs-filter-row" style="margin:0">
+        <div class="field" style="margin:0; min-width:160px">
+          <label>Fazenda</label>
+          <select name="farm" onchange="this.form.submit()">
+            <option value="">Todas</option>
+            {% for f in farms %}
+            <option value="{{ f }}" {% if farm_filter == f %}selected{% endif %}>{{ f }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field" style="margin:0; min-width:200px">
+          <label>Brinco</label>
+          <select name="animal" onchange="this.form.submit()">
+            <option value="">Todos</option>
+            {% for a in animal_options %}
+            <option value="{{ a.animal_tag }}" {% if animal_filter == a.animal_tag %}selected{% endif %}>
+              {{ a.animal_tag }} ({{ a.n_inf }} inf.)
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field" style="margin:0; min-width:200px">
+          <label>Busca</label>
+          <input name="q" value="{{ q_filter }}" placeholder="fazenda ou brinco">
+        </div>
+        <div class="flex gap-8">
+          <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
+          <a href="{{ url_for('ecc_analise_individual') }}" class="btn btn-ghost btn-sm">Limpar</a>
+        </div>
+      </form>
     </div>
   </div>
 
-  <div class="bcs-kpi-strip">
-    <div class="bcs-kpi accent">
-      <div class="lbl"><span class="ico">📚</span> Registros totais</div>
-      <div class="val">{{ stats.total_records }}</div>
+  <div class="animal-info-strip">
+    <div class="info-card">
+      <div class="ico-circle">🐄</div>
+      <div class="lbl">Animal</div>
+      <div class="val">{{ selected_animal or '—' }}</div>
     </div>
-    <div class="bcs-kpi blue">
-      <div class="lbl"><span class="ico">🏡</span> Fazendas</div>
-      <div class="val">{{ stats.farms }}</div>
+    <div class="info-card">
+      <div class="ico-circle">🏡</div>
+      <div class="lbl">Fazenda</div>
+      <div class="val">{{ selected_farm or '—' }}</div>
     </div>
-    <div class="bcs-kpi orange">
-      <div class="lbl"><span class="ico">🐂</span> Animais</div>
-      <div class="val">{{ stats.animals }}</div>
+    <div class="info-card">
+      <div class="ico-circle">🗓</div>
+      <div class="lbl">Última inferência</div>
+      <div class="val">{{ animal_summary.last_date if animal_summary else '—' }}</div>
+    </div>
+    <div class="info-card">
+      <div class="ico-circle">📚</div>
+      <div class="lbl">Inferências</div>
+      <div class="val">{{ animal_summary.n if animal_summary else 0 }}</div>
+    </div>
+    <div class="info-card">
+      <div class="ico-circle">📊</div>
+      <div class="lbl">ECC médio</div>
+      <div class="val">{{ '%.2f'|format(animal_summary.mean) if animal_summary and animal_summary.mean is not none else '—' }}</div>
+    </div>
+    <div class="info-card">
+      <div class="ico-circle">📈</div>
+      <div class="lbl">Status</div>
+      <div class="val">{{ animal_summary.band_label if animal_summary else '—' }}</div>
     </div>
   </div>
 </div>
 
 {{ bcs_tabs('individual') }}
 
-<div class="bcs-section">
-  <div class="bcs-section-head">
-    <div class="bcs-section-title"><span class="ico">🔎</span> Selecionar animal</div>
-    <div class="bcs-section-sub">{{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
-  </div>
-  <div class="bcs-section-body">
-    <form method="get" class="bcs-filter-row">
-      <div class="field">
-        <label>Fazenda</label>
-        <select name="farm">
-          <option value="">Todas</option>
-          {% for f in farms %}
-          <option value="{{ f }}" {% if farm_filter == f %}selected{% endif %}>{{ f }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="field">
-        <label>Brinco</label>
-        <select name="animal">
-          <option value="">Todos</option>
-          {% for a in animal_options %}
-          <option value="{{ a.animal_tag }}" {% if animal_filter == a.animal_tag %}selected{% endif %}>
-            {{ a.animal_tag }} ({{ a.n_inf }} inf.)
-          </option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="field" style="min-width:220px">
-        <label>Busca</label>
-        <input name="q" value="{{ q_filter }}" placeholder="fazenda ou brinco">
-      </div>
-      <div class="flex gap-8">
-        <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
-        <a href="{{ url_for('ecc_analise_individual') }}" class="btn btn-ghost btn-sm">Limpar</a>
-      </div>
-    </form>
-  </div>
-</div>
-
-<div class="bcs-section">
-  <div class="bcs-section-head">
-    <div class="bcs-section-title"><span class="ico">📈</span> Evolução do escore</div>
-    <div class="bcs-section-sub">1 ponto por dia (última inferência)</div>
-  </div>
-  <div class="bcs-section-body">
-    <div class="chart-wrap" id="ch-animal-wrap"><canvas id="ch-animal"></canvas></div>
-  </div>
-</div>
-
-<div class="ind-viewer">
+<div class="ecc-grid-2">
   <div class="bcs-section" style="margin-bottom:0">
     <div class="bcs-section-head">
-      <div class="bcs-section-title"><span class="ico blue">🖼</span> Imagens do animal</div>
-      <div class="bcs-section-sub">com bbox quando disponível</div>
+      <div class="bcs-section-title"><span class="ico">🎯</span> ECC atual</div>
+      <div class="bcs-section-sub">faixa-alvo {{ '%.2f'|format(target_band.lo) }}–{{ '%.2f'|format(target_band.hi) }}</div>
     </div>
     <div class="bcs-section-body">
-      <div class="ind-photo-wrap">
-        <img id="ecc-carousel-image" alt="Imagem ECC do animal" style="display:none">
-        <div id="ecc-carousel-empty" class="ind-photo-empty">Sem imagens para este animal.</div>
-        <div id="ecc-photo-overlay" class="ind-photo-overlay" style="display:none"></div>
-      </div>
-      <div class="ind-carousel-controls">
-        <button id="ecc-prev" class="btn btn-ghost btn-sm" type="button">← Anterior</button>
-        <div id="ecc-counter" class="ind-carousel-counter">0 / 0</div>
-        <button id="ecc-next" class="btn btn-ghost btn-sm" type="button">Próxima →</button>
-      </div>
+      <div id="gauge-wrap" class="gauge-wrap"></div>
     </div>
   </div>
 
   <div class="bcs-section" style="margin-bottom:0">
     <div class="bcs-section-head">
-      <div class="bcs-section-title"><span class="ico">🎯</span> Escores da imagem</div>
-      <div id="ecc-score-date" class="bcs-section-sub">—</div>
+      <div class="bcs-section-title"><span class="ico blue">📈</span> 1. Histórico de ECC</div>
+      <div class="bcs-section-sub">1 ponto por dia (última inferência)</div>
     </div>
     <div class="bcs-section-body">
-      <div class="ind-metric-grid">
-        <div class="ind-metric blue">
-          <div class="k">Raw</div>
-          <div id="ecc-raw-value" class="v">—</div>
-        </div>
-        <div class="ind-metric accent">
-          <div class="k">ECC (1–5)</div>
-          <div id="ecc-score-value" class="v">—</div>
-        </div>
-      </div>
-
-      <div class="ind-score-bar-wrap">
-        <div class="ind-score-scale-head"><span>1.00</span><span>3.00</span><span>5.00</span></div>
-        <div class="ind-score-bar">
-          <div id="ecc-score-marker" class="ind-score-marker"></div>
-        </div>
-        <div id="ecc-score-desc" class="ind-score-desc">Descrição do escore: —</div>
-      </div>
-
-      <div class="ind-meta-list">
-        <div class="row"><b>ID:</b> <span id="ecc-record-id">—</span></div>
-        <div class="row"><b>Arquivo:</b> <span id="ecc-filename">—</span></div>
-        <div class="row"><b>Status:</b> <span id="ecc-status">—</span></div>
-      </div>
+      <div class="ecc-chart-wrap" id="ch-animal-wrap"><canvas id="ch-animal"></canvas></div>
     </div>
   </div>
 </div>
 
-<div class="bcs-section">
-  <div class="bcs-section-head">
-    <div class="bcs-section-title"><span class="ico">🗂</span> Registros do filtro</div>
-    <div class="bcs-section-sub">brinco · data · escore</div>
+<div class="ecc-grid-2">
+  <div class="bcs-section" style="margin-bottom:0">
+    <div class="bcs-section-head">
+      <div class="bcs-section-title"><span class="ico">📊</span> 2. Comparação com referências</div>
+      <div class="bcs-section-sub">animal · fazenda · rebanho · meta</div>
+    </div>
+    <div class="bcs-section-body">
+      <div class="ecc-chart-wrap short"><canvas id="ch-compare"></canvas></div>
+    </div>
   </div>
-  <div class="bcs-section-body tight">
-    <div class="bcs-table">
-      <table>
-        <thead>
-          <tr>
-            <th>Data</th>
-            <th>Fazenda</th>
-            <th>Brinco</th>
-            <th class="num">ECC</th>
-            <th class="num">Raw</th>
-            <th>Trait</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for r in records %}
-        <tr>
-          <td class="mono">{{ r.inference_date }}</td>
-          <td>{{ r.farm_id }}</td>
-          <td class="mono"><strong>{{ r.animal_tag }}</strong></td>
-          <td class="num">{{ '%.2f' % r.ecc_score if r.ecc_score is not none else '—' }}</td>
-          <td class="num">{{ '%.4f' % r.raw_score if r.raw_score is not none else '—' }}</td>
-          <td class="mono">{{ r.trait_name or '—' }}</td>
-          <td>
-            {% if r.error_text %}
-            <span class="bcs-status-pill err">{{ r.error_text }}</span>
-            {% else %}
-            <span class="bcs-status-pill ok">ok</span>
-            {% endif %}
-          </td>
-          <td>
-            <a class="btn btn-ghost btn-sm" href="{{ url_for('ecc_analise_individual', farm=r.farm_id, animal=r.animal_tag) }}">Ver animal</a>
-          </td>
-        </tr>
+
+  <div class="bcs-section" style="margin-bottom:0">
+    <div class="bcs-section-head">
+      <div class="bcs-section-title"><span class="ico orange">📝</span> Resumo individual</div>
+      <div class="bcs-section-sub">indicadores observados</div>
+    </div>
+    <div class="bcs-section-body">
+      <ul class="summary-list">
+        {% for ins in animal_insights %}
+        <li>
+          <div class="ico-circle">{{ ins.icon }}</div>
+          <p>{{ ins.text }}</p>
+        </li>
         {% else %}
-        <tr><td colspan="8"><div class="bcs-empty"><div class="icon">📈</div>Sem dados.</div></td></tr>
+        <li>
+          <div class="ico-circle">ℹ</div>
+          <p>Selecione fazenda e brinco para ver a análise individual.</p>
+        </li>
         {% endfor %}
-        </tbody>
-      </table>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="bcs-section">
+  <div class="bcs-section-head">
+    <div class="bcs-section-title"><span class="ico blue">🖼</span> Imagens do animal</div>
+    <div class="bcs-section-sub">com bbox quando disponível</div>
+  </div>
+  <div class="bcs-section-body">
+    <div class="ind-photo-wrap">
+      <img id="ecc-carousel-image" alt="Imagem ECC do animal" style="display:none">
+      <div id="ecc-carousel-empty" class="ind-photo-empty">Sem imagens para este animal.</div>
+      <div id="ecc-photo-overlay" class="ind-photo-overlay" style="display:none"></div>
+    </div>
+    <div class="ind-carousel-controls">
+      <button id="ecc-prev" class="btn btn-ghost btn-sm" type="button">← Anterior</button>
+      <div id="ecc-counter" class="ind-carousel-counter">0 / 0</div>
+      <button id="ecc-next" class="btn btn-ghost btn-sm" type="button">Próxima →</button>
+    </div>
+  </div>
+</div>
+
+<div class="bcs-section">
+  <div class="bcs-section-head">
+    <div class="bcs-section-title"><span class="ico">📐</span> Faixas de ECC</div>
+    <div class="bcs-section-sub">posição do animal na escala 1.00–5.00</div>
+  </div>
+  <div class="bcs-section-body">
+    <div class="scale-row">
+      <div class="scale-cell s1">Muito baixo</div>
+      <div class="scale-cell s2">Baixo</div>
+      <div class="scale-cell s3">Adequado</div>
+      <div class="scale-cell s4">Alto</div>
+      <div class="scale-cell s5">Muito alto</div>
+    </div>
+    <div class="scale-axis">
+      <span>1.5</span><span>2.0</span><span>2.5 – 2.75</span><span>3.5 – 4.0</span><span>4.5</span>
+    </div>
+    <div class="scale-marker-row">
+      <div class="scale-marker" id="scale-marker-track">
+        <div class="pin" id="scale-marker-pin">{{ '%.2f'|format(animal_summary.last_score) if animal_summary and animal_summary.last_score is not none else '—' }}</div>
+      </div>
     </div>
   </div>
 </div>
@@ -294,91 +360,176 @@
 <script>
 const ANIMAL_POINTS = {{ animal_points | tojson }};
 const ANIMAL_IMAGES = {{ animal_images | tojson }};
+const ANIMAL_SUMMARY = {{ animal_summary | tojson }};
+const TARGET = {{ target_band | tojson }};
 
-function normInfDay(d) {
-  if (d == null || d === '') return '';
-  const s = String(d).trim();
-  if (s.length >= 10) return s.slice(0, 10);
-  return s;
+const TICK_COLOR = '#5a6f82';
+const GRID_COLOR = '#dde4ed';
+const ACCENT = '#0d7a5e';
+const ACCENT2 = '#1a6fd4';
+const WARN = '#d9782b';
+const DANGER = '#c62841';
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function fmtNum(v, d) {
+  if (v === null || v === undefined || v === '') return '—';
+  const n = Number(v);
+  return Number.isFinite(n) ? n.toFixed(d) : '—';
+}
+function quarterKey(v) {
+  if (v === null || v === undefined || v === '' || Number.isNaN(Number(v))) return null;
+  return (Math.round(Number(v) * 4) / 4).toFixed(2);
+}
+const ECC_LABELS = {
+  '1.00': 'Caquética', '1.25': 'Muito magra crítica', '1.50': 'Muito magra',
+  '1.75': 'Magra acentuada', '2.00': 'Magra', '2.25': 'Magra moderada',
+  '2.50': 'Levemente magra', '2.75': 'Quase ideal', '3.00': 'Ideal',
+  '3.25': 'Ideal alta', '3.50': 'Levemente gorda', '3.75': 'Gorda moderada',
+  '4.00': 'Gorda', '4.25': 'Gorda alta', '4.50': 'Muito gorda',
+  '4.75': 'Obesa', '5.00': 'Obesa severa',
+};
+
+// ---- Gauge SVG (1.0 – 5.0)
+function buildGauge() {
+  const wrap = document.getElementById('gauge-wrap');
+  if (!wrap) return;
+  const score = ANIMAL_SUMMARY ? Number(ANIMAL_SUMMARY.last_score) : NaN;
+  const band = ANIMAL_SUMMARY ? (ANIMAL_SUMMARY.band || 'near') : 'near';
+  const bandLabel = ANIMAL_SUMMARY ? (ANIMAL_SUMMARY.band_label || '—') : '—';
+  const valid = Number.isFinite(score);
+
+  // Geometria semicírculo
+  const W = 320, H = 200;
+  const cx = W / 2, cy = H * 0.92, r = 120;
+  const arcs = [
+    { from: 1.00, to: 2.50, color: '#1a4f8a' }, // muito baixo / baixo (azul escuro)
+    { from: 2.50, to: 2.75, color: '#2d7bbf' }, // próximo do alvo
+    { from: 2.75, to: 3.50, color: '#0d7a5e' }, // alvo (verde)
+    { from: 3.50, to: 3.75, color: '#2da5b3' }, // próximo (alta)
+    { from: 3.75, to: 5.00, color: '#1f3a78' }, // muito alto
+  ];
+  function angleFor(v) {
+    const t = (clamp(v, 1, 5) - 1) / 4;
+    return Math.PI - t * Math.PI; // 180 -> 0 deg em radianos
+  }
+  function arcPath(a1, a2) {
+    const x1 = cx + r * Math.cos(a1);
+    const y1 = cy - r * Math.sin(a1);
+    const x2 = cx + r * Math.cos(a2);
+    const y2 = cy - r * Math.sin(a2);
+    const large = (a1 - a2) > Math.PI ? 1 : 0;
+    return `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`;
+  }
+
+  const arcsSvg = arcs.map((s) => {
+    const a1 = angleFor(s.from);
+    const a2 = angleFor(s.to);
+    return `<path d="${arcPath(a1, a2)}" stroke="${s.color}" stroke-width="22" fill="none" stroke-linecap="butt"/>`;
+  }).join('');
+
+  // Faixa-alvo destaque
+  const ta1 = angleFor(TARGET.lo);
+  const ta2 = angleFor(TARGET.hi);
+  const targetHighlight = `<path d="${arcPath(ta1, ta2)}" stroke="rgba(13,122,94,.55)" stroke-width="6" fill="none" stroke-linecap="butt" stroke-dasharray="4 3"/>`;
+
+  // Ticks principais
+  const ticks = [1.5, 2.5, 3.5, 4.5];
+  const ticksSvg = ticks.map((v) => {
+    const a = angleFor(v);
+    const x1 = cx + (r - 14) * Math.cos(a);
+    const y1 = cy - (r - 14) * Math.sin(a);
+    const x2 = cx + (r + 8) * Math.cos(a);
+    const y2 = cy - (r + 8) * Math.sin(a);
+    const lx = cx + (r + 22) * Math.cos(a);
+    const ly = cy - (r + 22) * Math.sin(a);
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#5a6f82" stroke-width="1.4"/>` +
+           `<text x="${lx}" y="${ly}" fill="#5a6f82" font-family="JetBrains Mono, monospace" font-size="11" text-anchor="middle" alignment-baseline="middle">${v.toFixed(1)}</text>`;
+  }).join('');
+
+  // Ponteiro
+  let pointerSvg = '';
+  if (valid) {
+    const a = angleFor(score);
+    const px = cx + (r - 4) * Math.cos(a);
+    const py = cy - (r - 4) * Math.sin(a);
+    pointerSvg = `<line x1="${cx}" y1="${cy}" x2="${px}" y2="${py}" stroke="#1f3a78" stroke-width="4" stroke-linecap="round"/>` +
+                 `<circle cx="${cx}" cy="${cy}" r="6" fill="#1f3a78"/>`;
+  }
+
+  wrap.innerHTML = `
+    <svg class="gauge-svg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+      ${arcsSvg}
+      ${targetHighlight}
+      ${ticksSvg}
+      ${pointerSvg}
+    </svg>
+    <div class="gauge-value">${valid ? score.toFixed(2) : '—'}</div>
+    <div class="gauge-band ${band}">${bandLabel}</div>
+  `;
+
+  // Atualiza pin da escala
+  const pin = document.getElementById('scale-marker-pin');
+  const track = document.getElementById('scale-marker-track');
+  if (pin && track) {
+    const v = valid ? clamp(score, 1, 5) : null;
+    if (v !== null) {
+      const pct = (v - 1) / 4 * 100;
+      pin.style.left = `${pct}%`;
+      pin.textContent = `Animal: ${v.toFixed(2)}`;
+    } else {
+      pin.style.left = '50%';
+      pin.textContent = '—';
+    }
+  }
 }
 
-function buildIndividualTimeSeries(points) {
-  const arr = [...(points || [])].sort((a, b) => {
+function buildHistoryChart() {
+  const wrap = document.getElementById('ch-animal-wrap');
+  const c = document.getElementById('ch-animal'); if (!c) return;
+  const pts = ANIMAL_POINTS || [];
+  if (!pts.length) {
+    if (wrap) {
+      wrap.innerHTML = '<div class="bcs-empty">Sem evolução ECC: selecione fazenda e brinco com registo, ou ainda sem pontos com escore.</div>';
+    }
+    return;
+  }
+  const arr = [...pts].sort((a, b) => {
     const da = String(a.inference_date || '').localeCompare(String(b.inference_date || ''));
     if (da !== 0) return da;
     return (Number(a.id) || 0) - (Number(b.id) || 0);
   });
   const byDay = new Map();
   arr.forEach((p) => {
-    const d = normInfDay(p.inference_date);
+    const d = String(p.inference_date || '').slice(0, 10);
     if (d) byDay.set(d, p);
   });
   const labels = [...byDay.keys()].sort();
   const rowAt = labels.map((d) => byDay.get(d));
-  return { labels, rowAt };
-}
-
-const ECC_LABELS = {
-  '1.00': 'Caquética',
-  '1.25': 'Muito magra crítica',
-  '1.50': 'Muito magra',
-  '1.75': 'Magra acentuada',
-  '2.00': 'Magra',
-  '2.25': 'Magra moderada',
-  '2.50': 'Levemente magra',
-  '2.75': 'Quase ideal',
-  '3.00': 'Ideal',
-  '3.25': 'Ideal alta',
-  '3.50': 'Levemente gorda',
-  '3.75': 'Gorda moderada',
-  '4.00': 'Gorda',
-  '4.25': 'Gorda alta',
-  '4.50': 'Muito gorda',
-  '4.75': 'Obesa',
-  '5.00': 'Obesa severa',
-};
-
-function buildAnimalChart() {
-  const wrap = document.getElementById('ch-animal-wrap');
-  const c = document.getElementById('ch-animal');
-  if (!c) return;
-  const { labels, rowAt } = buildIndividualTimeSeries(ANIMAL_POINTS);
-  if (!labels.length) {
-    if (wrap) {
-      wrap.innerHTML = '<div class="chart-empty">Sem evolução ECC: selecione fazenda e brinco com registo, ou ainda sem pontos com escore.</div>';
-    }
-    return;
-  }
-  const ctx = c.getContext('2d');
   const data = rowAt.map((p) => (p && p.ecc_score != null && Number.isFinite(Number(p.ecc_score)) ? Number(p.ecc_score) : null));
-  new Chart(ctx, {
+  new Chart(c.getContext('2d'), {
     type: 'line',
     data: {
       labels,
-      datasets: [
-        {
-          label: 'ECC (1–5, passo 0.25)',
-          data,
-          borderColor: '#0d7a5e',
-          backgroundColor: 'rgba(13,122,94,.18)',
-          borderWidth: 2.6,
-          pointRadius: 4,
-          pointHoverRadius: 6,
-          tension: 0.22,
-          fill: true,
-          spanGaps: true,
-        },
-      ],
+      datasets: [{
+        label: 'ECC',
+        data,
+        borderColor: ACCENT2,
+        backgroundColor: 'rgba(26,111,212,.18)',
+        borderWidth: 2.6,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        tension: 0.22,
+        fill: true,
+        spanGaps: true,
+      }],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { labels: { color: '#5a6f82', font: { family: 'JetBrains Mono', size: 10 } } },
+        legend: { display: false },
         tooltip: {
           callbacks: {
-            title: (items) => items[0]?.label || '',
             label: (ctx) => {
               const p = rowAt[ctx.dataIndex];
               if (!p) return '—';
@@ -390,23 +541,73 @@ function buildAnimalChart() {
         },
       },
       scales: {
-        x: { type: 'category', ticks: { color: '#5a6f82', maxRotation: 40, maxTicksLimit: 24 }, grid: { color: '#dde4ed' } },
-        y: { min: 1, max: 5, ticks: { color: '#5a6f82', stepSize: 0.25 }, grid: { color: '#dde4ed' } },
+        x: { ticks: { color: TICK_COLOR, maxRotation: 40, maxTicksLimit: 24 }, grid: { color: GRID_COLOR } },
+        y: { min: 1, max: 5, ticks: { color: TICK_COLOR, stepSize: 0.25 }, grid: { color: GRID_COLOR } },
       },
     },
   });
 }
-buildAnimalChart();
 
-function fmtNum(v, d) {
-  if (v === null || v === undefined || v === '') return '—';
-  const n = Number(v);
-  return Number.isFinite(n) ? n.toFixed(d) : '—';
-}
-function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
-function quarterKey(v) {
-  if (v === null || v === undefined || v === '' || Number.isNaN(Number(v))) return null;
-  return (Math.round(Number(v) * 4) / 4).toFixed(2);
+function buildCompareChart() {
+  const c = document.getElementById('ch-compare'); if (!c) return;
+  const cmp = (ANIMAL_SUMMARY && ANIMAL_SUMMARY.comparison) || {};
+  const labels = ['Animal', 'Fazenda', 'Rebanho', 'Meta'];
+  const data = [cmp.animal_mean, cmp.farm_mean, cmp.herd_mean, cmp.target].map((v) => (v == null ? null : Number(v)));
+  if (data.every((v) => v == null)) {
+    c.replaceWith(Object.assign(document.createElement('div'), {
+      className: 'bcs-empty', textContent: 'Sem comparação disponível para o filtro atual.',
+    }));
+    return;
+  }
+  const colors = ['#1a6fd4', '#2da5b3', '#0d7a5e', '#3aa776'];
+  new Chart(c.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'ECC médio',
+        data,
+        backgroundColor: colors,
+        borderRadius: 6,
+        maxBarThickness: 60,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.label}: ${ctx.parsed.y == null ? '—' : Number(ctx.parsed.y).toFixed(2)}` } },
+      },
+      scales: {
+        x: { ticks: { color: TICK_COLOR }, grid: { display: false } },
+        y: { min: 1, max: 5, ticks: { color: TICK_COLOR, stepSize: 0.25 }, grid: { color: GRID_COLOR },
+             title: { display: true, text: 'ECC médio', color: TICK_COLOR } },
+      },
+    },
+    plugins: [{
+      id: 'targetLine',
+      afterDraw: (chart) => {
+        const { ctx, chartArea, scales } = chart;
+        if (!chartArea) return;
+        const yLo = scales.y.getPixelForValue(Number(TARGET.lo));
+        const yHi = scales.y.getPixelForValue(Number(TARGET.hi));
+        ctx.save();
+        ctx.fillStyle = 'rgba(13,122,94,.10)';
+        ctx.fillRect(chartArea.left, yHi, chartArea.right - chartArea.left, yLo - yHi);
+        ctx.strokeStyle = 'rgba(13,122,94,.6)';
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.moveTo(chartArea.left, yLo); ctx.lineTo(chartArea.right, yLo);
+        ctx.moveTo(chartArea.left, yHi); ctx.lineTo(chartArea.right, yHi);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = ACCENT;
+        ctx.font = '600 11px JetBrains Mono, monospace';
+        ctx.fillText(`Faixa-alvo: ${Number(TARGET.lo).toFixed(2)} – ${Number(TARGET.hi).toFixed(2)}`, chartArea.left + 6, yHi - 4);
+        ctx.restore();
+      },
+    }],
+  });
 }
 
 function initAnimalCarousel() {
@@ -416,19 +617,9 @@ function initAnimalCarousel() {
   const prevBtn = document.getElementById('ecc-prev');
   const nextBtn = document.getElementById('ecc-next');
   const counter = document.getElementById('ecc-counter');
-  const rawEl = document.getElementById('ecc-raw-value');
-  const scoreEl = document.getElementById('ecc-score-value');
-  const dateEl = document.getElementById('ecc-score-date');
-  const idEl = document.getElementById('ecc-record-id');
-  const fileEl = document.getElementById('ecc-filename');
-  const statusEl = document.getElementById('ecc-status');
-  const markerEl = document.getElementById('ecc-score-marker');
-  const descEl = document.getElementById('ecc-score-desc');
   if (!imgEl || !prevBtn || !nextBtn) return;
-
   const rows = Array.isArray(ANIMAL_IMAGES) ? ANIMAL_IMAGES : [];
   let idx = 0;
-
   function render() {
     const n = rows.length;
     counter.textContent = `${n ? idx + 1 : 0} / ${n}`;
@@ -438,14 +629,6 @@ function initAnimalCarousel() {
       imgEl.style.display = 'none';
       emptyEl.style.display = 'block';
       overlayEl.style.display = 'none';
-      rawEl.textContent = '—';
-      scoreEl.textContent = '—';
-      dateEl.textContent = '—';
-      idEl.textContent = '—';
-      fileEl.textContent = '—';
-      statusEl.textContent = '—';
-      if (markerEl) markerEl.style.left = '50%';
-      if (descEl) descEl.textContent = 'Descrição do escore: —';
       return;
     }
     const r = rows[idx];
@@ -462,26 +645,7 @@ function initAnimalCarousel() {
     const eccFmt = fmtNum(r.ecc_score, 2);
     overlayEl.textContent = `${r.inference_date || '—'} · ECC ${eccFmt}`;
     overlayEl.style.display = 'block';
-    rawEl.textContent = fmtNum(r.raw_score, 4);
-    scoreEl.textContent = eccFmt;
-    dateEl.textContent = r.inference_date || '—';
-    idEl.textContent = r.id != null ? String(r.id) : '—';
-    fileEl.textContent = r.filename || '—';
-    statusEl.textContent = r.error_text || 'ok';
-    const eccNum = Number(r.ecc_score);
-    if (markerEl && Number.isFinite(eccNum)) {
-      const pct = ((clamp(eccNum, 1, 5) - 1) / 4) * 100;
-      markerEl.style.left = `${pct}%`;
-    } else if (markerEl) {
-      markerEl.style.left = '50%';
-    }
-    if (descEl) {
-      const key = quarterKey(r.ecc_score);
-      const label = key ? (ECC_LABELS[key] || 'Sem classificação') : '—';
-      descEl.textContent = `Faixa (${key || '—'}): ${label}`;
-    }
   }
-
   prevBtn.addEventListener('click', () => {
     if (!rows.length) return;
     idx = (idx - 1 + rows.length) % rows.length;
@@ -498,6 +662,10 @@ function initAnimalCarousel() {
   });
   render();
 }
+
+buildGauge();
+buildHistoryChart();
+buildCompareChart();
 initAnimalCarousel();
 </script>
 {% endblock %}
