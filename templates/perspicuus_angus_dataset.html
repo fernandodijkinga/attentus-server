@@ -6,6 +6,14 @@
 .thumb{width:64px;height:48px;object-fit:cover;border:1px solid var(--border);border-radius:6px;cursor:zoom-in}
 @media (max-width:1024px){.filters-grid{grid-template-columns:1fr 1fr}}
 @media (max-width:640px){.filters-grid{grid-template-columns:1fr}}
+.reprocess-progress{margin-top:12px;display:none;max-width:720px}
+.reprocess-progress.visible{display:block}
+.reprocess-progress-track{height:10px;border-radius:999px;background:var(--surf2);border:1px solid var(--border);overflow:hidden}
+.reprocess-progress-bar{height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--accent));transition:width .2s ease}
+.reprocess-progress-meta{font-family:var(--mono);font-size:11px;color:var(--text2);margin-top:6px}
+.reprocess-log{max-height:120px;overflow-y:auto;margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-family:var(--mono);font-size:10px;line-height:1.45}
+.reprocess-log .ok{color:var(--accent)}
+.reprocess-log .err{color:var(--err)}
 </style>
 {% endblock %}
 {% block content %}
@@ -32,8 +40,15 @@
     <div class="field"><label>Busca</label><input name="q" value="{{ q_filter }}" placeholder="fazenda, brinco, arquivo"></div>
     <div class="field"><label>&nbsp;</label><button class="btn btn-ghost btn-sm" type="submit">Filtrar</button></div>
   </form>
-  <div class="flex gap-8">
-    <button class="btn btn-accent btn-sm" id="btnReprocessAll">Reprocessar todos os animais</button>
+  <p class="page-sub" style="margin:0 0 8px;font-size:11px;color:var(--text2)">XLSX inclui brinco, fazenda, lote, nascimento, sexo, raw, escores lote/global (1–9), URLs de mídia, traits (resumo + JSON), meta da inferência e erro. Limite padrão 50&nbsp;000 linhas (<span class="mono">ANGUS_DATASET_XLSX_MAX</span>).</p>
+  <div class="flex gap-8" style="flex-wrap:wrap;align-items:flex-start">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('download_perspicuus_angus_dataset_xlsx', farm=farm_filter, animal=animal_filter, q=q_filter) }}">Baixar XLSX (filtros)</a>
+    <button class="btn btn-accent btn-sm" id="btnReprocessAll" type="button">Reprocessar todos os animais</button>
+    <div id="angus-reprocess-progress" class="reprocess-progress" aria-live="polite">
+      <div class="reprocess-progress-track"><div id="angus-reprocess-bar" class="reprocess-progress-bar"></div></div>
+      <div id="angus-reprocess-meta" class="reprocess-progress-meta"></div>
+      <div id="angus-reprocess-log" class="reprocess-log"></div>
+    </div>
   </div>
 </div>
 
@@ -103,19 +118,95 @@ async function deleteRow(id){
   toast('Registro excluído');
 }
 
+const ANGUS_REPROCESS_QUEUE_URL = {{ url_for('api_perspicuus_angus_reprocess_queue') | tojson }};
+const ANGUS_REPROCESS_ITEM_URL = {{ url_for('api_perspicuus_angus_reprocess_item') | tojson }};
+
 document.getElementById('btnReprocessAll')?.addEventListener('click', async () => {
-  if(!confirm('Reprocessar todos os animais Angus nos filtros atuais?')) return;
+  if (!confirm('Reprocessar todos os registros Angus que correspondem ao filtro de fazenda na URL (um de cada vez)?')) return;
   const params = new URLSearchParams(window.location.search);
-  const payload = { farm_id: params.get('farm') || '' };
-  const r = await fetch('/api/perspicuus-angus/reprocess-all', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(payload),
-  });
-  const data = await r.json().catch(() => ({}));
-  if(!r.ok){ toast(data.error || 'Falha no reprocessamento', false); return; }
-  toast(`Reprocessado: ${data.ok}/${data.total} (erros: ${data.errors})`);
-  window.location.reload();
+  const farm = (params.get('farm') || '').trim();
+  const qs = new URLSearchParams();
+  if (farm) qs.set('farm', farm);
+  const btn = document.getElementById('btnReprocessAll');
+  const wrap = document.getElementById('angus-reprocess-progress');
+  const bar = document.getElementById('angus-reprocess-bar');
+  const meta = document.getElementById('angus-reprocess-meta');
+  const logEl = document.getElementById('angus-reprocess-log');
+  btn.disabled = true;
+  wrap.classList.add('visible');
+  bar.style.width = '0%';
+  logEl.innerHTML = '';
+  meta.textContent = 'A carregar fila…';
+  let queueRes;
+  try {
+    queueRes = await fetch(ANGUS_REPROCESS_QUEUE_URL + (qs.toString() ? '?' + qs.toString() : ''), { credentials: 'same-origin' });
+  } catch (e) {
+    toast('Falha de rede ao obter fila.', false);
+    btn.disabled = false;
+    wrap.classList.remove('visible');
+    return;
+  }
+  const queue = await queueRes.json().catch(() => ({}));
+  if (!queueRes.ok) {
+    toast(queue.error || 'Falha ao obter fila', false);
+    btn.disabled = false;
+    wrap.classList.remove('visible');
+    return;
+  }
+  const ids = queue.ids || [];
+  const total = ids.length;
+  if (!total) {
+    meta.textContent = 'Nenhum registo na fila para estes filtros.';
+    toast('Nada a reprocessar.', false);
+    btn.disabled = false;
+    return;
+  }
+  let nOk = 0;
+  let nErr = 0;
+  for (let i = 0; i < total; i++) {
+    const id = ids[i];
+    meta.textContent = 'A reprocessar ' + (i + 1) + ' / ' + total + ' — id ' + id;
+    try {
+      const r = await fetch(ANGUS_REPROCESS_ITEM_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ id }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        nErr += 1;
+        const line = document.createElement('div');
+        line.className = 'err';
+        line.textContent = '✗ id ' + id + ' — ' + (j.error || ('HTTP ' + r.status));
+        logEl.appendChild(line);
+      } else if (j.ok) {
+        nOk += 1;
+        const line = document.createElement('div');
+        line.className = 'ok';
+        line.textContent = '✓ id ' + id;
+        logEl.appendChild(line);
+      } else {
+        nErr += 1;
+        const line = document.createElement('div');
+        line.className = 'err';
+        line.textContent = '✗ id ' + id + ' — ' + (j.error || 'erro');
+        logEl.appendChild(line);
+      }
+    } catch (e) {
+      nErr += 1;
+      const line = document.createElement('div');
+      line.className = 'err';
+      line.textContent = '✗ id ' + id + ' — rede';
+      logEl.appendChild(line);
+    }
+    bar.style.width = (((i + 1) / total) * 100).toFixed(1) + '%';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  meta.textContent = 'Concluído: ' + nOk + ' ok · ' + nErr + ' erro(s) · ' + total + ' registo(s)';
+  btn.disabled = false;
+  toast('Angus: ' + nOk + ' reprocessado(s), ' + nErr + ' erro(s).', nErr === 0);
+  if (nOk) window.location.reload();
 });
 document.querySelectorAll('.js-edit-meta').forEach((btn) => {
   btn.addEventListener('click', () => editMeta(btn.dataset.id));

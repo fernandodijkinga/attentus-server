@@ -1040,7 +1040,10 @@ def _environment_for_request() -> str | None:
         'perspicuus_angus_importar', 'perspicuus_angus_analise_individual',
         'perspicuus_angus_analise_populacao', 'perspicuus_angus_modelos',
         'perspicuus_angus_dataset', 'serve_perspicuus_angus_media',
+        'download_perspicuus_angus_dataset_xlsx',
         'delete_perspicuus_angus_record', 'api_perspicuus_angus_reprocess_all',
+        'api_perspicuus_angus_reprocess_queue', 'api_perspicuus_angus_reprocess_item',
+        'api_perspicuus_angus_importar_lote_item',
         'patch_perspicuus_angus_record',
         'perspicuus_angus_calibragem', 'api_perspicuus_angus_calibragem_apply',
     }
@@ -1048,7 +1051,10 @@ def _environment_for_request() -> str | None:
         'perspicuus_nelore_importar', 'perspicuus_nelore_analise_individual',
         'perspicuus_nelore_analise_populacao', 'perspicuus_nelore_modelos',
         'perspicuus_nelore_dataset', 'serve_perspicuus_nelore_media',
+        'download_perspicuus_nelore_dataset_xlsx',
         'delete_perspicuus_nelore_record', 'api_perspicuus_nelore_reprocess_all',
+        'api_perspicuus_nelore_reprocess_queue', 'api_perspicuus_nelore_reprocess_item',
+        'api_perspicuus_nelore_importar_lote_item',
         'patch_perspicuus_nelore_record',
         'perspicuus_nelore_calibragem', 'api_perspicuus_nelore_calibragem_apply',
     }
@@ -3145,7 +3151,9 @@ def _angus_save_one(
     return True, 'ok'
 
 
-def _angus_load_rows(db, farm_filter: str = '', animal_filter: str = '', q: str = '', limit: int = 3000):
+def _angus_dataset_where_params(
+    farm_filter: str = '', animal_filter: str = '', q: str = ''
+) -> tuple[str, list[Any]]:
     cond = ['1=1']
     params: list[Any] = []
     if farm_filter:
@@ -3158,7 +3166,11 @@ def _angus_load_rows(db, farm_filter: str = '', animal_filter: str = '', q: str 
         like = f'%{q}%'
         cond.append('(farm_id LIKE ? OR animal_tag LIKE ? OR filename LIKE ?)')
         params.extend([like, like, like])
-    where = ' AND '.join(cond)
+    return ' AND '.join(cond), params
+
+
+def _angus_load_rows(db, farm_filter: str = '', animal_filter: str = '', q: str = '', limit: int = 3000):
+    where, params = _angus_dataset_where_params(farm_filter, animal_filter, q)
     return db.execute(
         f"SELECT * FROM perspicuus_angus_records WHERE {where} ORDER BY inference_date DESC, id DESC LIMIT ?",
         params + [limit],
@@ -3723,14 +3735,12 @@ def _nelore_save_one(
     return True, 'ok'
 
 
-def _nelore_load_rows(
-    db,
+def _nelore_dataset_where_params(
     farm_filter: str = '',
     lot_filter: str = '',
     animal_filter: str = '',
     q: str = '',
-    limit: int = 3000,
-):
+) -> tuple[str, list[Any]]:
     cond = ['1=1']
     params: list[Any] = []
     if farm_filter:
@@ -3746,7 +3756,18 @@ def _nelore_load_rows(
         like = f'%{q}%'
         cond.append('(farm_id LIKE ? OR lot_id LIKE ? OR animal_tag LIKE ? OR filename LIKE ?)')
         params.extend([like, like, like, like])
-    where = ' AND '.join(cond)
+    return ' AND '.join(cond), params
+
+
+def _nelore_load_rows(
+    db,
+    farm_filter: str = '',
+    lot_filter: str = '',
+    animal_filter: str = '',
+    q: str = '',
+    limit: int = 3000,
+):
+    where, params = _nelore_dataset_where_params(farm_filter, lot_filter, animal_filter, q)
     return db.execute(
         f"SELECT * FROM perspicuus_nelore_records WHERE {where} ORDER BY inference_date DESC, id DESC LIMIT ?",
         params + [limit],
@@ -6348,6 +6369,124 @@ def api_perspicuus_nelore_reprocess_all():
         'lot_id_filter': lot or None,
     })
 
+
+@app.route('/api/perspicuus-angus/reprocess-queue', methods=['GET'])
+@login_required
+def api_perspicuus_angus_reprocess_queue():
+    """Lista IDs a reprocessar (mesmos filtros que reprocess-all) — um pedido por registo no cliente."""
+    db = get_db()
+    farm = str(request.args.get('farm_id') or request.args.get('farm') or '').strip()
+    cond = ['1=1']
+    params: list[str] = []
+    if farm:
+        cond.append('farm_id = ?')
+        params.append(farm)
+    where = ' AND '.join(cond)
+    max_n = max(1, min(10000, int(os.environ.get('ANGUS_REPROCESS_MAX', '5000'))))
+    ids = [
+        int(r[0])
+        for r in db.execute(
+            f'SELECT id FROM perspicuus_angus_records WHERE {where} ORDER BY id ASC',
+            params,
+        ).fetchall()[:max_n]
+    ]
+    return jsonify({'ids': ids, 'total': len(ids), 'farm_id_filter': farm or None})
+
+
+@app.route('/api/perspicuus-angus/reprocess-item', methods=['POST'])
+@login_required
+def api_perspicuus_angus_reprocess_item():
+    """Reprocessa um único registro (inferência + scores); o cliente chama em sequência."""
+    try:
+        from perspicuus_inference import get_engine
+        eng = get_engine('angus')
+    except ImportError as e:
+        return jsonify({'ok': False, 'error': f'Módulo de inferência indisponível: {e}'}), 503
+    if not eng.is_ready():
+        return jsonify({'ok': False, 'error': 'Motor ONNX Angus não está configurado.'}), 400
+
+    data = request.get_json(silent=True) or {}
+    try:
+        rid = int(data.get('id'))
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'id': None, 'error': 'id inválido'}), 400
+
+    db = get_db()
+    result = _angus_reinfer_record_by_id(db, rid)
+    db.commit()
+    ok = bool(result.get('ok'))
+    return jsonify(
+        {
+            'ok': ok,
+            'id': rid,
+            'error': result.get('error'),
+        }
+    )
+
+
+@app.route('/api/perspicuus-nelore/reprocess-queue', methods=['GET'])
+@login_required
+def api_perspicuus_nelore_reprocess_queue():
+    """Lista IDs a reprocessar (mesmos filtros que reprocess-all) — um pedido por registo no cliente."""
+    db = get_db()
+    farm = str(request.args.get('farm_id') or request.args.get('farm') or '').strip()
+    lot = str(request.args.get('lot_id') or request.args.get('lot') or '').strip()
+    cond = ['1=1']
+    params: list[str] = []
+    if farm:
+        cond.append('farm_id = ?')
+        params.append(farm)
+    if lot:
+        cond.append('lot_id = ?')
+        params.append(lot)
+    where = ' AND '.join(cond)
+    max_n = max(1, min(10000, int(os.environ.get('NELORE_REPROCESS_MAX', '5000'))))
+    ids = [
+        int(r[0])
+        for r in db.execute(
+            f'SELECT id FROM perspicuus_nelore_records WHERE {where} ORDER BY id ASC',
+            params,
+        ).fetchall()[:max_n]
+    ]
+    return jsonify({
+        'ids': ids,
+        'total': len(ids),
+        'farm_id_filter': farm or None,
+        'lot_id_filter': lot or None,
+    })
+
+
+@app.route('/api/perspicuus-nelore/reprocess-item', methods=['POST'])
+@login_required
+def api_perspicuus_nelore_reprocess_item():
+    """Reprocessa um único registro (inferência + scores); o cliente chama em sequência."""
+    try:
+        from perspicuus_inference import get_engine
+        eng = get_engine('nelore')
+    except ImportError as e:
+        return jsonify({'ok': False, 'error': f'Módulo de inferência indisponível: {e}'}), 503
+    if not eng.is_ready():
+        return jsonify({'ok': False, 'error': 'Motor ONNX Nelore não está configurado.'}), 400
+
+    data = request.get_json(silent=True) or {}
+    try:
+        rid = int(data.get('id'))
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'id': None, 'error': 'id inválido'}), 400
+
+    db = get_db()
+    result = _nelore_reinfer_record_by_id(db, rid)
+    db.commit()
+    ok = bool(result.get('ok'))
+    return jsonify(
+        {
+            'ok': ok,
+            'id': rid,
+            'error': result.get('error'),
+        }
+    )
+
+
 # ─── DOWNLOADS ────────────────────────────────────────────────────────────────
 
 @app.route('/download/weather')
@@ -6432,6 +6571,24 @@ def _perspicuus_download_where():
     return ' AND '.join(conditions), params
 
 
+def _perspicuus_traits_summary(traits_json: str | None) -> str:
+    """Resumo legível dos traits (raw do modelo) para exportação tabular."""
+    try:
+        d = json.loads(traits_json or '{}')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return ''
+    if not isinstance(d, dict) or not d:
+        return ''
+    parts: list[str] = []
+    for k in sorted(d.keys(), key=lambda x: str(x)):
+        v = d.get(k)
+        try:
+            parts.append(f'{k}:{float(v):.4f}')
+        except (TypeError, ValueError):
+            parts.append(f'{k}:{v!s}')
+    return '; '.join(parts)
+
+
 def _xlsx_from_rows(sheet_name: str, headers: list[str], rows: list[list[Any]]) -> io.BytesIO:
     wb = Workbook()
     ws = wb.active
@@ -6443,6 +6600,163 @@ def _xlsx_from_rows(sheet_name: str, headers: list[str], rows: list[list[Any]]) 
     wb.save(out)
     out.seek(0)
     return out
+
+
+@app.route('/download/perspicuus-angus-dataset.xlsx')
+@login_required
+def download_perspicuus_angus_dataset_xlsx():
+    """Exporta o dataset Angus (mesmos filtros GET que a página /perspicuus-angus/dataset)."""
+    db = get_db()
+    farm = str(request.args.get('farm', '')).strip()
+    animal = str(request.args.get('animal', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    where, params = _angus_dataset_where_params(farm, animal, q)
+    max_n = max(1, min(100_000, int(os.environ.get('ANGUS_DATASET_XLSX_MAX', '50000'))))
+    rows = db.execute(
+        f"""
+        SELECT * FROM perspicuus_angus_records
+        WHERE {where}
+        ORDER BY inference_date DESC, id DESC
+        LIMIT ?
+        """,
+        params + [max_n],
+    ).fetchall()
+    headers = [
+        'id',
+        'criado_utc',
+        'fazenda',
+        'lote',
+        'data_inferencia',
+        'brinco',
+        'nascimento',
+        'sexo',
+        'ficheiro',
+        'raw_score_media_traits',
+        'escore_lote_1_9',
+        'escore_global_1_9',
+        'escore_1_9_legado_bd',
+        'url_imagem',
+        'url_miniatura',
+        'url_bbox',
+        'traits_resumo',
+        'traits_json',
+        'meta_json',
+        'erro',
+    ]
+    data: list[list[Any]] = []
+    for row in rows:
+        d = dict(row)
+        legado = d.get('score_1_9')
+        data.append(
+            [
+                d.get('id'),
+                d.get('created_at'),
+                d.get('farm_id'),
+                d.get('lot_id') or '',
+                d.get('inference_date'),
+                d.get('animal_tag'),
+                d.get('birth_date') or '',
+                d.get('sex') or '',
+                d.get('filename'),
+                d.get('raw_score'),
+                d.get('score_lot'),
+                d.get('score_global'),
+                legado,
+                d.get('image_path') or '',
+                d.get('thumb_path') or '',
+                d.get('bbox_path') or '',
+                _perspicuus_traits_summary(d.get('traits_json')),
+                d.get('traits_json') or '{}',
+                d.get('meta_json') or '{}',
+                d.get('error_text') or '',
+            ]
+        )
+    ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    return send_file(
+        _xlsx_from_rows('angus_dataset', headers, data),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=f'perspicuus_angus_dataset_{ts}.xlsx',
+    )
+
+
+@app.route('/download/perspicuus-nelore-dataset.xlsx')
+@login_required
+def download_perspicuus_nelore_dataset_xlsx():
+    """Exporta o dataset Nelore (mesmos filtros GET que a página /perspicuus-nelore/dataset)."""
+    db = get_db()
+    farm = str(request.args.get('farm', '')).strip()
+    lot = str(request.args.get('lot', '')).strip()
+    animal = str(request.args.get('animal', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    where, params = _nelore_dataset_where_params(farm, lot, animal, q)
+    max_n = max(1, min(100_000, int(os.environ.get('NELORE_DATASET_XLSX_MAX', '50000'))))
+    rows = db.execute(
+        f"""
+        SELECT * FROM perspicuus_nelore_records
+        WHERE {where}
+        ORDER BY inference_date DESC, id DESC
+        LIMIT ?
+        """,
+        params + [max_n],
+    ).fetchall()
+    headers = [
+        'id',
+        'criado_utc',
+        'fazenda',
+        'lote',
+        'data_inferencia',
+        'brinco',
+        'nascimento',
+        'sexo',
+        'ficheiro',
+        'raw_score_media_traits',
+        'escore_lote_1_9',
+        'escore_global_1_9',
+        'escore_1_9_legado_bd',
+        'url_imagem',
+        'url_miniatura',
+        'url_bbox',
+        'traits_resumo',
+        'traits_json',
+        'meta_json',
+        'erro',
+    ]
+    data = []
+    for row in rows:
+        d = dict(row)
+        legado = d.get('score_1_9')
+        data.append(
+            [
+                d.get('id'),
+                d.get('created_at'),
+                d.get('farm_id'),
+                d.get('lot_id') or '',
+                d.get('inference_date'),
+                d.get('animal_tag'),
+                d.get('birth_date') or '',
+                d.get('sex') or '',
+                d.get('filename'),
+                d.get('raw_score'),
+                d.get('score_lot'),
+                d.get('score_global'),
+                legado,
+                d.get('image_path') or '',
+                d.get('thumb_path') or '',
+                d.get('bbox_path') or '',
+                _perspicuus_traits_summary(d.get('traits_json')),
+                d.get('traits_json') or '{}',
+                d.get('meta_json') or '{}',
+                d.get('error_text') or '',
+            ]
+        )
+    ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    return send_file(
+        _xlsx_from_rows('nelore_dataset', headers, data),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=f'perspicuus_nelore_dataset_{ts}.xlsx',
+    )
 
 
 @app.route('/download/perspicuus')
