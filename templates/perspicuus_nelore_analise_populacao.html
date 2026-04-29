@@ -48,13 +48,116 @@ const DIST={{ dist|tojson }}, SER={{ pop_series|tojson }};
 const TRAIT_SER={{ trait_series|tojson }}, TOP_TRAITS={{ top_traits|tojson }};
 const BOX={{ boxplot_by_effect|tojson }}, EFFECTS={{ effect_overall|tojson }};
 let traitChart=null;
-if(document.getElementById('nel-pop-dist')) new Chart(document.getElementById('nel-pop-dist').getContext('2d'),{type:'bar',data:{labels:['1-3','3-5','5-7','7-9'],datasets:[{data:DIST,backgroundColor:['#c62841','#d9782b','#0d7a5e','#1a6fd4']}]},options:{responsive:true,maintainAspectRatio:false}});
-if(document.getElementById('nel-pop-series')) new Chart(document.getElementById('nel-pop-series').getContext('2d'),{type:'line',data:{labels:(SER||[]).map(x=>x.date),datasets:[{label:'Média 1-9',data:(SER||[]).map(x=>x.mean),borderColor:'#1a6fd4',backgroundColor:'rgba(26,111,212,.14)',fill:true,tension:.2}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{min:1,max:9}}}});
-function buildTrait(){ const sel=document.getElementById('traitSel'); if(!sel) return; const t=sel.value; const arr=(TRAIT_SER||{})[t]||[]; const ctx=document.getElementById('traitSeries')?.getContext('2d'); if(!ctx) return; if(traitChart) traitChart.destroy(); traitChart=new Chart(ctx,{type:'line',data:{labels:arr.map(x=>x.date),datasets:[{label:'Raw mean',data:arr.map(x=>x.raw_mean),borderColor:'#d9782b',tension:.2,yAxisID:'yRaw'},{label:'Rescaled mean',data:arr.map(x=>x.res_mean),borderColor:'#1a6fd4',tension:.2,yAxisID:'yRes'}]},options:{responsive:true,maintainAspectRatio:false,scales:{yRaw:{position:'left'},yRes:{position:'right',min:1,max:9,grid:{drawOnChartArea:false}}}}); }
-function buildBox(targetId, effectKey, metric){ const host=document.getElementById(targetId); if(!host) return; const rows=(BOX||{})[effectKey]||[]; const traces=rows.map(r=>({y:(metric==='raw'?r.raw:r.res)||[],type:'box',name:r.group,boxpoints:false})); Plotly.newPlot(host,traces,{margin:{t:10,l:40,r:10,b:80},xaxis:{tickangle:-30},yaxis:{title:metric==='raw'?'raw':'reescalado'}},{displayModeBar:false,responsive:true}); }
-const traitSel=document.getElementById('traitSel'); if(traitSel){ (TOP_TRAITS||[]).forEach(t=>{const o=document.createElement('option');o.value=t;o.textContent=t;traitSel.appendChild(o);}); if((TOP_TRAITS||[]).length){traitSel.value=TOP_TRAITS[0]; buildTrait();} traitSel.addEventListener('change',buildTrait);}
-const effectKeys=(EFFECTS||[]).map(x=>x.effect); function initEff(id, cb){ const el=document.getElementById(id); if(!el) return; effectKeys.forEach(k=>{const o=document.createElement('option'); o.value=k; o.textContent=k; el.appendChild(o);}); if(effectKeys.length){el.value=effectKeys[0]; cb();} el.addEventListener('change',cb);}
-initEff('effectSelRaw', ()=>buildBox('boxRaw', document.getElementById('effectSelRaw').value, 'raw'));
-initEff('effectSelRes', ()=>buildBox('boxRes', document.getElementById('effectSelRes').value, 'res'));
+
+const distCanvas = document.getElementById('nel-pop-dist');
+if (distCanvas) {
+  new Chart(distCanvas.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: ['1-3', '3-5', '5-7', '7-9'],
+      datasets: [{ data: DIST, backgroundColor: ['#c62841', '#d9782b', '#0d7a5e', '#1a6fd4'] }],
+    },
+    options: { responsive: true, maintainAspectRatio: false },
+  });
+}
+
+const seriesCanvas = document.getElementById('nel-pop-series');
+if (seriesCanvas) {
+  new Chart(seriesCanvas.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: (SER || []).map((x) => x.date),
+      datasets: [{
+        label: 'Média 1-9',
+        data: (SER || []).map((x) => x.mean),
+        borderColor: '#1a6fd4',
+        backgroundColor: 'rgba(26,111,212,.14)',
+        fill: true,
+        tension: 0.2,
+      }],
+    },
+    options: { responsive: true, maintainAspectRatio: false, scales: { y: { min: 1, max: 9 } } },
+  });
+}
+
+function buildTrait() {
+  const sel = document.getElementById('traitSel');
+  if (!sel) return;
+  const t = sel.value;
+  const arr = (TRAIT_SER || {})[t] || [];
+  const ctx = document.getElementById('traitSeries')?.getContext('2d');
+  if (!ctx) return;
+  if (traitChart) traitChart.destroy();
+  traitChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: arr.map((x) => x.date),
+      datasets: [
+        { label: 'Raw mean', data: arr.map((x) => x.raw_mean), borderColor: '#d9782b', tension: 0.2, yAxisID: 'yRaw' },
+        { label: 'Rescaled mean', data: arr.map((x) => x.res_mean), borderColor: '#1a6fd4', tension: 0.2, yAxisID: 'yRes' },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        yRaw: { position: 'left' },
+        yRes: { position: 'right', min: 1, max: 9, grid: { drawOnChartArea: false } },
+      },
+    },
+  });
+}
+
+function buildBox(targetId, effectKey, metric) {
+  const host = document.getElementById(targetId);
+  if (!host) return;
+  const rows = (BOX || {})[effectKey] || [];
+  const traces = rows.map((r) => ({
+    y: (metric === 'raw' ? r.raw : r.res) || [],
+    type: 'box',
+    name: r.group,
+    boxpoints: false,
+  }));
+  Plotly.newPlot(
+    host,
+    traces,
+    { margin: { t: 10, l: 40, r: 10, b: 80 }, xaxis: { tickangle: -30 }, yaxis: { title: metric === 'raw' ? 'raw' : 'reescalado' } },
+    { displayModeBar: false, responsive: true },
+  );
+}
+
+const traitSel = document.getElementById('traitSel');
+if (traitSel) {
+  (TOP_TRAITS || []).forEach((t) => {
+    const o = document.createElement('option');
+    o.value = t;
+    o.textContent = t;
+    traitSel.appendChild(o);
+  });
+  if ((TOP_TRAITS || []).length) {
+    traitSel.value = TOP_TRAITS[0];
+    buildTrait();
+  }
+  traitSel.addEventListener('change', buildTrait);
+}
+
+const effectKeys = (EFFECTS || []).map((x) => x.effect);
+function initEff(id, cb) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  effectKeys.forEach((k) => {
+    const o = document.createElement('option');
+    o.value = k;
+    o.textContent = k;
+    el.appendChild(o);
+  });
+  if (effectKeys.length) {
+    el.value = effectKeys[0];
+    cb();
+  }
+  el.addEventListener('change', cb);
+}
+initEff('effectSelRaw', () => buildBox('boxRaw', document.getElementById('effectSelRaw').value, 'raw'));
+initEff('effectSelRes', () => buildBox('boxRes', document.getElementById('effectSelRes').value, 'res'));
 </script>
 {% endblock %}
