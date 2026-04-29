@@ -159,6 +159,183 @@ NELORE_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
 NELORE_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'perspicuus_nelore')
 os.makedirs(NELORE_UPLOADS_DIR, exist_ok=True)
 
+PERSPICUUS_BREED_TABLE = {
+    'angus': 'perspicuus_angus_records',
+    'nelore': 'perspicuus_nelore_records',
+}
+PERSPICUUS_CAL_TABLE = {
+    'angus': 'perspicuus_angus_calibration',
+    'nelore': 'perspicuus_nelore_calibration',
+}
+PERSPICUUS_FIXED_EFFECTS = {
+    'angus': ('', 'farm', 'birth_year', 'sex'),
+    'nelore': ('', 'farm', 'lot', 'birth_year', 'sex'),
+}
+PERSPICUUS_FIXED_EFFECT_LABELS = {
+    '': 'Nenhum (sem ajuste)',
+    'farm': 'Fazenda',
+    'lot': 'Lote',
+    'birth_year': 'Ano de nascimento',
+    'sex': 'Sexo',
+}
+
+
+def _perspicuus_default_cal() -> dict[str, Any]:
+    return {
+        'raw_min': -4.0,
+        'raw_max': 4.0,
+        'res_min': 1.0,
+        'res_max': 9.0,
+        'step': 0.5,
+        'fixed_effect': '',
+        'updated_at': None,
+        'updated_by': 'system',
+    }
+
+
+def _perspicuus_get_calibration(db, breed: str) -> dict[str, Any]:
+    table = PERSPICUUS_CAL_TABLE.get(breed)
+    if not table:
+        return _perspicuus_default_cal()
+    row = db.execute(
+        f"SELECT raw_min, raw_max, res_min, res_max, step, fixed_effect, updated_at, updated_by "
+        f"FROM {table} WHERE id = 1"
+    ).fetchone()
+    if not row:
+        return _perspicuus_default_cal()
+    return {
+        'raw_min': float(row['raw_min']),
+        'raw_max': float(row['raw_max']),
+        'res_min': float(row['res_min']),
+        'res_max': float(row['res_max']),
+        'step': float(row['step']),
+        'fixed_effect': str(row['fixed_effect'] or ''),
+        'updated_at': row['updated_at'],
+        'updated_by': row['updated_by'],
+    }
+
+
+def _perspicuus_rescale_with_cal(raw_score: Any, cal: dict[str, Any]) -> float | None:
+    if raw_score is None:
+        return None
+    try:
+        x = float(raw_score)
+    except (TypeError, ValueError):
+        return None
+    raw_min = float(cal.get('raw_min', -4.0))
+    raw_max = float(cal.get('raw_max', 4.0))
+    res_min = float(cal.get('res_min', 1.0))
+    res_max = float(cal.get('res_max', 9.0))
+    step = float(cal.get('step', 0.5))
+    if raw_max <= raw_min:
+        return res_min
+    if res_max <= res_min:
+        return res_min
+    if step <= 0:
+        step = 0.5
+    t = (x - raw_min) / (raw_max - raw_min)
+    t = max(0.0, min(1.0, t))
+    y = res_min + t * (res_max - res_min)
+    y = round(y / step) * step
+    y = max(res_min, min(res_max, y))
+    return float(round(y, 6))
+
+
+def _perspicuus_birth_year(birth_date: str) -> str:
+    s = str(birth_date or '').strip()
+    if len(s) >= 4 and s[:4].isdigit():
+        return s[:4]
+    return ''
+
+
+def _perspicuus_record_group_key(rec: dict[str, Any], fixed_effect: str) -> str:
+    if not fixed_effect:
+        return ''
+    if fixed_effect == 'farm':
+        return str(rec.get('farm_id') or '').strip()
+    if fixed_effect == 'lot':
+        return str(rec.get('lot_id') or '').strip()
+    if fixed_effect == 'birth_year':
+        return _perspicuus_birth_year(rec.get('birth_date') or '')
+    if fixed_effect == 'sex':
+        return str(rec.get('sex') or '').strip().lower()
+    return ''
+
+
+def _perspicuus_apply_calibration(
+    db,
+    breed: str,
+    cal: dict[str, Any],
+    farm_id: str = '',
+    lot_id: str = '',
+) -> dict[str, Any]:
+    """Recalcula score_1_9 para todos os registros da raça aplicando a calibração e
+    o efeito fixo escolhido. Retorna dict com contagem e diagnóstico."""
+    table = PERSPICUUS_BREED_TABLE.get(breed)
+    if not table:
+        return {'updated': 0, 'groups': 0, 'global_mean': None}
+    cond = ['raw_score IS NOT NULL']
+    params: list[Any] = []
+    if farm_id:
+        cond.append('farm_id = ?')
+        params.append(farm_id)
+    if lot_id and breed == 'nelore':
+        cond.append('lot_id = ?')
+        params.append(lot_id)
+    where = ' AND '.join(cond)
+    rows = db.execute(
+        f"SELECT * FROM {table} WHERE {where}",
+        params,
+    ).fetchall()
+
+    fixed_effect = str(cal.get('fixed_effect') or '')
+    group_means: dict[str, float] = {}
+    global_mean: float | None = None
+    if fixed_effect and rows:
+        sums: dict[str, list[float]] = {}
+        all_vals: list[float] = []
+        for r in rows:
+            try:
+                v = float(r['raw_score'])
+            except (TypeError, ValueError):
+                continue
+            d = dict(r)
+            g = _perspicuus_record_group_key(d, fixed_effect)
+            if not g:
+                continue
+            sums.setdefault(g, []).append(v)
+            all_vals.append(v)
+        for g, arr in sums.items():
+            if arr:
+                group_means[g] = sum(arr) / len(arr)
+        if all_vals:
+            global_mean = sum(all_vals) / len(all_vals)
+
+    updated = 0
+    for r in rows:
+        try:
+            raw = float(r['raw_score'])
+        except (TypeError, ValueError):
+            continue
+        adj = raw
+        if fixed_effect and global_mean is not None:
+            d = dict(r)
+            g = _perspicuus_record_group_key(d, fixed_effect)
+            mu_g = group_means.get(g)
+            if mu_g is not None:
+                adj = raw - mu_g + global_mean
+        new_val = _perspicuus_rescale_with_cal(adj, cal)
+        db.execute(
+            f"UPDATE {table} SET score_1_9 = ? WHERE id = ?",
+            (new_val, int(r['id'])),
+        )
+        updated += 1
+    return {
+        'updated': updated,
+        'groups': len(group_means),
+        'global_mean': global_mean,
+    }
+
 
 def _normalize_env_access(raw: Any) -> set[str]:
     if raw is None:
@@ -340,12 +517,16 @@ def _environment_for_request() -> str | None:
         'perspicuus_angus_analise_populacao', 'perspicuus_angus_modelos',
         'perspicuus_angus_dataset', 'serve_perspicuus_angus_media',
         'delete_perspicuus_angus_record', 'api_perspicuus_angus_reprocess_all',
+        'patch_perspicuus_angus_record',
+        'perspicuus_angus_calibragem', 'api_perspicuus_angus_calibragem_apply',
     }
     nelore_eps = {
         'perspicuus_nelore_importar', 'perspicuus_nelore_analise_individual',
         'perspicuus_nelore_analise_populacao', 'perspicuus_nelore_modelos',
         'perspicuus_nelore_dataset', 'serve_perspicuus_nelore_media',
         'delete_perspicuus_nelore_record', 'api_perspicuus_nelore_reprocess_all',
+        'patch_perspicuus_nelore_record',
+        'perspicuus_nelore_calibragem', 'api_perspicuus_nelore_calibragem_apply',
     }
     bcs_eps = {
         'serve_ecc_media', 'ecc_analise', 'ecc_importar', 'api_ecc_upload_one',
@@ -847,6 +1028,28 @@ def init_db():
         meta_json      TEXT    NOT NULL DEFAULT '{}',
         error_text     TEXT
     );
+    CREATE TABLE IF NOT EXISTS perspicuus_angus_calibration (
+        id            INTEGER PRIMARY KEY CHECK (id = 1),
+        raw_min       REAL    NOT NULL DEFAULT -4.0,
+        raw_max       REAL    NOT NULL DEFAULT 4.0,
+        res_min       REAL    NOT NULL DEFAULT 1.0,
+        res_max       REAL    NOT NULL DEFAULT 9.0,
+        step          REAL    NOT NULL DEFAULT 0.5,
+        fixed_effect  TEXT    NOT NULL DEFAULT '',
+        updated_at    TEXT    NOT NULL,
+        updated_by    TEXT    NOT NULL DEFAULT 'system'
+    );
+    CREATE TABLE IF NOT EXISTS perspicuus_nelore_calibration (
+        id            INTEGER PRIMARY KEY CHECK (id = 1),
+        raw_min       REAL    NOT NULL DEFAULT -4.0,
+        raw_max       REAL    NOT NULL DEFAULT 4.0,
+        res_min       REAL    NOT NULL DEFAULT 1.0,
+        res_max       REAL    NOT NULL DEFAULT 9.0,
+        step          REAL    NOT NULL DEFAULT 0.5,
+        fixed_effect  TEXT    NOT NULL DEFAULT '',
+        updated_at    TEXT    NOT NULL,
+        updated_by    TEXT    NOT NULL DEFAULT 'system'
+    );
 
     CREATE INDEX IF NOT EXISTS idx_weather_received ON weather(received_at);
     CREATE INDEX IF NOT EXISTS idx_weather_device   ON weather(device_name);
@@ -898,9 +1101,24 @@ def init_db():
         nelore_cols = {row[1] for row in db.execute("PRAGMA table_info(perspicuus_nelore_records)")}
         if nelore_cols and "lot_id" not in nelore_cols:
             db.execute("ALTER TABLE perspicuus_nelore_records ADD COLUMN lot_id TEXT NOT NULL DEFAULT ''")
+        if nelore_cols and "birth_date" not in nelore_cols:
+            db.execute("ALTER TABLE perspicuus_nelore_records ADD COLUMN birth_date TEXT NOT NULL DEFAULT ''")
+        if nelore_cols and "sex" not in nelore_cols:
+            db.execute("ALTER TABLE perspicuus_nelore_records ADD COLUMN sex TEXT NOT NULL DEFAULT ''")
         db.commit()
     except sqlite3.OperationalError as e:
-        log.warning("Migração nelore lot_id: %s", e)
+        log.warning("Migração nelore extras: %s", e)
+    try:
+        angus_cols = {row[1] for row in db.execute("PRAGMA table_info(perspicuus_angus_records)")}
+        if angus_cols and "lot_id" not in angus_cols:
+            db.execute("ALTER TABLE perspicuus_angus_records ADD COLUMN lot_id TEXT NOT NULL DEFAULT ''")
+        if angus_cols and "birth_date" not in angus_cols:
+            db.execute("ALTER TABLE perspicuus_angus_records ADD COLUMN birth_date TEXT NOT NULL DEFAULT ''")
+        if angus_cols and "sex" not in angus_cols:
+            db.execute("ALTER TABLE perspicuus_angus_records ADD COLUMN sex TEXT NOT NULL DEFAULT ''")
+        db.commit()
+    except sqlite3.OperationalError as e:
+        log.warning("Migração angus extras: %s", e)
     try:
         row = db.execute("SELECT id FROM ecc_bcs_calibration WHERE id = 1").fetchone()
         if not row:
@@ -914,6 +1132,20 @@ def init_db():
         db.commit()
     except sqlite3.OperationalError as e:
         log.warning("Migração ecc calibration: %s", e)
+    try:
+        for tname in ('perspicuus_angus_calibration', 'perspicuus_nelore_calibration'):
+            row = db.execute(f"SELECT id FROM {tname} WHERE id = 1").fetchone()
+            if not row:
+                db.execute(
+                    f"""
+                    INSERT INTO {tname} (id, raw_min, raw_max, res_min, res_max, step, fixed_effect, updated_at, updated_by)
+                    VALUES (1, -4.0, 4.0, 1.0, 9.0, 0.5, '', ?, 'system')
+                    """,
+                    (datetime.utcnow().isoformat() + 'Z',),
+                )
+        db.commit()
+    except sqlite3.OperationalError as e:
+        log.warning("Migração perspicuus calibration: %s", e)
     db.close()
     log.info("DB inicializado OK")
 
@@ -2047,7 +2279,17 @@ def serve_perspicuus_angus_media(farm, day, filename):
     return send_file(filepath)
 
 
-def _angus_save_one(db, now_iso: str, farm_id: str, inference_date: str, animal_tag: str, fs) -> tuple[bool, str]:
+def _angus_save_one(
+    db,
+    now_iso: str,
+    farm_id: str,
+    inference_date: str,
+    animal_tag: str,
+    fs,
+    birth_date: str = '',
+    sex: str = '',
+    lot_id: str = '',
+) -> tuple[bool, str]:
     from perspicuus_inference import get_engine
 
     ext = os.path.splitext(fs.filename or '')[1].lower()
@@ -2087,18 +2329,19 @@ def _angus_save_one(db, now_iso: str, farm_id: str, inference_date: str, animal_
         except (TypeError, ValueError):
             continue
     raw_score = round(sum(vals) / len(vals), 4) if vals else None
-    score_1_9 = rescale_perspicuus_trait_score(raw_score) if raw_score is not None else None
+    cal = _perspicuus_get_calibration(db, 'angus')
+    score_1_9 = _perspicuus_rescale_with_cal(raw_score, cal)
     web_path = f"/api/perspicuus-angus/media/{safe_farm}/{safe_day}/{local_name}"
     db.execute(
         """
         INSERT INTO perspicuus_angus_records (
-            created_at, farm_id, inference_date, animal_tag, filename,
+            created_at, farm_id, lot_id, birth_date, sex, inference_date, animal_tag, filename,
             image_path, raw_score, score_1_9, traits_json, meta_json, error_text
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )
         """,
         (
-            now_iso, farm_id, inference_date, animal_tag, fs.filename,
+            now_iso, farm_id, lot_id, birth_date, sex, inference_date, animal_tag, fs.filename,
             web_path, raw_score, score_1_9,
             json.dumps(traits, ensure_ascii=False),
             json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox')}, ensure_ascii=False),
@@ -2203,7 +2446,8 @@ def _angus_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
         except (TypeError, ValueError):
             continue
     raw_score = round(sum(vals) / len(vals), 4) if vals else None
-    score_1_9 = rescale_perspicuus_trait_score(raw_score) if raw_score is not None else None
+    cal = _perspicuus_get_calibration(db, 'angus')
+    score_1_9 = _perspicuus_rescale_with_cal(raw_score, cal)
     db.execute(
         """
         UPDATE perspicuus_angus_records
@@ -2237,7 +2481,9 @@ def perspicuus_angus_importar():
             if not farm_id or not date_iso or not animal_tag or not fs or not fs.filename:
                 flash('Informe fazenda, data, brinco e imagem lateral.', 'error')
                 return redirect(url_for('perspicuus_angus_importar'))
-            ok, msg = _angus_save_one(db, now_iso, farm_id, date_iso, animal_tag, fs)
+            birth_date = str(request.form.get('birth_date', '')).strip()
+            sex = str(request.form.get('sex', '')).strip().lower()
+            ok, msg = _angus_save_one(db, now_iso, farm_id, date_iso, animal_tag, fs, birth_date=birth_date, sex=sex)
             if ok:
                 db.commit(); flash('Imagem lateral inferida e guardada.', 'success')
             else:
@@ -2246,6 +2492,8 @@ def perspicuus_angus_importar():
         if mode == 'batch':
             farm_id = str(request.form.get('farm_id_batch', '')).strip()
             date_iso = ecc_parse_iso_day(request.form.get('inference_date_batch', ''))
+            birth_date = str(request.form.get('birth_date_batch', '')).strip()
+            sex = str(request.form.get('sex_batch', '')).strip().lower()
             files = request.files.getlist('images_batch')
             if not farm_id or not date_iso or not files:
                 flash('Lote: informe fazenda, data e ficheiros.', 'error')
@@ -2258,7 +2506,7 @@ def perspicuus_angus_importar():
                 animal_tag = os.path.splitext(os.path.basename(fs.filename))[0].strip()
                 if not animal_tag:
                     n_err += 1; errs.append(f'Brinco ausente no nome: {fs.filename}'); continue
-                ok, msg = _angus_save_one(db, now_iso, farm_id, date_iso, animal_tag, fs)
+                ok, msg = _angus_save_one(db, now_iso, farm_id, date_iso, animal_tag, fs, birth_date=birth_date, sex=sex)
                 if ok:
                     n_ok += 1; db.commit()
                 else:
@@ -2514,6 +2762,96 @@ def perspicuus_angus_dataset():
     )
 
 
+@app.route('/perspicuus-angus/calibragem')
+@login_required
+def perspicuus_angus_calibragem():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    cal = _perspicuus_get_calibration(db, 'angus')
+    farms, animals, stats = _angus_base_lists(db)
+    return render_template(
+        'perspicuus_angus_calibragem.html',
+        calibration=cal,
+        farms=farms,
+        farm_filter=farm_filter,
+        stats=stats,
+        fixed_effects=PERSPICUUS_FIXED_EFFECTS['angus'],
+        fixed_effect_labels=PERSPICUUS_FIXED_EFFECT_LABELS,
+    )
+
+
+@app.route('/api/perspicuus-angus/calibragem/apply', methods=['POST'])
+@login_required
+def api_perspicuus_angus_calibragem_apply():
+    data = request.get_json(silent=True) or {}
+    err, parsed = _validate_perspicuus_cal_payload(data, 'angus')
+    if err:
+        return jsonify({'error': err}), 400
+    farm = str(data.get('farm_id') or '').strip()
+    db = get_db()
+    now_iso = datetime.utcnow().isoformat() + 'Z'
+    db.execute(
+        """
+        INSERT INTO perspicuus_angus_calibration
+            (id, raw_min, raw_max, res_min, res_max, step, fixed_effect, updated_at, updated_by)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            raw_min = excluded.raw_min,
+            raw_max = excluded.raw_max,
+            res_min = excluded.res_min,
+            res_max = excluded.res_max,
+            step = excluded.step,
+            fixed_effect = excluded.fixed_effect,
+            updated_at = excluded.updated_at,
+            updated_by = excluded.updated_by
+        """,
+        (
+            parsed['raw_min'], parsed['raw_max'], parsed['res_min'], parsed['res_max'],
+            parsed['step'], parsed['fixed_effect'], now_iso,
+            str(session.get('username') or 'unknown'),
+        ),
+    )
+    cal = _perspicuus_get_calibration(db, 'angus')
+    info = _perspicuus_apply_calibration(db, 'angus', cal, farm_id=farm)
+    db.commit()
+    return jsonify({
+        'status': 'ok',
+        'updated': info['updated'],
+        'groups': info['groups'],
+        'global_mean': info['global_mean'],
+        'farm_id_filter': farm or None,
+        'calibration': cal,
+    })
+
+
+def _validate_perspicuus_cal_payload(data: dict, breed: str) -> tuple[str | None, dict[str, Any]]:
+    try:
+        raw_min = float(data.get('raw_min'))
+        raw_max = float(data.get('raw_max'))
+        res_min = float(data.get('res_min'))
+        res_max = float(data.get('res_max'))
+        step = float(data.get('step'))
+    except (TypeError, ValueError):
+        return 'Parâmetros numéricos inválidos.', {}
+    if raw_max <= raw_min:
+        return 'raw_max deve ser maior que raw_min.', {}
+    if res_max <= res_min:
+        return 'res_max deve ser maior que res_min.', {}
+    if step <= 0 or step > (res_max - res_min):
+        return 'step deve ser positivo e <= (res_max - res_min).', {}
+    fixed_effect = str(data.get('fixed_effect') or '').strip()
+    if fixed_effect not in PERSPICUUS_FIXED_EFFECTS.get(breed, ('',)):
+        return 'efeito fixo inválido para esta raça.', {}
+    return None, {
+        'raw_min': raw_min,
+        'raw_max': raw_max,
+        'res_min': res_min,
+        'res_max': res_max,
+        'step': step,
+        'fixed_effect': fixed_effect,
+    }
+
+
 @app.route('/api/perspicuus-nelore/media/<farm>/<day>/<filename>')
 @login_required
 def serve_perspicuus_nelore_media(farm, day, filename):
@@ -2532,6 +2870,8 @@ def _nelore_save_one(
     inference_date: str,
     animal_tag: str,
     fs,
+    birth_date: str = '',
+    sex: str = '',
 ) -> tuple[bool, str]:
     from perspicuus_inference import get_engine
 
@@ -2572,18 +2912,19 @@ def _nelore_save_one(
         except (TypeError, ValueError):
             continue
     raw_score = round(sum(vals) / len(vals), 4) if vals else None
-    score_1_9 = rescale_perspicuus_trait_score(raw_score) if raw_score is not None else None
+    cal = _perspicuus_get_calibration(db, 'nelore')
+    score_1_9 = _perspicuus_rescale_with_cal(raw_score, cal)
     web_path = f"/api/perspicuus-nelore/media/{safe_farm}/{safe_day}/{local_name}"
     db.execute(
         """
         INSERT INTO perspicuus_nelore_records (
-            created_at, farm_id, lot_id, inference_date, animal_tag, filename,
+            created_at, farm_id, lot_id, birth_date, sex, inference_date, animal_tag, filename,
             image_path, raw_score, score_1_9, traits_json, meta_json, error_text
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            now_iso, farm_id, lot_id, inference_date, animal_tag, fs.filename,
+            now_iso, farm_id, lot_id, birth_date, sex, inference_date, animal_tag, fs.filename,
             web_path, raw_score, score_1_9,
             json.dumps(traits, ensure_ascii=False),
             json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox')}, ensure_ascii=False),
@@ -2700,7 +3041,8 @@ def _nelore_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
         except (TypeError, ValueError):
             continue
     raw_score = round(sum(vals) / len(vals), 4) if vals else None
-    score_1_9 = rescale_perspicuus_trait_score(raw_score) if raw_score is not None else None
+    cal = _perspicuus_get_calibration(db, 'nelore')
+    score_1_9 = _perspicuus_rescale_with_cal(raw_score, cal)
     db.execute(
         """
         UPDATE perspicuus_nelore_records
@@ -2735,7 +3077,9 @@ def perspicuus_nelore_importar():
             if not farm_id or not date_iso or not animal_tag or not fs or not fs.filename:
                 flash('Informe fazenda, lote, data, brinco e imagem lateral.', 'error')
                 return redirect(url_for('perspicuus_nelore_importar'))
-            ok, msg = _nelore_save_one(db, now_iso, farm_id, lot_id, date_iso, animal_tag, fs)
+            birth_date = str(request.form.get('birth_date', '')).strip()
+            sex = str(request.form.get('sex', '')).strip().lower()
+            ok, msg = _nelore_save_one(db, now_iso, farm_id, lot_id, date_iso, animal_tag, fs, birth_date=birth_date, sex=sex)
             if ok:
                 db.commit(); flash('Imagem lateral inferida e guardada.', 'success')
             else:
@@ -2745,6 +3089,8 @@ def perspicuus_nelore_importar():
             farm_id = str(request.form.get('farm_id_batch', '')).strip()
             lot_id = str(request.form.get('lot_id_batch', '')).strip()
             date_iso = ecc_parse_iso_day(request.form.get('inference_date_batch', ''))
+            birth_date = str(request.form.get('birth_date_batch', '')).strip()
+            sex = str(request.form.get('sex_batch', '')).strip().lower()
             files = request.files.getlist('images_batch')
             if not farm_id or not date_iso or not files:
                 flash('Lote: informe fazenda, lote, data e ficheiros.', 'error')
@@ -2757,7 +3103,7 @@ def perspicuus_nelore_importar():
                 animal_tag = os.path.splitext(os.path.basename(fs.filename))[0].strip()
                 if not animal_tag:
                     n_err += 1; errs.append(f'Brinco ausente no nome: {fs.filename}'); continue
-                ok, msg = _nelore_save_one(db, now_iso, farm_id, lot_id, date_iso, animal_tag, fs)
+                ok, msg = _nelore_save_one(db, now_iso, farm_id, lot_id, date_iso, animal_tag, fs, birth_date=birth_date, sex=sex)
                 if ok:
                     n_ok += 1; db.commit()
                 else:
@@ -3024,6 +3370,73 @@ def perspicuus_nelore_dataset():
         q_filter=q,
         stats=stats,
     )
+
+
+@app.route('/perspicuus-nelore/calibragem')
+@login_required
+def perspicuus_nelore_calibragem():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    lot_filter = str(request.args.get('lot', '')).strip()
+    cal = _perspicuus_get_calibration(db, 'nelore')
+    farms, lots, animals, stats = _nelore_base_lists(db)
+    return render_template(
+        'perspicuus_nelore_calibragem.html',
+        calibration=cal,
+        farms=farms,
+        lots=lots,
+        farm_filter=farm_filter,
+        lot_filter=lot_filter,
+        stats=stats,
+        fixed_effects=PERSPICUUS_FIXED_EFFECTS['nelore'],
+        fixed_effect_labels=PERSPICUUS_FIXED_EFFECT_LABELS,
+    )
+
+
+@app.route('/api/perspicuus-nelore/calibragem/apply', methods=['POST'])
+@login_required
+def api_perspicuus_nelore_calibragem_apply():
+    data = request.get_json(silent=True) or {}
+    err, parsed = _validate_perspicuus_cal_payload(data, 'nelore')
+    if err:
+        return jsonify({'error': err}), 400
+    farm = str(data.get('farm_id') or '').strip()
+    lot = str(data.get('lot_id') or '').strip()
+    db = get_db()
+    now_iso = datetime.utcnow().isoformat() + 'Z'
+    db.execute(
+        """
+        INSERT INTO perspicuus_nelore_calibration
+            (id, raw_min, raw_max, res_min, res_max, step, fixed_effect, updated_at, updated_by)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            raw_min = excluded.raw_min,
+            raw_max = excluded.raw_max,
+            res_min = excluded.res_min,
+            res_max = excluded.res_max,
+            step = excluded.step,
+            fixed_effect = excluded.fixed_effect,
+            updated_at = excluded.updated_at,
+            updated_by = excluded.updated_by
+        """,
+        (
+            parsed['raw_min'], parsed['raw_max'], parsed['res_min'], parsed['res_max'],
+            parsed['step'], parsed['fixed_effect'], now_iso,
+            str(session.get('username') or 'unknown'),
+        ),
+    )
+    cal = _perspicuus_get_calibration(db, 'nelore')
+    info = _perspicuus_apply_calibration(db, 'nelore', cal, farm_id=farm, lot_id=lot)
+    db.commit()
+    return jsonify({
+        'status': 'ok',
+        'updated': info['updated'],
+        'groups': info['groups'],
+        'global_mean': info['global_mean'],
+        'farm_id_filter': farm or None,
+        'lot_id_filter': lot or None,
+        'calibration': cal,
+    })
 
 
 @app.route('/api/ecc/media/<farm>/<day>/<filename>')
@@ -4474,6 +4887,34 @@ def delete_perspicuus_angus_record(rid):
     return jsonify({'status': 'deleted', 'id': rid})
 
 
+@app.route('/api/record/perspicuus-angus/<int:rid>', methods=['PATCH'])
+@login_required
+def patch_perspicuus_angus_record(rid):
+    data = request.get_json(silent=True) or {}
+    allowed = {'birth_date', 'sex'}
+    updates = {k: str(v).strip() if v is not None else '' for k, v in data.items() if k in allowed}
+    if not updates:
+        return jsonify({'error': 'Nenhum campo válido'}), 400
+    if 'sex' in updates:
+        sx = updates['sex'].lower()
+        if sx not in {'', 'm', 'f'}:
+            return jsonify({'error': "sex deve ser vazio, 'm' ou 'f'"}), 400
+        updates['sex'] = sx
+    if 'birth_date' in updates and updates['birth_date']:
+        try:
+            updates['birth_date'] = ecc_parse_iso_day(updates['birth_date']) or ''
+        except Exception:  # noqa: BLE001
+            updates['birth_date'] = ''
+    sets = ', '.join(f"{k} = ?" for k in updates)
+    vals = list(updates.values()) + [rid]
+    db = get_db()
+    cur = db.execute(f"UPDATE perspicuus_angus_records SET {sets} WHERE id = ?", vals)
+    db.commit()
+    if cur.rowcount == 0:
+        return jsonify({'error': 'Não encontrado'}), 404
+    return jsonify({'status': 'updated'})
+
+
 @app.route('/api/record/perspicuus-nelore/<int:rid>', methods=['DELETE'])
 @login_required
 def delete_perspicuus_nelore_record(rid):
@@ -4483,6 +4924,34 @@ def delete_perspicuus_nelore_record(rid):
     if cur.rowcount == 0:
         return jsonify({'error': 'Não encontrado'}), 404
     return jsonify({'status': 'deleted', 'id': rid})
+
+
+@app.route('/api/record/perspicuus-nelore/<int:rid>', methods=['PATCH'])
+@login_required
+def patch_perspicuus_nelore_record(rid):
+    data = request.get_json(silent=True) or {}
+    allowed = {'birth_date', 'sex'}
+    updates = {k: str(v).strip() if v is not None else '' for k, v in data.items() if k in allowed}
+    if not updates:
+        return jsonify({'error': 'Nenhum campo válido'}), 400
+    if 'sex' in updates:
+        sx = updates['sex'].lower()
+        if sx not in {'', 'm', 'f'}:
+            return jsonify({'error': "sex deve ser vazio, 'm' ou 'f'"}), 400
+        updates['sex'] = sx
+    if 'birth_date' in updates and updates['birth_date']:
+        try:
+            updates['birth_date'] = ecc_parse_iso_day(updates['birth_date']) or ''
+        except Exception:  # noqa: BLE001
+            updates['birth_date'] = ''
+    sets = ', '.join(f"{k} = ?" for k in updates)
+    vals = list(updates.values()) + [rid]
+    db = get_db()
+    cur = db.execute(f"UPDATE perspicuus_nelore_records SET {sets} WHERE id = ?", vals)
+    db.commit()
+    if cur.rowcount == 0:
+        return jsonify({'error': 'Não encontrado'}), 404
+    return jsonify({'status': 'updated'})
 
 
 @app.route('/api/perspicuus-angus/reprocess-all', methods=['POST'])

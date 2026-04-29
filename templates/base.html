@@ -458,7 +458,7 @@ select { cursor: pointer; }
 
     {% if can_access_env('angus') %}
     <div class="nav-section">Perspicuus Angus</div>
-    <a href="{{ url_for('perspicuus_angus_importar') }}" class="nav-link {% if request.endpoint in ['perspicuus_angus_importar', 'perspicuus_angus_analise_individual', 'perspicuus_angus_analise_populacao', 'perspicuus_angus_dataset', 'perspicuus_angus_modelos'] %}active{% endif %}">
+    <a href="{{ url_for('perspicuus_angus_importar') }}" class="nav-link {% if request.endpoint in ['perspicuus_angus_importar', 'perspicuus_angus_analise_individual', 'perspicuus_angus_analise_populacao', 'perspicuus_angus_dataset', 'perspicuus_angus_calibragem', 'perspicuus_angus_modelos'] %}active{% endif %}">
       <span class="icon">🐂</span> Angus
     </a>
     <a href="{{ url_for('perspicuus_angus_importar') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_angus_importar' %}active{% endif %}">
@@ -473,6 +473,9 @@ select { cursor: pointer; }
     <a href="{{ url_for('perspicuus_angus_dataset') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_angus_dataset' %}active{% endif %}">
       <span class="icon">•</span> dataset
     </a>
+    <a href="{{ url_for('perspicuus_angus_calibragem') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_angus_calibragem' %}active{% endif %}">
+      <span class="icon">•</span> calibragem
+    </a>
     {% if is_admin_user %}
     <a href="{{ url_for('perspicuus_angus_modelos') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_angus_modelos' %}active{% endif %}">
       <span class="icon">•</span> modelos IA
@@ -481,7 +484,7 @@ select { cursor: pointer; }
 
     {% if can_access_env('nelore') %}
     <div class="nav-section">Perspicuus Nelore</div>
-    <a href="{{ url_for('perspicuus_nelore_importar') }}" class="nav-link {% if request.endpoint in ['perspicuus_nelore_importar', 'perspicuus_nelore_analise_individual', 'perspicuus_nelore_analise_populacao', 'perspicuus_nelore_dataset', 'perspicuus_nelore_modelos'] %}active{% endif %}">
+    <a href="{{ url_for('perspicuus_nelore_importar') }}" class="nav-link {% if request.endpoint in ['perspicuus_nelore_importar', 'perspicuus_nelore_analise_individual', 'perspicuus_nelore_analise_populacao', 'perspicuus_nelore_dataset', 'perspicuus_nelore_calibragem', 'perspicuus_nelore_modelos'] %}active{% endif %}">
       <span class="icon">🐃</span> Nelore
     </a>
     <a href="{{ url_for('perspicuus_nelore_importar') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_nelore_importar' %}active{% endif %}">
@@ -495,6 +498,9 @@ select { cursor: pointer; }
     </a>
     <a href="{{ url_for('perspicuus_nelore_dataset') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_nelore_dataset' %}active{% endif %}">
       <span class="icon">•</span> dataset
+    </a>
+    <a href="{{ url_for('perspicuus_nelore_calibragem') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_nelore_calibragem' %}active{% endif %}">
+      <span class="icon">•</span> calibragem
     </a>
     {% if is_admin_user %}
     <a href="{{ url_for('perspicuus_nelore_modelos') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_nelore_modelos' %}active{% endif %}">

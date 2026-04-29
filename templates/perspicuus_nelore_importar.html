@@ -38,6 +38,10 @@
         <div class="field"><label>Data</label><input type="date" name="inference_date" value="{{ today_iso }}" required></div>
         <div class="field"><label>Brinco</label><input name="animal_tag" required></div>
       </div>
+      <div class="row2">
+        <div class="field"><label>Nascimento</label><input type="date" name="birth_date"></div>
+        <div class="field"><label>Sexo</label><select name="sex"><option value="">não informado</option><option value="f">fêmea (f)</option><option value="m">macho (m)</option></select></div>
+      </div>
       <div class="field"><label>Imagem lateral</label><input type="file" name="image" accept="image/*" required></div>
       <button class="btn btn-accent btn-sm" type="submit">Inferir e guardar</button>
     </form>
@@ -50,7 +54,14 @@
         <div class="field"><label>Fazenda</label><input name="farm_id_batch" required></div>
         <div class="field"><label>Lote</label><input name="lot_id_batch" placeholder="opcional"></div>
       </div>
-      <div class="field"><label>Data</label><input type="date" name="inference_date_batch" required></div>
+      <div class="row2">
+        <div class="field"><label>Data</label><input type="date" name="inference_date_batch" required></div>
+        <div class="field"><label>Nascimento (aplica ao lote)</label><input type="date" name="birth_date_batch"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Sexo (aplica ao lote)</label><select name="sex_batch"><option value="">não informado</option><option value="f">fêmea (f)</option><option value="m">macho (m)</option></select></div>
+        <div class="field"></div>
+      </div>
       <div class="field"><label>Arquivos (nome = brinco)</label><input type="file" name="images_batch" multiple accept=".jpg,.jpeg,.png,.webp" required></div>
       <button class="btn btn-accent btn-sm" type="submit">Processar lote</button>
     </form>

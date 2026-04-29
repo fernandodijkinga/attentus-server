@@ -45,7 +45,7 @@
   <div class="card-title">Registros ({{ records|length }})</div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>ID</th><th>Data</th><th>Fazenda</th><th>Lote</th><th>Brinco</th><th>Raw</th><th>1-9</th><th>Imagem</th><th>Status</th><th>Ações</th></tr></thead>
+      <thead><tr><th>ID</th><th>Data</th><th>Fazenda</th><th>Lote</th><th>Brinco</th><th>Nascimento</th><th>Sexo</th><th>Raw</th><th>1-9</th><th>Imagem</th><th>Status</th><th>Ações</th></tr></thead>
       <tbody>
       {% for r in records %}
       <tr id="row-{{ r.id }}">
@@ -54,14 +54,19 @@
         <td>{{ r.farm_id }}</td>
         <td>{{ r.lot_id or '—' }}</td>
         <td class="mono">{{ r.animal_tag }}</td>
+        <td class="mono" id="birth-{{ r.id }}">{{ r.birth_date or '—' }}</td>
+        <td class="mono" id="sex-{{ r.id }}">{{ r.sex or '—' }}</td>
         <td class="mono">{{ '%.4f'|format(r.raw_score) if r.raw_score is not none else '—' }}</td>
         <td class="mono">{{ '%g'|format(r.score_1_9) if r.score_1_9 is not none else '—' }}</td>
         <td>{% if r.image_path %}<img class="thumb" src="{{ r.image_path }}" onclick="window.open('{{ r.image_path }}')">{% else %}—{% endif %}</td>
         <td class="mono">{{ r.error_text or 'ok' }}</td>
-        <td><button class="btn btn-danger btn-sm" onclick="deleteRow({{ r.id }})">Excluir</button></td>
+        <td class="flex gap-8">
+          <button class="btn btn-ghost btn-sm js-edit-meta" data-id="{{ r.id }}">Editar</button>
+          <button class="btn btn-danger btn-sm js-delete-row" data-id="{{ r.id }}">Excluir</button>
+        </td>
       </tr>
       {% else %}
-      <tr><td colspan="10"><div class="empty-state"><div class="icon">🗂</div>Sem registros para os filtros atuais.</div></td></tr>
+      <tr><td colspan="12"><div class="empty-state"><div class="icon">🗂</div>Sem registros para os filtros atuais.</div></td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -70,6 +75,28 @@
 {% endblock %}
 {% block scripts %}
 <script>
+
+
+async function editMeta(id){
+  const currentBirth = (document.getElementById(`birth-${id}`)?.textContent || '').trim();
+  const currentSex = (document.getElementById(`sex-${id}`)?.textContent || '').trim();
+  const birth = prompt('Nascimento (YYYY-MM-DD). Deixe vazio para limpar:', currentBirth === '—' ? '' : currentBirth);
+  if (birth === null) return;
+  const sex = prompt('Sexo: m, f, ou vazio para limpar', currentSex === '—' ? '' : currentSex);
+  if (sex === null) return;
+  const payload = { birth_date: birth.trim(), sex: sex.trim().toLowerCase() };
+  const r = await fetch(`/api/record/perspicuus-nelore/${id}`, {
+    method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload),
+  });
+  const data = await r.json().catch(() => ({}));
+  if(!r.ok){ toast(data.error || 'Erro ao atualizar', false); return; }
+  document.getElementById(`birth-${id}`).textContent = payload.birth_date || '—';
+  document.getElementById(`sex-${id}`).textContent = payload.sex || '—';
+  toast('Metadados atualizados');
+}
+
 async function deleteRow(id){
   if(!confirm('Excluir este registro do dataset Nelore?')) return;
   const r = await fetch(`/api/record/perspicuus-nelore/${id}`, {method:'DELETE'});
@@ -92,6 +119,13 @@ document.getElementById('btnReprocessAll')?.addEventListener('click', async () =
   if(!r.ok){ toast(data.error || 'Falha no reprocessamento', false); return; }
   toast(`Reprocessado: ${data.ok}/${data.total} (erros: ${data.errors})`);
   window.location.reload();
+});
+
+document.querySelectorAll('.js-edit-meta').forEach((btn) => {
+  btn.addEventListener('click', () => editMeta(btn.dataset.id));
+});
+document.querySelectorAll('.js-delete-row').forEach((btn) => {
+  btn.addEventListener('click', () => deleteRow(btn.dataset.id));
 });
 </script>
 {% endblock %}
