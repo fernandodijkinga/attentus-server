@@ -3,24 +3,11 @@
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
-.trait-scale-wrap{display:grid;gap:14px}
-.trait-scale-head{font-family:var(--mono);font-size:12px;color:var(--text2)}
-.trait-row{display:grid;gap:6px}
-.trait-row-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
-.trait-name{font-family:var(--mono);font-size:28px;font-weight:700;line-height:1;color:var(--text)}
-.trait-val{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--accent)}
-.trait-val small{font-size:11px;color:var(--text2);font-weight:600}
-.trait-scale-labels{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;color:var(--text2)}
-.trait-scale{
-  position:relative;height:14px;border-radius:999px;
-  background:linear-gradient(90deg,#ff4d6a 0%,#ff9f40 20%,#00e5a0 50%,#ff9f40 80%,#ff4d6a 100%);
-  border:1px solid rgba(0,0,0,.08);
-}
-.trait-scale-mid{position:absolute;left:50%;top:-18px;transform:translateX(-50%);font-family:var(--mono);font-size:11px;color:var(--text2)}
-.trait-marker{
-  position:absolute;top:-6px;width:4px;height:24px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.35);
-  border-radius:2px;transform:translateX(-50%);left:calc(var(--pct, 50) * 1%);
-}
+.animal-meta{font-family:var(--mono);font-size:12px;color:var(--text2);margin-bottom:12px}
+.quad-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.quad-card{min-height:300px}
+.animal-cover{width:100%;height:260px;object-fit:cover;border:1px solid var(--border);border-radius:10px;background:var(--surf2)}
+@media (max-width:1100px){.quad-grid{grid-template-columns:1fr}}
 </style>
 {% endblock %}
 {% block content %}
@@ -41,39 +28,34 @@
 {% set featured = images[0] if images and (images|length) > 0 else none %}
 <div class="card mb-16">
   <div class="card-title">Curva do animal — {{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
-  <div class="trait-scale-wrap">
-    <div class="trait-scale-head">
-      Fazenda: <b>{{ selected_farm or '—' }}</b> ·
-      Brinco: <b>{{ selected_animal or '—' }}</b> ·
-      Data ref.: <b>{{ featured.inference_date if featured else '—' }}</b> ·
-      Raw ref.: <b>{{ '%.4f'|format(featured.raw_score) if featured and featured.raw_score is not none else '—' }}</b> ·
-      Escore lote ref.: <b>{{ '%g'|format(featured.score_lot) if featured and featured.score_lot is not none else '—' }}</b> ·
-      Escore global ref.: <b>{{ '%g'|format(featured.score_global) if featured and featured.score_global is not none else (('%g'|format(featured.score_1_9)) if featured and featured.score_1_9 is not none else '—') }}</b>
-    </div>
-    <div id="angus-trait-scales">
-      {% if featured and featured.traits_items %}
-        {% for tname, tval in featured.traits_items %}
-        {% set tscore = tval|perspicuus_rescaled %}
-        <div class="trait-row">
-          <div class="trait-row-top">
-            <div class="trait-name">{{ tname }}</div>
-            <div class="trait-val">
-              {{ '%g'|format(tscore) if tscore is not none else '—' }}
-              <small>raw {{ '%.2f'|format(tval) }}</small>
-            </div>
-          </div>
-          <div class="trait-scale-labels"><span>1.00</span><span>5.00</span><span>9.00</span></div>
-          <div class="trait-scale">
-            <span class="trait-scale-mid">5.00</span>
-            {% if tscore is not none %}
-            <span class="trait-marker" style="--pct: {{ ((tscore - 1.0) / 8.0 * 100.0) }}"></span>
-            {% endif %}
-          </div>
-        </div>
-        {% endfor %}
+  <div class="animal-meta">
+    Fazenda: <b>{{ selected_farm or '—' }}</b> ·
+    Brinco: <b>{{ selected_animal or '—' }}</b> ·
+    Data ref.: <b>{{ featured.inference_date if featured else '—' }}</b> ·
+    Raw ref.: <b>{{ '%.4f'|format(featured.raw_score) if featured and featured.raw_score is not none else '—' }}</b> ·
+    Escore lote ref.: <b>{{ '%g'|format(featured.score_lot) if featured and featured.score_lot is not none else '—' }}</b> ·
+    Escore global ref.: <b>{{ '%g'|format(featured.score_global) if featured and featured.score_global is not none else (('%g'|format(featured.score_1_9)) if featured and featured.score_1_9 is not none else '—') }}</b>
+  </div>
+  <div class="quad-grid">
+    <div class="card quad-card">
+      <div class="card-title">Imagem do animal</div>
+      {% if featured and (featured.thumb_path or featured.image_path) %}
+      <img src="{{ featured.thumb_path or featured.image_path }}" class="animal-cover" onclick="window.open('{{ featured.bbox_path or featured.image_path }}')">
       {% else %}
-      <div class="empty-state"><div class="icon">📉</div>Sem traits para exibir.</div>
+      <div class="empty-state"><div class="icon">🖼</div>Sem imagem.</div>
       {% endif %}
+    </div>
+    <div class="card quad-card">
+      <div class="card-title">Raw score</div>
+      <div style="height:260px"><canvas id="angus-raw-plot"></canvas></div>
+    </div>
+    <div class="card quad-card">
+      <div class="card-title">Escore lote</div>
+      <div style="height:260px"><canvas id="angus-lot-plot"></canvas></div>
+    </div>
+    <div class="card quad-card">
+      <div class="card-title">Escore global</div>
+      <div style="height:260px"><canvas id="angus-global-plot"></canvas></div>
     </div>
   </div>
 </div>
@@ -92,4 +74,31 @@
   </table></div>
 </div>
 {% endblock %}
-{% block scripts %}{% endblock %}
+{% block scripts %}
+<script id="angus-points-json" type="application/json">{{ points|tojson }}</script>
+<script>
+function readJson(id, fallback){
+  const el = document.getElementById(id);
+  if (!el) return fallback;
+  try { return JSON.parse(el.textContent || 'null') ?? fallback; } catch { return fallback; }
+}
+const PTS = readJson('angus-points-json', []);
+const rows = (Array.isArray(PTS) ? PTS : []).slice().sort((a,b)=>String(a.inference_date).localeCompare(String(b.inference_date))||((a.id||0)-(b.id||0)));
+const labels = rows.map((r)=>r.inference_date);
+function drawLine(canvasId, values, color, minY=null, maxY=null){
+  const c = document.getElementById(canvasId);
+  if (!c) return;
+  const cfg = {responsive:true,maintainAspectRatio:false,scales:{y:{}}};
+  if (minY !== null) cfg.scales.y.min = minY;
+  if (maxY !== null) cfg.scales.y.max = maxY;
+  new Chart(c.getContext('2d'),{
+    type:'line',
+    data:{labels,datasets:[{data:values,borderColor:color,backgroundColor:'rgba(26,111,212,.12)',fill:true,tension:.25}]},
+    options:cfg,
+  });
+}
+drawLine('angus-raw-plot', rows.map((r)=>r.raw_score!=null?Number(r.raw_score):null), '#d9782b');
+drawLine('angus-lot-plot', rows.map((r)=>r.score_lot!=null?Number(r.score_lot):null), '#0d7a5e', 1, 9);
+drawLine('angus-global-plot', rows.map((r)=>r.score_global!=null?Number(r.score_global):null), '#1a6fd4', 1, 9);
+</script>
+{% endblock %}
