@@ -28,6 +28,7 @@ import os
 import re
 import math
 import random
+import hashlib
 import sqlite3
 import json
 import threading
@@ -309,6 +310,109 @@ def _perspicuus_lot_key(breed: str, farm_id: str, lot_id: str) -> str:
     return farm
 
 
+def _perspicuus_robust_cfg() -> dict[str, float]:
+    """Parâmetros simples de robustez para mini-BLUP parcial."""
+    def _f(name: str, default: float, lo: float) -> float:
+        try:
+            v = float(os.environ.get(name, str(default)))
+        except (TypeError, ValueError):
+            v = default
+        return max(lo, v)
+    return {
+        'fe_min_n': _f('PERSPICUUS_FE_MIN_N', 8.0, 1.0),
+        'fe_shrink_k': _f('PERSPICUUS_FE_SHRINK_K', 20.0, 0.0),
+        'lot_blend_k': _f('PERSPICUUS_LOT_BLEND_K', 12.0, 0.0),
+    }
+
+
+def _perspicuus_group_keys_with_fallback(rec: dict[str, Any], fixed_effects: list[str]) -> list[str]:
+    """Hierarquia de grupos: combinação completa -> combinações mais simples."""
+    if not fixed_effects:
+        return []
+    keys: list[str] = []
+    for n in range(len(fixed_effects), 0, -1):
+        k = _perspicuus_record_group_key(rec, fixed_effects[:n])
+        if k and k not in keys:
+            keys.append(k)
+    return keys
+
+
+def _perspicuus_group_stats(
+    db,
+    table: str,
+    fixed_effects: list[str],
+) -> tuple[dict[str, tuple[float, int]], float | None]:
+    stats: dict[str, tuple[float, int]] = {}
+    if not fixed_effects:
+        return stats, None
+    sums: dict[str, list[float]] = {}
+    all_vals: list[float] = []
+    rows = db.execute(
+        f"SELECT raw_score, farm_id, lot_id, birth_date, sex FROM {table} WHERE raw_score IS NOT NULL"
+    ).fetchall()
+    for r in rows:
+        try:
+            raw = float(r['raw_score'])
+        except (TypeError, ValueError):
+            continue
+        d = dict(r)
+        for gk in _perspicuus_group_keys_with_fallback(d, fixed_effects):
+            box = sums.setdefault(gk, [0.0, 0.0])
+            box[0] += raw
+            box[1] += 1.0
+        all_vals.append(raw)
+    if not all_vals:
+        return stats, None
+    global_mean = sum(all_vals) / len(all_vals)
+    for g, box in sums.items():
+        n = int(box[1])
+        if n <= 0:
+            continue
+        stats[g] = (float(box[0] / n), n)
+    return stats, float(global_mean)
+
+
+def _perspicuus_adjust_raw_with_effects(
+    raw_val: float,
+    rec: dict[str, Any],
+    fixed_effects: list[str],
+    group_stats: dict[str, tuple[float, int]],
+    global_mean: float | None,
+    cfg: dict[str, float],
+) -> float:
+    if not fixed_effects or global_mean is None:
+        return raw_val
+    min_n = int(cfg.get('fe_min_n', 8.0))
+    shrink_k = float(cfg.get('fe_shrink_k', 20.0))
+    for gk in _perspicuus_group_keys_with_fallback(rec, fixed_effects):
+        item = group_stats.get(gk)
+        if not item:
+            continue
+        mu_g, n_g = item
+        if n_g < min_n:
+            continue
+        w = n_g / (n_g + shrink_k) if shrink_k > 0 else 1.0
+        mu_star = (w * mu_g) + ((1.0 - w) * global_mean)
+        return float(raw_val - mu_star + global_mean)
+    return raw_val
+
+
+def _perspicuus_calibration_version(breed: str, cal: dict[str, Any]) -> str:
+    payload = {
+        'breed': breed,
+        'raw_min': cal.get('raw_min'),
+        'raw_max': cal.get('raw_max'),
+        'res_min': cal.get('res_min'),
+        'res_max': cal.get('res_max'),
+        'step': cal.get('step'),
+        'fixed_effects': cal.get('fixed_effects') or cal.get('fixed_effect') or '',
+        'updated_at': cal.get('updated_at'),
+        'updated_by': cal.get('updated_by'),
+    }
+    raw = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+    return hashlib.sha1(raw.encode('utf-8')).hexdigest()[:12]
+
+
 def _perspicuus_score_pair_for_record(
     db,
     breed: str,
@@ -316,6 +420,8 @@ def _perspicuus_score_pair_for_record(
     farm_id: str,
     lot_id: str,
     cal: dict[str, Any],
+    birth_date: str = '',
+    sex: str = '',
     adjusted_raw_for_global: float | None = None,
 ) -> tuple[float | None, float | None]:
     if raw_score is None:
@@ -324,11 +430,24 @@ def _perspicuus_score_pair_for_record(
         raw_val = float(raw_score)
     except (TypeError, ValueError):
         return None, None
+    table = PERSPICUUS_BREED_TABLE.get(breed)
+    cfg = _perspicuus_robust_cfg()
     g_raw = adjusted_raw_for_global if adjusted_raw_for_global is not None else raw_val
+    if adjusted_raw_for_global is None and table:
+        fixed_effects = cal.get('fixed_effects')
+        if not isinstance(fixed_effects, list):
+            fixed_effects = _perspicuus_parse_fixed_effects(cal.get('fixed_effect') or '', breed)
+        group_stats, global_mean = _perspicuus_group_stats(db, table, fixed_effects)
+        drec = {
+            'farm_id': str(farm_id or '').strip(),
+            'lot_id': str(lot_id or '').strip(),
+            'birth_date': str(birth_date or '').strip(),
+            'sex': str(sex or '').strip().lower(),
+        }
+        g_raw = _perspicuus_adjust_raw_with_effects(raw_val, drec, fixed_effects, group_stats, global_mean, cfg)
     cal_global = _perspicuus_cal_with_auto_bounds(db, breed, cal, include_raw=g_raw)
     score_global = _perspicuus_rescale_with_cal(g_raw, cal_global)
 
-    table = PERSPICUUS_BREED_TABLE.get(breed)
     if not table:
         return score_global, score_global
     cond = ['raw_score IS NOT NULL', 'farm_id = ?']
@@ -338,16 +457,21 @@ def _perspicuus_score_pair_for_record(
         cond.append('lot_id = ?')
         params.append(lot)
     row = db.execute(
-        f"SELECT MIN(raw_score) AS mn, MAX(raw_score) AS mx FROM {table} WHERE {' AND '.join(cond)}",
+        f"SELECT MIN(raw_score) AS mn, MAX(raw_score) AS mx, COUNT(*) AS n FROM {table} WHERE {' AND '.join(cond)}",
         params,
     ).fetchone()
     cal_lot = dict(cal_global)
     try:
         mn = float(row['mn']) if row and row['mn'] is not None else None
         mx = float(row['mx']) if row and row['mx'] is not None else None
+        n = int(row['n']) if row and row['n'] is not None else 0
         if mn is not None and mx is not None and mx > mn:
-            cal_lot['raw_min'] = mn
-            cal_lot['raw_max'] = mx
+            gmn = float(cal_global.get('raw_min', mn))
+            gmx = float(cal_global.get('raw_max', mx))
+            k_lot = float(cfg.get('lot_blend_k', 12.0))
+            w_lot = n / (n + k_lot) if k_lot > 0 else 1.0
+            cal_lot['raw_min'] = (w_lot * mn) + ((1.0 - w_lot) * gmn)
+            cal_lot['raw_max'] = (w_lot * mx) + ((1.0 - w_lot) * gmx)
     except (TypeError, ValueError):
         pass
     score_lot = _perspicuus_rescale_with_cal(raw_val, cal_lot)
@@ -387,11 +511,11 @@ def _perspicuus_export_bounds_cache(db, breed: str) -> dict[str, Any]:
         gmx = float(row['mx']) if row and row['mx'] is not None else None
     except (TypeError, ValueError):
         gmn, gmx = None, None
-    lot_map: dict[tuple[str, str], tuple[float, float]] = {}
+    lot_map: dict[tuple[str, str], tuple[float, float, int]] = {}
     lot_sql = (
         "SELECT farm_id, "
         "CASE WHEN COALESCE(TRIM(lot_id), '') = '' THEN '' ELSE TRIM(lot_id) END AS lot_key, "
-        "MIN(raw_score) AS mn, MAX(raw_score) AS mx "
+        "MIN(raw_score) AS mn, MAX(raw_score) AS mx, COUNT(*) AS n "
         f"FROM {table} WHERE raw_score IS NOT NULL "
         "GROUP BY farm_id, "
         "CASE WHEN COALESCE(TRIM(lot_id), '') = '' THEN '' ELSE TRIM(lot_id) END"
@@ -402,43 +526,25 @@ def _perspicuus_export_bounds_cache(db, breed: str) -> dict[str, Any]:
             lotk = str(lr['lot_key'] or '').strip()
             mn = float(lr['mn']) if lr['mn'] is not None else None
             mx = float(lr['mx']) if lr['mx'] is not None else None
+            n = int(lr['n']) if lr['n'] is not None else 0
             if mn is not None and mx is not None and mx > mn:
-                lot_map[(farm, lotk)] = (mn, mx)
+                lot_map[(farm, lotk)] = (mn, mx, n)
         except (TypeError, ValueError):
             continue
     cal = _perspicuus_get_calibration(db, breed)
     fixed_effects = cal.get('fixed_effects')
     if not isinstance(fixed_effects, list):
         fixed_effects = _perspicuus_parse_fixed_effects(cal.get('fixed_effect') or '', breed)
-    group_means: dict[str, float] = {}
-    global_mean: float | None = None
-    if fixed_effects:
-        sums: dict[str, list[float]] = {}
-        all_vals: list[float] = []
-        for r in db.execute(f"SELECT * FROM {table} WHERE raw_score IS NOT NULL"):
-            try:
-                v = float(r['raw_score'])
-            except (TypeError, ValueError):
-                continue
-            d = dict(r)
-            g = _perspicuus_record_group_key(d, fixed_effects)
-            if not g:
-                continue
-            sums.setdefault(g, []).append(v)
-            all_vals.append(v)
-        for g, arr in sums.items():
-            if arr:
-                group_means[g] = sum(arr) / len(arr)
-        if all_vals:
-            global_mean = sum(all_vals) / len(all_vals)
+    group_stats, global_mean = _perspicuus_group_stats(db, table, fixed_effects)
     return {
         'cal': cal,
         'table_mn': gmn,
         'table_mx': gmx,
         'lot_map': lot_map,
         'fixed_effects': fixed_effects,
-        'group_means': group_means,
+        'group_stats': group_stats,
         'global_mean': global_mean,
+        'robust_cfg': _perspicuus_robust_cfg(),
     }
 
 
@@ -461,12 +567,10 @@ def _perspicuus_export_resolve_lot_global(d: dict[str, Any], cache: dict[str, An
     adj = raw_val
     fe = cache.get('fixed_effects') or []
     gm = cache.get('global_mean')
-    gmeans = cache.get('group_means') or {}
+    gst = cache.get('group_stats') or {}
+    cfg = cache.get('robust_cfg') or _perspicuus_robust_cfg()
     if fe and gm is not None:
-        gk = _perspicuus_record_group_key(d, fe)
-        mu_g = gmeans.get(gk)
-        if mu_g is not None:
-            adj = raw_val - mu_g + gm
+        adj = _perspicuus_adjust_raw_with_effects(raw_val, d, fe, gst, gm, cfg)
     g_raw = adj
     bounds_g = _perspicuus_merge_table_raw_bounds(table_mn, table_mx, g_raw)
     cal_global = dict(cal)
@@ -480,10 +584,14 @@ def _perspicuus_export_resolve_lot_global(d: dict[str, Any], cache: dict[str, An
     cal_lot = dict(cal_global)
     lm = cache.get('lot_map', {}).get(lot_key)
     if lm:
-        mn, mx = lm
+        mn, mx, n = lm
         if mn is not None and mx is not None and mx > mn:
-            cal_lot['raw_min'] = mn
-            cal_lot['raw_max'] = mx
+            gmn = float(cal_global.get('raw_min', mn))
+            gmx = float(cal_global.get('raw_max', mx))
+            k_lot = float(cfg.get('lot_blend_k', 12.0))
+            w_lot = n / (n + k_lot) if k_lot > 0 else 1.0
+            cal_lot['raw_min'] = (w_lot * mn) + ((1.0 - w_lot) * gmn)
+            cal_lot['raw_max'] = (w_lot * mx) + ((1.0 - w_lot) * gmx)
     score_lot = _perspicuus_rescale_with_cal(raw_val, cal_lot)
     return score_lot, score_global
 
@@ -937,27 +1045,8 @@ def _perspicuus_apply_calibration(
     fixed_effects = cal_eff.get('fixed_effects')
     if not isinstance(fixed_effects, list):
         fixed_effects = _perspicuus_parse_fixed_effects(cal_eff.get('fixed_effect') or '', breed)
-    group_means: dict[str, float] = {}
-    global_mean: float | None = None
-    if fixed_effects and rows:
-        sums: dict[str, list[float]] = {}
-        all_vals: list[float] = []
-        for r in rows:
-            try:
-                v = float(r['raw_score'])
-            except (TypeError, ValueError):
-                continue
-            d = dict(r)
-            g = _perspicuus_record_group_key(d, fixed_effects)
-            if not g:
-                continue
-            sums.setdefault(g, []).append(v)
-            all_vals.append(v)
-        for g, arr in sums.items():
-            if arr:
-                group_means[g] = sum(arr) / len(arr)
-        if all_vals:
-            global_mean = sum(all_vals) / len(all_vals)
+    group_stats, global_mean = _perspicuus_group_stats(db, table, fixed_effects)
+    robust_cfg = _perspicuus_robust_cfg()
 
     updated = 0
     for r in rows:
@@ -968,10 +1057,7 @@ def _perspicuus_apply_calibration(
         adj = raw
         if fixed_effects and global_mean is not None:
             d = dict(r)
-            g = _perspicuus_record_group_key(d, fixed_effects)
-            mu_g = group_means.get(g)
-            if mu_g is not None:
-                adj = raw - mu_g + global_mean
+            adj = _perspicuus_adjust_raw_with_effects(raw, d, fixed_effects, group_stats, global_mean, robust_cfg)
         score_lot, score_global = _perspicuus_score_pair_for_record(
             db,
             breed,
@@ -988,7 +1074,7 @@ def _perspicuus_apply_calibration(
         updated += 1
     return {
         'updated': updated,
-        'groups': len(group_means),
+        'groups': len(group_stats),
         'global_mean': global_mean,
         'raw_min_used': cal_eff.get('raw_min'),
         'raw_max_used': cal_eff.get('raw_max'),
@@ -3262,8 +3348,9 @@ def _angus_save_one(
             bbox_web = f"/api/perspicuus-angus/media/{safe_farm}/{safe_day}/{box_name}"
     cal = _perspicuus_get_calibration(db, 'angus')
     cal = _perspicuus_cal_with_auto_bounds(db, 'angus', cal, include_raw=raw_score)
+    cal_ver = _perspicuus_calibration_version('angus', cal)
     score_lot, score_global = _perspicuus_score_pair_for_record(
-        db, 'angus', raw_score, farm_id, lot_id, cal
+        db, 'angus', raw_score, farm_id, lot_id, cal, birth_date=birth_date, sex=sex
     )
     web_path = f"/api/perspicuus-angus/media/{safe_farm}/{safe_day}/{local_name}"
     db.execute(
@@ -3278,7 +3365,7 @@ def _angus_save_one(
             now_iso, farm_id, lot_id, birth_date, sex, inference_date, animal_tag, fs.filename,
             web_path, thumb_web, bbox_web, raw_score, score_lot, score_global, score_global,
             json.dumps(traits, ensure_ascii=False),
-            json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox')}, ensure_ascii=False),
+            json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox'), 'calibration_version': cal_ver}, ensure_ascii=False),
             err,
         ),
     )
@@ -3401,8 +3488,10 @@ def _angus_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
             bbox_web = f"/api/perspicuus-angus/media/{farm_slug}/{day_slug}/{box_name}"
     cal = _perspicuus_get_calibration(db, 'angus')
     cal = _perspicuus_cal_with_auto_bounds(db, 'angus', cal, include_raw=raw_score)
+    cal_ver = _perspicuus_calibration_version('angus', cal)
     score_lot, score_global = _perspicuus_score_pair_for_record(
-        db, 'angus', raw_score, str(row['farm_id'] or ''), str(row['lot_id'] or ''), cal
+        db, 'angus', raw_score, str(row['farm_id'] or ''), str(row['lot_id'] or ''), cal,
+        birth_date=str(row['birth_date'] or ''), sex=str(row['sex'] or '')
     )
     db.execute(
         """
@@ -3418,7 +3507,7 @@ def _angus_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
             thumb_web,
             bbox_web,
             json.dumps(traits, ensure_ascii=False),
-            json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox')}, ensure_ascii=False),
+            json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox'), 'calibration_version': cal_ver}, ensure_ascii=False),
             err,
             rid,
         ),
@@ -3846,8 +3935,9 @@ def _nelore_save_one(
             bbox_web = f"/api/perspicuus-nelore/media/{safe_farm}/{safe_day}/{box_name}"
     cal = _perspicuus_get_calibration(db, 'nelore')
     cal = _perspicuus_cal_with_auto_bounds(db, 'nelore', cal, include_raw=raw_score)
+    cal_ver = _perspicuus_calibration_version('nelore', cal)
     score_lot, score_global = _perspicuus_score_pair_for_record(
-        db, 'nelore', raw_score, farm_id, lot_id, cal
+        db, 'nelore', raw_score, farm_id, lot_id, cal, birth_date=birth_date, sex=sex
     )
     web_path = f"/api/perspicuus-nelore/media/{safe_farm}/{safe_day}/{local_name}"
     db.execute(
@@ -3862,7 +3952,7 @@ def _nelore_save_one(
             now_iso, farm_id, lot_id, birth_date, sex, inference_date, animal_tag, fs.filename,
             web_path, thumb_web, bbox_web, raw_score, score_lot, score_global, score_global,
             json.dumps(traits, ensure_ascii=False),
-            json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox')}, ensure_ascii=False),
+            json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox'), 'calibration_version': cal_ver}, ensure_ascii=False),
             err,
         ),
     )
@@ -4000,8 +4090,10 @@ def _nelore_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
             bbox_web = f"/api/perspicuus-nelore/media/{farm_slug}/{day_slug}/{box_name}"
     cal = _perspicuus_get_calibration(db, 'nelore')
     cal = _perspicuus_cal_with_auto_bounds(db, 'nelore', cal, include_raw=raw_score)
+    cal_ver = _perspicuus_calibration_version('nelore', cal)
     score_lot, score_global = _perspicuus_score_pair_for_record(
-        db, 'nelore', raw_score, str(row['farm_id'] or ''), str(row['lot_id'] or ''), cal
+        db, 'nelore', raw_score, str(row['farm_id'] or ''), str(row['lot_id'] or ''), cal,
+        birth_date=str(row['birth_date'] or ''), sex=str(row['sex'] or '')
     )
     db.execute(
         """
@@ -4017,7 +4109,7 @@ def _nelore_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
             thumb_web,
             bbox_web,
             json.dumps(traits, ensure_ascii=False),
-            json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox')}, ensure_ascii=False),
+            json.dumps({'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox'), 'calibration_version': cal_ver}, ensure_ascii=False),
             err,
             rid,
         ),
