@@ -61,7 +61,11 @@ from ecc_module import (
     ecc_recurrent_animal_trends,
     rescale_ecc_1_to_5_quarter,
 )
-from perspicuus_scoring import rescale_perspicuus_trait_score, traits_rescaled_from_traits
+from perspicuus_scoring import (
+    rescale_perspicuus_trait_score,
+    traits_rescaled_from_traits,
+    traits_rescaled_with_per_trait_bounds,
+)
 
 TZ_BR = ZoneInfo('America/Sao_Paulo')
 
@@ -507,6 +511,104 @@ def _perspicuus_lot_raw_window(
     return float(blended_mn), float(blended_mx)
 
 
+def _perspicuus_collect_trait_lot_stats(
+    db,
+    table: str,
+    farm_id: str,
+    lot_id: str,
+) -> dict[str, tuple[float, float, int]]:
+    """Por trait: (min raw, max raw, n) nos registos da fazenda+lote (critério alinhado a ``score_lot``)."""
+    cond = ['farm_id = ?']
+    params: list[Any] = [str(farm_id or '').strip()]
+    lot = str(lot_id or '').strip()
+    if lot:
+        cond.append('lot_id = ?')
+        params.append(lot)
+    by_trait: dict[str, list[float]] = defaultdict(list)
+    for row in db.execute(
+        f"SELECT traits_json FROM {table} WHERE {' AND '.join(cond)}",
+        params,
+    ).fetchall():
+        try:
+            tj = json.loads(row['traits_json'] or '{}')
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(tj, dict):
+            continue
+        for k, v in tj.items():
+            try:
+                by_trait[str(k)].append(float(v))
+            except (TypeError, ValueError):
+                continue
+    out: dict[str, tuple[float, float, int]] = {}
+    for k, vals in by_trait.items():
+        if not vals:
+            continue
+        out[k] = (min(vals), max(vals), len(vals))
+    return out
+
+
+def _perspicuus_trait_blended_bounds_map(
+    db,
+    table: str,
+    farm_id: str,
+    lot_id: str,
+) -> dict[str, tuple[float, float]]:
+    """Limites raw por trait para reescala 1…9: janela do lote com shrink para −4…+4."""
+    stats = _perspicuus_collect_trait_lot_stats(db, table, farm_id, lot_id)
+    cfg = _perspicuus_robust_cfg()
+    cal_g = {'raw_min': -4.0, 'raw_max': 4.0}
+    out: dict[str, tuple[float, float]] = {}
+    for t, (mn, mx, n) in stats.items():
+        if mx > mn:
+            lo, hi = _perspicuus_lot_raw_window(mn, mx, n, cal_g, cfg)
+        else:
+            lo, hi = -4.0, 4.0
+        out[t] = (lo, hi)
+    return out
+
+
+def _perspicuus_traits_rescaled_for_lot(
+    db,
+    breed: str,
+    farm_id: str,
+    lot_id: str,
+    traits: dict[str, Any],
+) -> dict[str, float]:
+    if not isinstance(traits, dict):
+        return {}
+    table = PERSPICUUS_BREED_TABLE.get((breed or '').strip().lower())
+    if not table:
+        return traits_rescaled_from_traits(traits)
+    bounds = _perspicuus_trait_blended_bounds_map(db, table, str(farm_id or ''), str(lot_id or ''))
+    return traits_rescaled_with_per_trait_bounds(traits, bounds)
+
+
+def _perspicuus_traits_items_for_display(
+    db,
+    breed: str,
+    farm_id: str,
+    lot_id: str,
+    traits_json_str: str | None,
+) -> list[tuple[str, float, float | None]]:
+    """(nome, raw, escore_1_9_lote) ordenado; o terceiro valor usa min/max por trait no lote."""
+    try:
+        traits = json.loads(traits_json_str or '{}')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        traits = {}
+    if not isinstance(traits, dict):
+        traits = {}
+    lot_rs = _perspicuus_traits_rescaled_for_lot(db, breed, farm_id, lot_id, traits)
+    items: list[tuple[str, float, float | None]] = []
+    for k in sorted(traits.keys(), key=lambda x: str(x)):
+        try:
+            raw = float(traits[k])
+        except (TypeError, ValueError):
+            continue
+        items.append((str(k), raw, lot_rs.get(str(k))))
+    return items
+
+
 def _perspicuus_score_pair_for_record(
     db,
     breed: str,
@@ -818,6 +920,18 @@ def _perspicuus_population_analysis(rows: list[sqlite3.Row], breed: str) -> dict
     traits_res_all: dict[str, list[float]] = defaultdict(list)
     trait_day: dict[str, dict[str, dict[str, float]]] = defaultdict(lambda: defaultdict(lambda: {'raw_sum': 0.0, 'res_sum': 0.0, 'n': 0}))
 
+    trait_bounds_cache: dict[tuple[str, str], dict[str, tuple[float, float]]] = {}
+    breed_table = PERSPICUUS_BREED_TABLE.get(breed)
+    if breed_table:
+        db_pop = get_db()
+        for fk, lk in {
+            (str(x.get('farm_id') or '').strip(), str(x.get('lot_id') or '').strip())
+            for x in all_rows
+        }:
+            trait_bounds_cache[(fk, lk)] = _perspicuus_trait_blended_bounds_map(
+                db_pop, breed_table, fk, lk
+            )
+
     for r in all_rows:
         sc_lot = r.get('score_lot')
         sc_global = r.get('score_global')
@@ -885,13 +999,20 @@ def _perspicuus_population_analysis(rows: list[sqlite3.Row], breed: str) -> dict
         except (TypeError, ValueError, json.JSONDecodeError):
             traits = {}
         if isinstance(traits, dict):
+            fk = str(r.get('farm_id') or '').strip()
+            lk = str(r.get('lot_id') or '').strip()
+            bmap_tr = trait_bounds_cache.get((fk, lk), {})
             for tname, tval in traits.items():
                 try:
                     tv = float(tval)
                 except (TypeError, ValueError):
                     continue
                 traits_all[str(tname)].append(tv)
-                trs = rescale_perspicuus_trait_score(tv)
+                if bmap_tr:
+                    tr_one = traits_rescaled_with_per_trait_bounds({str(tname): tv}, bmap_tr)
+                    trs = tr_one.get(str(tname), rescale_perspicuus_trait_score(tv))
+                else:
+                    trs = rescale_perspicuus_trait_score(tv)
                 traits_res_all[str(tname)].append(trs)
                 if day:
                     bucket = trait_day[str(tname)][day]
@@ -1122,7 +1243,7 @@ def _perspicuus_dedupe_latest_rows(rows: list[sqlite3.Row]) -> list[dict[str, An
 def _perspicuus_farm_lote_dashboard(db, breed: str, farm_id: str) -> dict[str, Any]:
     """
     Dados para análise por lote numa fazenda: violino/box por lote, grelha por trait,
-    ranking de lotes por média de trait (escala 1–9 reescalada).
+    ranking de lotes por média de trait (1–9 com min/max por trait no lote + shrink).
     """
     farm_id = (farm_id or '').strip()
     empty: dict[str, Any] = {
@@ -1150,26 +1271,37 @@ def _perspicuus_farm_lote_dashboard(db, breed: str, farm_id: str) -> dict[str, A
     def lot_label(lot: str) -> str:
         return lot if lot else '(sem lote)'
 
-    by_lot: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_lot_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for d in deduped:
         lotk = lot_label(str(d.get('lot_id') or '').strip())
-        g = _perspicuus_row_global_score(d)
-        try:
-            tj = json.loads(d.get('traits_json') or '{}')
-        except (TypeError, ValueError, json.JSONDecodeError):
-            tj = {}
-        traits_res = traits_rescaled_from_traits(tj) if isinstance(tj, dict) else {}
-        if g is None and not traits_res:
-            continue
-        thumb = str(d.get('thumb_path') or d.get('image_path') or '').strip()
-        by_lot[lotk].append({
-            'lot': lotk,
-            'animal': str(d.get('animal_tag') or ''),
-            'global': round(g, 3) if g is not None else None,
-            'traits': {k: round(float(v), 3) for k, v in traits_res.items()},
-            'thumb': thumb,
-            'id': int(d.get('id') or 0),
-        })
+        by_lot_rows[lotk].append(d)
+
+    bounds_by_lot: dict[str, dict[str, tuple[float, float]]] = {}
+    for lotk in by_lot_rows:
+        lid = '' if lotk == '(sem lote)' else str(lotk).strip()
+        bounds_by_lot[lotk] = _perspicuus_trait_blended_bounds_map(db, table, farm_id, lid)
+
+    by_lot: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for lotk, rows in by_lot_rows.items():
+        bmap = bounds_by_lot[lotk]
+        for d in rows:
+            g = _perspicuus_row_global_score(d)
+            try:
+                tj = json.loads(d.get('traits_json') or '{}')
+            except (TypeError, ValueError, json.JSONDecodeError):
+                tj = {}
+            traits_res = traits_rescaled_with_per_trait_bounds(tj, bmap) if isinstance(tj, dict) else {}
+            if g is None and not traits_res:
+                continue
+            thumb = str(d.get('thumb_path') or d.get('image_path') or '').strip()
+            by_lot[lotk].append({
+                'lot': lotk,
+                'animal': str(d.get('animal_tag') or ''),
+                'global': round(g, 3) if g is not None else None,
+                'traits': {k: round(float(v), 3) for k, v in traits_res.items()},
+                'thumb': thumb,
+                'id': int(d.get('id') or 0),
+            })
 
     violin_lots: list[dict[str, Any]] = []
     for lot, members in by_lot.items():
@@ -3868,20 +4000,13 @@ def perspicuus_angus_analise_individual():
         images = []
         for x in im:
             d = dict(x)
-            try:
-                traits = json.loads(d.get('traits_json') or '{}')
-            except (TypeError, ValueError, json.JSONDecodeError):
-                traits = {}
-            if not isinstance(traits, dict):
-                traits = {}
-            traits_items = []
-            for k, v in traits.items():
-                try:
-                    traits_items.append((str(k), float(v)))
-                except (TypeError, ValueError):
-                    continue
-            traits_items.sort(key=lambda t: t[0])
-            d['traits_items'] = traits_items
+            d['traits_items'] = _perspicuus_traits_items_for_display(
+                db,
+                'angus',
+                str(d.get('farm_id') or ''),
+                str(d.get('lot_id') or ''),
+                d.get('traits_json'),
+            )
             images.append(d)
     return render_template(
         'perspicuus_angus_analise_individual.html',
@@ -4565,20 +4690,13 @@ def perspicuus_nelore_analise_individual():
         images = []
         for x in im:
             d = dict(x)
-            try:
-                traits = json.loads(d.get('traits_json') or '{}')
-            except (TypeError, ValueError, json.JSONDecodeError):
-                traits = {}
-            if not isinstance(traits, dict):
-                traits = {}
-            traits_items = []
-            for k, v in traits.items():
-                try:
-                    traits_items.append((str(k), float(v)))
-                except (TypeError, ValueError):
-                    continue
-            traits_items.sort(key=lambda t: t[0])
-            d['traits_items'] = traits_items
+            d['traits_items'] = _perspicuus_traits_items_for_display(
+                db,
+                'nelore',
+                str(d.get('farm_id') or ''),
+                str(d.get('lot_id') or ''),
+                d.get('traits_json'),
+            )
             images.append(d)
     return render_template(
         'perspicuus_nelore_analise_individual.html',
@@ -7217,15 +7335,27 @@ def _perspicuus_traits_summary(traits_json: str | None) -> str:
     return '; '.join(parts)
 
 
-def _perspicuus_traits_reescalado_summary(traits_json: str | None) -> str:
-    """Traits em escala de apresentação 1…9 (mapeamento fixo −4…+4), por trait."""
+def _perspicuus_traits_reescalado_summary(
+    traits_json: str | None,
+    *,
+    db: Any = None,
+    breed: str | None = None,
+    farm_id: str | None = None,
+    lot_id: str | None = None,
+) -> str:
+    """Traits em 1…9 (passo 0,5): Angus/Nelore com janela por trait no lote; senão −4…+4 fixo."""
     try:
         d = json.loads(traits_json or '{}')
     except (TypeError, ValueError, json.JSONDecodeError):
         return ''
     if not isinstance(d, dict) or not d:
         return ''
-    rs = traits_rescaled_from_traits(d)
+    if db is not None and (breed or '') in PERSPICUUS_BREED_TABLE:
+        rs = _perspicuus_traits_rescaled_for_lot(
+            db, str(breed), str(farm_id or ''), str(lot_id or ''), d
+        )
+    else:
+        rs = traits_rescaled_from_traits(d)
     if not rs:
         return ''
     parts: list[str] = []
@@ -7314,7 +7444,13 @@ def download_perspicuus_angus_dataset_xlsx():
                 d.get('thumb_path') or '',
                 d.get('bbox_path') or '',
                 _perspicuus_traits_summary(d.get('traits_json')),
-                _perspicuus_traits_reescalado_summary(d.get('traits_json')),
+                _perspicuus_traits_reescalado_summary(
+                    d.get('traits_json'),
+                    db=db,
+                    breed='angus',
+                    farm_id=d.get('farm_id'),
+                    lot_id=d.get('lot_id'),
+                ),
                 d.get('traits_json') or '{}',
                 d.get('meta_json') or '{}',
                 d.get('error_text') or '',
@@ -7397,7 +7533,13 @@ def download_perspicuus_nelore_dataset_xlsx():
                 d.get('thumb_path') or '',
                 d.get('bbox_path') or '',
                 _perspicuus_traits_summary(d.get('traits_json')),
-                _perspicuus_traits_reescalado_summary(d.get('traits_json')),
+                _perspicuus_traits_reescalado_summary(
+                    d.get('traits_json'),
+                    db=db,
+                    breed='nelore',
+                    farm_id=d.get('farm_id'),
+                    lot_id=d.get('lot_id'),
+                ),
                 d.get('traits_json') or '{}',
                 d.get('meta_json') or '{}',
                 d.get('error_text') or '',

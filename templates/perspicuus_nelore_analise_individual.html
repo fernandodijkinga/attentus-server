@@ -58,7 +58,7 @@
       <div class="score-gauge">
         <p class="traits-hint">Um gauge por trait identificado, sem agregação.</p>
         {% if featured and featured.traits_items %}
-          {% for tname, tval in featured.traits_items %}
+          {% for tname, tval, _tl in featured.traits_items %}
           {% set t_raw = tval %}
           {% set t_raw_clamped = -4 if t_raw < -4 else (4 if t_raw > 4 else t_raw) %}
           {% set t_raw_pct = ((t_raw_clamped + 4) / 8 * 100) %}
@@ -90,12 +90,10 @@
     <div class="card">
       <div class="card-title">Plot Escore lote (sem média)</div>
       <div class="score-gauge">
-        <p class="traits-hint">Ajuste por trait com delta do escore lote, sem mistura entre traits.</p>
+        <p class="traits-hint">Escala 1–9 por trait: min/max raw <em>desse trait</em> no lote (com shrink para −4…+4 em lotes pequenos), depois mapeamento 1–6 para o gauge.</p>
         {% if featured and featured.traits_items %}
-          {% set lot_delta = (lot_ref - raw_ref_rescaled) if lot_ref is not none and raw_ref_rescaled is not none else none %}
-          {% for tname, tval in featured.traits_items %}
-          {% set t_raw_1_9 = tval|perspicuus_rescaled %}
-          {% set t_lot_1_9 = (t_raw_1_9 + lot_delta) if t_raw_1_9 is not none and lot_delta is not none else none %}
+          {% for tname, tval, t_lot9 in featured.traits_items %}
+          {% set t_lot_1_9 = t_lot9 if t_lot9 is not none else (tval|perspicuus_rescaled) %}
           {% set t_lot = (1 + ((t_lot_1_9 - 1) * 5 / 8)) if t_lot_1_9 is not none else none %}
           {% set t_lot_clamped = 1 if t_lot is not none and t_lot < 1 else (6 if t_lot is not none and t_lot > 6 else t_lot) %}
           {% set t_lot_pct = (((t_lot_clamped - 1) / 5) * 100) if t_lot_clamped is not none else none %}
@@ -130,7 +128,7 @@
         <p class="traits-hint">Ajuste por trait com delta do escore global, sem mistura entre traits.</p>
         {% if featured and featured.traits_items %}
           {% set global_delta = (global_ref - raw_ref_rescaled) if global_ref is not none and raw_ref_rescaled is not none else none %}
-          {% for tname, tval in featured.traits_items %}
+          {% for tname, tval, _tl in featured.traits_items %}
           {% set t_raw_1_9 = tval|perspicuus_rescaled %}
           {% set t_global_1_9 = (t_raw_1_9 + global_delta) if t_raw_1_9 is not none and global_delta is not none else none %}
           {% set t_global = (1 + ((t_global_1_9 - 1) * 5 / 8)) if t_global_1_9 is not none else none %}

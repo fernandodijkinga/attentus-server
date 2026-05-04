@@ -84,8 +84,8 @@
     <code>raw' = raw − μ_grupo + μ_global</code>.
     <br>Grupos disponíveis: fazenda, ano de nascimento ou sexo. Registros sem o atributo informado não recebem ajuste.
     <br><br>
-    <strong>Escala composta (raw → score_lot / score_global):</strong> o destino típico é <strong>1–6</strong> com passo 0,5 (configurável abaixo). Os <strong>traits</strong> do modelo MK1 em <code>traits_json</code> continuam na escala de apresentação 1–9 do módulo de scoring (raw nominal −4…+4), independentemente destes campos.
-    <br><strong>Por lote:</strong> com <code>n ≥ PERSPICUUS_LOT_MIN_N_PURE</code> (8 por defeito) o min/max de <code>raw_score</code> do lote define a janela do escore por lote; com menos animais usa-se shrink em direção aos limites globais (<code>PERSPICUUS_LOT_BLEND_K</code>).
+    <strong>Escala composta (raw → score_lot / score_global):</strong> o destino típico é <strong>1–6</strong> com passo 0,5 (configurável abaixo). Os <strong>traits</strong> MK1 em <code>traits_json</code> usam escala de apresentação <strong>1–9</strong> (passo 0,5): por defeito o raw nominal é mapeado de <strong>−4…+4</strong>, mas em <strong>Angus/Nelore</strong> cada trait é reescalado com o <strong>min/max desse trait no mesmo lote</strong> (na BD), com a <strong>mesma</strong> regra de shrink <code>PERSPICUUS_LOT_MIN_N_PURE</code> / <code>PERSPICUUS_LOT_BLEND_K</code> para a janela nominal −4…+4.
+    <br><strong>Por lote (composto):</strong> com <code>n ≥ PERSPICUUS_LOT_MIN_N_PURE</code> (8 por defeito) o min/max de <code>raw_score</code> do lote define a janela do escore por lote; com menos animais usa-se shrink em direção aos limites globais (<code>PERSPICUUS_LOT_BLEND_K</code>).
     <br><strong>Global:</strong> limites de raw em toda a raça na BD (min/max ou percentis <code>PERSPICUUS_GLOBAL_RAW_PCTL_LO</code> / <code>PERSPICUUS_GLOBAL_RAW_PCTL_HI</code>, ex. 5 e 95 no Render para reduzir efeito de outliers). A coluna <code>score_1_9</code> na BD é cópia de <code>score_global</code> (nome legado).
   </div>
 
