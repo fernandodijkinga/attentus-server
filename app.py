@@ -182,12 +182,23 @@ PERSPICUUS_FIXED_EFFECT_LABELS = {
 }
 
 
-def _perspicuus_default_cal() -> dict[str, Any]:
+def _perspicuus_default_cal(breed: str | None = None) -> dict[str, Any]:
+    """
+    Calibração gravada na BD (res_min/res_max/step) para reescalar raw_score composto.
+
+    Angus/Nelore: por defeito 1–6 com passo 0,5 (escala relativa ao lote / à população
+    da raça via raw_min/raw_max efectivos). Os traits MK1 continuam em 1–9 em
+    `perspicuus_scoring.rescale_perspicuus_trait_score`.
+    """
+    if breed in ('angus', 'nelore'):
+        res_max = 6.0
+    else:
+        res_max = 9.0
     return {
         'raw_min': -4.0,
         'raw_max': 4.0,
         'res_min': 1.0,
-        'res_max': 9.0,
+        'res_max': res_max,
         'step': 0.5,
         'fixed_effect': '',
         'fixed_effects': [],
@@ -217,13 +228,13 @@ def _perspicuus_parse_fixed_effects(raw: Any, breed: str) -> list[str]:
 def _perspicuus_get_calibration(db, breed: str) -> dict[str, Any]:
     table = PERSPICUUS_CAL_TABLE.get(breed)
     if not table:
-        return _perspicuus_default_cal()
+        return _perspicuus_default_cal(breed)
     row = db.execute(
         f"SELECT raw_min, raw_max, res_min, res_max, step, fixed_effect, updated_at, updated_by "
         f"FROM {table} WHERE id = 1"
     ).fetchone()
     if not row:
-        return _perspicuus_default_cal()
+        return _perspicuus_default_cal(breed)
     fixed_effects = _perspicuus_parse_fixed_effects(row['fixed_effect'], breed)
     return {
         'raw_min': float(row['raw_min']),
@@ -264,21 +275,78 @@ def _perspicuus_rescale_with_cal(raw_score: Any, cal: dict[str, Any]) -> float |
     return float(round(y, 6))
 
 
+def _perspicuus_env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 def _perspicuus_raw_bounds(db, breed: str, include_raw: float | None = None) -> tuple[float, float] | None:
+    """
+    Limites de raw na **população da raça** (tabela) para o escore global.
+
+    Por defeito: mínimo e máximo absolutos (comportamento anterior).
+    Opcional: percentis com ``PERSPICUUS_GLOBAL_RAW_PCTL_LO`` / ``PERSPICUUS_GLOBAL_RAW_PCTL_HI``
+    (0–100), p.ex. 5 e 95 para reduzir influência de outliers sem carregar todos os valores em RAM.
+    """
     table = PERSPICUUS_BREED_TABLE.get(breed)
     if not table:
         return None
-    row = db.execute(
-        f"SELECT MIN(raw_score) AS mn, MAX(raw_score) AS mx FROM {table} WHERE raw_score IS NOT NULL"
-    ).fetchone()
-    mn = row['mn'] if row else None
-    mx = row['mx'] if row else None
-    try:
-        mn_f = float(mn) if mn is not None else None
-        mx_f = float(mx) if mx is not None else None
-    except (TypeError, ValueError):
-        mn_f = None
-        mx_f = None
+    p_lo = max(0.0, min(100.0, _perspicuus_env_float('PERSPICUUS_GLOBAL_RAW_PCTL_LO', 0.0)))
+    p_hi = max(0.0, min(100.0, _perspicuus_env_float('PERSPICUUS_GLOBAL_RAW_PCTL_HI', 100.0)))
+    if p_hi < p_lo:
+        p_lo, p_hi = p_hi, p_lo
+
+    mn_f: float | None
+    mx_f: float | None
+    if p_lo <= 0.0 and p_hi >= 100.0:
+        row = db.execute(
+            f"SELECT MIN(raw_score) AS mn, MAX(raw_score) AS mx FROM {table} WHERE raw_score IS NOT NULL"
+        ).fetchone()
+        mn = row['mn'] if row else None
+        mx = row['mx'] if row else None
+        try:
+            mn_f = float(mn) if mn is not None else None
+            mx_f = float(mx) if mx is not None else None
+        except (TypeError, ValueError):
+            mn_f, mx_f = None, None
+    else:
+        cnt_row = db.execute(
+            f"SELECT COUNT(*) AS c FROM {table} WHERE raw_score IS NOT NULL"
+        ).fetchone()
+        cnt = int(cnt_row['c'] or 0) if cnt_row else 0
+        if cnt <= 0:
+            return None
+
+        def ix_at(p_pct: float) -> int:
+            pp = max(0.0, min(100.0, p_pct))
+            if cnt <= 1:
+                return 0
+            return int(round((pp / 100.0) * (cnt - 1)))
+
+        lo_i = ix_at(p_lo)
+        hi_i = ix_at(p_hi)
+        if hi_i < lo_i:
+            lo_i, hi_i = hi_i, lo_i
+        mn_row = db.execute(
+            f"SELECT raw_score AS v FROM {table} WHERE raw_score IS NOT NULL "
+            f"ORDER BY raw_score ASC LIMIT 1 OFFSET ?",
+            (lo_i,),
+        ).fetchone()
+        mx_row = db.execute(
+            f"SELECT raw_score AS v FROM {table} WHERE raw_score IS NOT NULL "
+            f"ORDER BY raw_score ASC LIMIT 1 OFFSET ?",
+            (hi_i,),
+        ).fetchone()
+        if not mn_row or not mx_row:
+            return None
+        try:
+            mn_f = float(mn_row['v'])
+            mx_f = float(mx_row['v'])
+        except (TypeError, ValueError):
+            return None
+
     if include_raw is not None:
         try:
             x = float(include_raw)
@@ -322,6 +390,7 @@ def _perspicuus_robust_cfg() -> dict[str, float]:
         'fe_min_n': _f('PERSPICUUS_FE_MIN_N', 8.0, 1.0),
         'fe_shrink_k': _f('PERSPICUUS_FE_SHRINK_K', 20.0, 0.0),
         'lot_blend_k': _f('PERSPICUUS_LOT_BLEND_K', 12.0, 0.0),
+        'lot_min_n_pure': _f('PERSPICUUS_LOT_MIN_N_PURE', 8.0, 1.0),
     }
 
 
@@ -413,6 +482,31 @@ def _perspicuus_calibration_version(breed: str, cal: dict[str, Any]) -> str:
     return hashlib.sha1(raw.encode('utf-8')).hexdigest()[:12]
 
 
+def _perspicuus_lot_raw_window(
+    lot_mn: float,
+    lot_mx: float,
+    n: int,
+    cal_global: dict[str, Any],
+    cfg: dict[str, float],
+) -> tuple[float, float]:
+    """
+    Janela de raw para escore **por lote**: min/max do lote quando há animais suficientes;
+    com poucos animais, mistura (shrink) com os limites globais já em ``cal_global``.
+    """
+    gmn = float(cal_global.get('raw_min', lot_mn))
+    gmx = float(cal_global.get('raw_max', lot_mx))
+    if lot_mx <= lot_mn:
+        return gmn, gmx
+    min_n_pure = int(max(1.0, cfg.get('lot_min_n_pure', 8.0)))
+    if n >= min_n_pure:
+        return float(lot_mn), float(lot_mx)
+    k_lot = float(cfg.get('lot_blend_k', 12.0))
+    w_lot = n / (n + k_lot) if k_lot > 0 else 1.0
+    blended_mn = (w_lot * lot_mn) + ((1.0 - w_lot) * gmn)
+    blended_mx = (w_lot * lot_mx) + ((1.0 - w_lot) * gmx)
+    return float(blended_mn), float(blended_mx)
+
+
 def _perspicuus_score_pair_for_record(
     db,
     breed: str,
@@ -466,12 +560,7 @@ def _perspicuus_score_pair_for_record(
         mx = float(row['mx']) if row and row['mx'] is not None else None
         n = int(row['n']) if row and row['n'] is not None else 0
         if mn is not None and mx is not None and mx > mn:
-            gmn = float(cal_global.get('raw_min', mn))
-            gmx = float(cal_global.get('raw_max', mx))
-            k_lot = float(cfg.get('lot_blend_k', 12.0))
-            w_lot = n / (n + k_lot) if k_lot > 0 else 1.0
-            cal_lot['raw_min'] = (w_lot * mn) + ((1.0 - w_lot) * gmn)
-            cal_lot['raw_max'] = (w_lot * mx) + ((1.0 - w_lot) * gmx)
+            cal_lot['raw_min'], cal_lot['raw_max'] = _perspicuus_lot_raw_window(mn, mx, n, cal_global, cfg)
     except (TypeError, ValueError):
         pass
     score_lot = _perspicuus_rescale_with_cal(raw_val, cal_lot)
@@ -499,17 +588,14 @@ def _perspicuus_merge_table_raw_bounds(
 
 
 def _perspicuus_export_bounds_cache(db, breed: str) -> dict[str, Any]:
-    """Min/max global na tabela, min/max por (fazenda, lote) e médias para efeitos fixos — export XLSX sem N+1."""
+    """Limites globais de raw (mesma regra que inferência), min/max por (fazenda, lote) e efeitos fixos — export XLSX sem N+1."""
     table = PERSPICUUS_BREED_TABLE.get(breed)
     if not table:
         return {}
-    row = db.execute(
-        f"SELECT MIN(raw_score) AS mn, MAX(raw_score) AS mx FROM {table} WHERE raw_score IS NOT NULL"
-    ).fetchone()
-    try:
-        gmn = float(row['mn']) if row and row['mn'] is not None else None
-        gmx = float(row['mx']) if row and row['mx'] is not None else None
-    except (TypeError, ValueError):
+    rb = _perspicuus_raw_bounds(db, breed, include_raw=None)
+    if rb:
+        gmn, gmx = float(rb[0]), float(rb[1])
+    else:
         gmn, gmx = None, None
     lot_map: dict[tuple[str, str], tuple[float, float, int]] = {}
     lot_sql = (
@@ -586,12 +672,9 @@ def _perspicuus_export_resolve_lot_global(d: dict[str, Any], cache: dict[str, An
     if lm:
         mn, mx, n = lm
         if mn is not None and mx is not None and mx > mn:
-            gmn = float(cal_global.get('raw_min', mn))
-            gmx = float(cal_global.get('raw_max', mx))
-            k_lot = float(cfg.get('lot_blend_k', 12.0))
-            w_lot = n / (n + k_lot) if k_lot > 0 else 1.0
-            cal_lot['raw_min'] = (w_lot * mn) + ((1.0 - w_lot) * gmn)
-            cal_lot['raw_max'] = (w_lot * mx) + ((1.0 - w_lot) * gmx)
+            cal_lot['raw_min'], cal_lot['raw_max'] = _perspicuus_lot_raw_window(
+                float(mn), float(mx), int(n), cal_global, cfg
+            )
     score_lot = _perspicuus_rescale_with_cal(raw_val, cal_lot)
     return score_lot, score_global
 
@@ -1005,6 +1088,166 @@ def _perspicuus_population_analysis(rows: list[sqlite3.Row], breed: str) -> dict
     }
 
 
+def _perspicuus_row_global_score(d: dict[str, Any]) -> float | None:
+    for k in ('score_global', 'score_1_9'):
+        v = d.get(k)
+        if v is None:
+            continue
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _perspicuus_dedupe_latest_rows(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+    """Um registo por (fazenda, lote, brinco): mantém o mais recente (rows já ordenados DESC)."""
+    seen: set[tuple[str, str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        farm = str(d.get('farm_id') or '').strip()
+        animal = str(d.get('animal_tag') or '').strip()
+        lot = str(d.get('lot_id') or '').strip()
+        if not farm or not animal:
+            continue
+        k = (farm, lot, animal)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(d)
+    return out
+
+
+def _perspicuus_farm_lote_dashboard(db, breed: str, farm_id: str) -> dict[str, Any]:
+    """
+    Dados para análise por lote numa fazenda: violino/box por lote, grelha por trait,
+    ranking de lotes por média de trait (escala 1–9 reescalada).
+    """
+    farm_id = (farm_id or '').strip()
+    empty: dict[str, Any] = {
+        'farm': farm_id,
+        'n_records_scanned': 0,
+        'n_animals': 0,
+        'violin_lots': [],
+        'traits': [],
+        'animals_grid': [],
+        'rank_by_trait': {},
+    }
+    if breed not in ('angus', 'nelore') or not farm_id:
+        return empty
+    table = PERSPICUUS_BREED_TABLE.get(breed)
+    if not table:
+        return empty
+    lim = max(2000, min(100_000, int(os.environ.get('PERSPICUUS_LOTE_ANALYSIS_MAX', '60000'))))
+    rows = db.execute(
+        f'SELECT * FROM {table} WHERE farm_id = ? ORDER BY inference_date DESC, id DESC LIMIT ?',
+        (farm_id, lim),
+    ).fetchall()
+    n_scanned = len(rows)
+    deduped = _perspicuus_dedupe_latest_rows(rows)
+
+    def lot_label(lot: str) -> str:
+        return lot if lot else '(sem lote)'
+
+    by_lot: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for d in deduped:
+        lotk = lot_label(str(d.get('lot_id') or '').strip())
+        g = _perspicuus_row_global_score(d)
+        try:
+            tj = json.loads(d.get('traits_json') or '{}')
+        except (TypeError, ValueError, json.JSONDecodeError):
+            tj = {}
+        traits_res = traits_rescaled_from_traits(tj) if isinstance(tj, dict) else {}
+        if g is None and not traits_res:
+            continue
+        thumb = str(d.get('thumb_path') or d.get('image_path') or '').strip()
+        by_lot[lotk].append({
+            'lot': lotk,
+            'animal': str(d.get('animal_tag') or ''),
+            'global': round(g, 3) if g is not None else None,
+            'traits': {k: round(float(v), 3) for k, v in traits_res.items()},
+            'thumb': thumb,
+            'id': int(d.get('id') or 0),
+        })
+
+    violin_lots: list[dict[str, Any]] = []
+    for lot, members in by_lot.items():
+        scores = [float(m['global']) for m in members if m.get('global') is not None]
+        if not scores:
+            continue
+        sorted_s = sorted(scores)
+        mu = sum(scores) / len(scores)
+        med = _pct(sorted_s, 0.5)
+        violin_lots.append({
+            'lot': lot,
+            'scores': scores,
+            'n': len(scores),
+            'mean': round(mu, 3),
+            'median': round(med, 3) if med is not None else None,
+        })
+    violin_lots.sort(key=lambda x: (-x['mean'], -x['n']))
+
+    trait_keys: set[str] = set()
+    for members in by_lot.values():
+        for m in members:
+            trait_keys.update(m.get('traits') or {})
+
+    rank_by_trait: dict[str, list[dict[str, Any]]] = {}
+    for trait in sorted(trait_keys):
+        lot_stats: list[dict[str, Any]] = []
+        for lot, members in by_lot.items():
+            vals = []
+            for mem in members:
+                tv = (mem.get('traits') or {}).get(trait)
+                if tv is not None:
+                    try:
+                        vals.append(float(tv))
+                    except (TypeError, ValueError):
+                        continue
+            if not vals:
+                continue
+            lot_stats.append({
+                'lot': lot,
+                'mean': round(sum(vals) / len(vals), 3),
+                'n': len(vals),
+            })
+        lot_stats.sort(key=lambda x: (-x['mean'], -x['n']))
+        for i, row in enumerate(lot_stats, start=1):
+            row['rank'] = i
+        rank_by_trait[trait] = lot_stats
+
+    trait_totals = [(t, sum(x['n'] for x in rank_by_trait[t])) for t in rank_by_trait]
+    trait_totals.sort(key=lambda x: -x[1])
+    max_traits = max(8, min(40, int(os.environ.get('PERSPICUUS_LOTE_ANALYSIS_TRAITS', '24'))))
+    traits_published = [t for t, _ in trait_totals[:max_traits]]
+    rank_pub = {t: rank_by_trait[t] for t in traits_published}
+
+    pub_set = set(traits_published)
+    animals_grid: list[dict[str, Any]] = []
+    for members in by_lot.values():
+        for m in members:
+            slim = {
+                'lot': m['lot'],
+                'animal': m['animal'],
+                'global': m.get('global'),
+                'traits': {k: v for k, v in (m.get('traits') or {}).items() if k in pub_set},
+                'thumb': m.get('thumb') or '',
+                'id': m.get('id') or 0,
+            }
+            animals_grid.append(slim)
+
+    return {
+        'farm': farm_id,
+        'n_records_scanned': n_scanned,
+        'n_animals': len(deduped),
+        'violin_lots': violin_lots,
+        'traits': traits_published,
+        'animals_grid': animals_grid,
+        'rank_by_trait': rank_pub,
+    }
+
+
 def _perspicuus_apply_calibration(
     db,
     breed: str,
@@ -1012,7 +1255,7 @@ def _perspicuus_apply_calibration(
     farm_id: str = '',
     lot_id: str = '',
 ) -> dict[str, Any]:
-    """Recalcula score_lot/score_global (e score_1_9 legado) para a raça."""
+    """Recalcula score_lot/score_global para a raça; ``score_1_9`` recebe cópia de ``score_global`` (coluna legada)."""
     table = PERSPICUUS_BREED_TABLE.get(breed)
     if not table:
         return {'updated': 0, 'groups': 0, 'global_mean': None}
@@ -1067,6 +1310,7 @@ def _perspicuus_apply_calibration(
             cal_eff,
             adjusted_raw_for_global=adj,
         )
+        # score_1_9: espelho do escore composto global (escala definida por res_min/res_max na calibração; não confundir com traits MK1 em 1–9).
         db.execute(
             f"UPDATE {table} SET score_lot = ?, score_global = ?, score_1_9 = ? WHERE id = ?",
             (score_lot, score_global, score_global, int(r['id'])),
@@ -1258,7 +1502,8 @@ def _environment_for_request() -> str | None:
     }
     angus_eps = {
         'perspicuus_angus_importar', 'perspicuus_angus_analise_individual',
-        'perspicuus_angus_analise_populacao', 'perspicuus_angus_modelos',
+        'perspicuus_angus_analise_populacao', 'perspicuus_angus_analise_lotes',
+        'perspicuus_angus_modelos',
         'perspicuus_angus_dataset', 'serve_perspicuus_angus_media',
         'download_perspicuus_angus_dataset_xlsx',
         'delete_perspicuus_angus_record', 'api_perspicuus_angus_dataset_bulk_delete',
@@ -1270,7 +1515,8 @@ def _environment_for_request() -> str | None:
     }
     nelore_eps = {
         'perspicuus_nelore_importar', 'perspicuus_nelore_analise_individual',
-        'perspicuus_nelore_analise_populacao', 'perspicuus_nelore_modelos',
+        'perspicuus_nelore_analise_populacao', 'perspicuus_nelore_analise_lotes',
+        'perspicuus_nelore_modelos',
         'perspicuus_nelore_dataset', 'serve_perspicuus_nelore_media',
         'download_perspicuus_nelore_dataset_xlsx',
         'delete_perspicuus_nelore_record', 'api_perspicuus_nelore_dataset_bulk_delete',
@@ -1404,7 +1650,7 @@ def template_perspicuus_rescaled(value):
 
 @app.template_filter('persp_gauge_left_pct')
 def template_persp_gauge_left_pct(value) -> float:
-    """Posição do marcador (0–100) na barra gradiente 1…9 (verde ao centro = 5)."""
+    """Percentagem 0–100 para largura de preenchimento na barra (escala 1…9, passo 0,5)."""
     try:
         x = float(value)
         x = max(1.0, min(9.0, x))
@@ -1793,7 +2039,7 @@ def init_db():
         raw_min       REAL    NOT NULL DEFAULT -4.0,
         raw_max       REAL    NOT NULL DEFAULT 4.0,
         res_min       REAL    NOT NULL DEFAULT 1.0,
-        res_max       REAL    NOT NULL DEFAULT 9.0,
+        res_max       REAL    NOT NULL DEFAULT 6.0,
         step          REAL    NOT NULL DEFAULT 0.5,
         fixed_effect  TEXT    NOT NULL DEFAULT '',
         updated_at    TEXT    NOT NULL,
@@ -1804,7 +2050,7 @@ def init_db():
         raw_min       REAL    NOT NULL DEFAULT -4.0,
         raw_max       REAL    NOT NULL DEFAULT 4.0,
         res_min       REAL    NOT NULL DEFAULT 1.0,
-        res_max       REAL    NOT NULL DEFAULT 9.0,
+        res_max       REAL    NOT NULL DEFAULT 6.0,
         step          REAL    NOT NULL DEFAULT 0.5,
         fixed_effect  TEXT    NOT NULL DEFAULT '',
         updated_at    TEXT    NOT NULL,
@@ -1919,13 +2165,23 @@ def init_db():
                 db.execute(
                     f"""
                     INSERT INTO {tname} (id, raw_min, raw_max, res_min, res_max, step, fixed_effect, updated_at, updated_by)
-                    VALUES (1, -4.0, 4.0, 1.0, 9.0, 0.5, '', ?, 'system')
+                    VALUES (1, -4.0, 4.0, 1.0, 6.0, 0.5, '', ?, 'system')
                     """,
                     (datetime.utcnow().isoformat() + 'Z',),
                 )
         db.commit()
     except sqlite3.OperationalError as e:
         log.warning("Migração perspicuus calibration: %s", e)
+    try:
+        for tname in ('perspicuus_angus_calibration', 'perspicuus_nelore_calibration'):
+            cur = db.execute(
+                f"UPDATE {tname} SET res_max = 6.0 WHERE id = 1 AND res_min = 1.0 AND res_max = 9.0 AND step = 0.5"
+            )
+            if cur.rowcount:
+                log.info("Migração %s: res_max padrão 9.0 → 6.0 (escala composta Angus/Nelore)", tname)
+        db.commit()
+    except sqlite3.OperationalError as e:
+        log.warning("Migração res_max Angus/Nelore: %s", e)
     db.close()
     log.info("DB inicializado OK")
 
@@ -3673,6 +3929,25 @@ def perspicuus_angus_analise_populacao():
     )
 
 
+@app.route('/perspicuus-angus/analise-lotes')
+@login_required
+def perspicuus_angus_analise_lotes():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    farms, _, stats = _angus_base_lists(db)
+    dashboard = _perspicuus_farm_lote_dashboard(db, 'angus', farm_filter)
+    return render_template(
+        'perspicuus_analise_lotes.html',
+        breed_key='angus',
+        breed_title='Angus',
+        breed_emoji='🐂',
+        farms=farms,
+        farm_filter=farm_filter,
+        stats=stats,
+        dashboard=dashboard,
+    )
+
+
 @app.route('/perspicuus-angus/modelos', methods=['GET', 'POST'])
 @admin_required
 def perspicuus_angus_modelos():
@@ -4353,6 +4628,25 @@ def perspicuus_nelore_analise_populacao():
         effect_overall=deep['effect_overall'],
         effect_traits=deep['effect_traits'],
         boxplot_by_effect=deep['boxplot_by_effect'],
+    )
+
+
+@app.route('/perspicuus-nelore/analise-lotes')
+@login_required
+def perspicuus_nelore_analise_lotes():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    farms, _, _, stats = _nelore_base_lists(db)
+    dashboard = _perspicuus_farm_lote_dashboard(db, 'nelore', farm_filter)
+    return render_template(
+        'perspicuus_analise_lotes.html',
+        breed_key='nelore',
+        breed_title='Nelore',
+        breed_emoji='🐃',
+        farms=farms,
+        farm_filter=farm_filter,
+        stats=stats,
+        dashboard=dashboard,
     )
 
 

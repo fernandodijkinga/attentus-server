@@ -370,13 +370,14 @@
   line-height: 1.45;
 }
 
-/* ----- 1–9 gauge bar (animais) ----- */
-.persp-gauge-row { margin-bottom: 10px; }
+/* ----- Trait bar: trilho neutro + preenchimento sólido + valor (Holandês / Perspicuus) ----- */
+.persp-gauge-row { margin-bottom: 12px; }
 .persp-gauge-row:last-child { margin-bottom: 0; }
 .persp-gauge-label-row {
-  display: flex; justify-content: space-between; align-items: baseline;
-  gap: 10px; margin-bottom: 2px;
+  display: flex; justify-content: flex-start; align-items: flex-start;
+  gap: 10px; margin-bottom: 4px;
 }
+.persp-gauge-trait-stack { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .persp-gauge-val {
   font-family: var(--mono);
   font-size: 14px;
@@ -386,34 +387,66 @@
 .persp-gauge-val-wrap { display: inline-flex; align-items: baseline; gap: 6px; }
 .persp-gauge-val-raw {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 500;
-  color: var(--text2);
+  color: var(--muted);
 }
 .persp-gauge-scale-head {
   display: flex; justify-content: space-between;
   font-family: var(--mono); color: var(--muted);
-  font-size: 9.5px; letter-spacing: 0.5px; margin-bottom: 3px;
+  font-size: 9.5px; letter-spacing: 0.5px; margin-bottom: 4px;
+}
+.persp-gauge-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.persp-gauge-bar-wrap {
+  flex: 1;
+  min-width: 0;
 }
 .persp-gauge-bar {
   position: relative;
-  height: 10px;
-  border-radius: 999px;
+  height: 12px;
+  border-radius: 6px;
   border: 1px solid var(--border);
-  background: linear-gradient(90deg, #c62841 0%, #d9782b 22%, #0d7a5e 50%, #d9782b 78%, #c62841 100%);
-  overflow: visible;
-  box-shadow: inset 0 1px 2px rgba(255,255,255,0.35);
+  background: var(--surf2);
+  overflow: hidden;
 }
-.persp-gauge-marker {
+.persp-gauge-fill {
   position: absolute;
-  top: -4px;
-  width: 3px;
-  height: 18px;
-  background: #1a2f45;
-  box-shadow: 0 0 0 2px rgba(255,255,255,.95);
-  border-radius: 2px;
-  transform: translateX(-50%);
-  left: var(--pct, 50%);
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-radius: 5px 0 0 5px;
+  transition: width 0.2s ease;
+}
+.persp-gauge-fill--mk1 { background: #0d7a5e; }
+.persp-gauge-fill--raw { background: var(--accent2); }
+.persp-gauge-fill--lot { background: var(--accent); }
+.persp-gauge-fill--global { background: var(--accent3); }
+.persp-gauge-valbox {
+  flex-shrink: 0;
+  width: 44px;
+  min-height: 36px;
+  padding: 4px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.15;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surf);
+  color: var(--text);
+}
+.persp-gauge-valbox.muted {
+  color: var(--muted);
+  font-weight: 600;
 }
 
 /* ----- Rebanho 2-col layout (chart + sidebar de insights) ----- */

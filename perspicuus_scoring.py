@@ -1,7 +1,10 @@
 """
-Escala de apresentação dos traits Perspicuus MK1 (sem dependências de inferência).
+Escala de apresentação dos **traits** Perspicuus MK1 (sem dependências de inferência).
 
 Raw do modelo na gama nominal −4…+4; apresentação adicional em 1…9 com passo 0,5.
+Isto aplica-se às **sub-medidas** (traits) devolvidas pelo modelo, não ao escore
+composto `raw_score` de Angus/Nelore na BD: esse escore usa outra política em
+`app._perspicuus_rescale_with_cal` (tipicamente escala 1–6 relativa a lote/global).
 """
 
 from __future__ import annotations

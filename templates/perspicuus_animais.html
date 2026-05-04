@@ -72,43 +72,6 @@
   color: var(--text); font-family: var(--mono);
   letter-spacing: .2px; font-weight: 600;
 }
-/* Barra gradiente 1–9 (verde central = 5) */
-.persp-gauge-row { margin-bottom: 10px; }
-.persp-gauge-row:last-child { margin-bottom: 0; }
-.persp-gauge-label-row {
-  display: flex; justify-content: space-between; align-items: baseline;
-  gap: 10px; margin-bottom: 2px;
-}
-.persp-gauge-val {
-  font-family: var(--mono); font-size: 14px; font-weight: 800;
-  color: var(--primary);
-}
-.persp-gauge-val-wrap { display: inline-flex; align-items: baseline; gap: 6px; }
-.persp-gauge-val-raw { font-family: var(--mono); font-size: 10px; font-weight: 500; color: var(--text2); }
-.persp-gauge-scale-head {
-  display: flex; justify-content: space-between;
-  font-family: var(--mono); color: var(--muted);
-  font-size: 9.5px; letter-spacing: 0.5px; margin-bottom: 3px;
-}
-.persp-gauge-bar {
-  position: relative;
-  height: 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: linear-gradient(90deg, #c62841 0%, #d9782b 22%, #0d7a5e 50%, #d9782b 78%, #c62841 100%);
-  overflow: visible;
-  box-shadow: inset 0 1px 2px rgba(255,255,255,0.35);
-}
-.persp-gauge-marker {
-  position: absolute;
-  top: -4px;
-  width: 3px;
-  height: 18px;
-  background: #1a2f45;
-  box-shadow: 0 0 0 2px rgba(255,255,255,.95);
-  border-radius: 2px;
-  transform: translateX(-50%);
-}
 .img-lightbox {
   position: fixed; inset: 0; background: rgba(6, 12, 20, 0.88);
   display: none; align-items: center; justify-content: center;
@@ -244,28 +207,32 @@
           <div class="traits-col">
             {% if card.trait_cards %}
             <div class="traits-title">Escala 1–9 (última inferência)</div>
-            <p class="traits-hint">Vermelho nas pontas, <b>ideal ao centro (5)</b>; marcador = valor reescalado.</p>
+            <p class="traits-hint">Barra sólida até ao escore reescalado (1–9, passo 0,5); quadrado = mesmo valor com 2 casas decimais.</p>
               {% for t in card.trait_cards %}
               <div class="persp-gauge-row">
                 <div class="persp-gauge-label-row">
-                  <span class="trait-name">{{ t.name }}</span>
-                  {% if t.current_rescaled is not none %}
-                  <span class="persp-gauge-val-wrap">
-                    <span class="persp-gauge-val">{{ '%g'|format(t.current_rescaled) }}</span>
+                  <div class="persp-gauge-trait-stack">
+                    <span class="trait-name">{{ t.name }}</span>
                     {% if t.current is not none %}
-                    <span class="persp-gauge-val-raw">raw {{ '%.2f'|format(t.current) }}</span>
+                    <span class="persp-gauge-val-raw">raw {{ '%.2f'|format(t.current|float) }}</span>
                     {% endif %}
-                  </span>
-                  {% else %}
-                  <span class="persp-gauge-val" style="color:var(--muted);font-weight:600">—</span>
-                  {% endif %}
+                  </div>
                 </div>
                 <div class="persp-gauge-scale-head">
                   <span>1.00</span><span>5.00</span><span>9.00</span>
                 </div>
-                <div class="persp-gauge-bar">
+                <div class="persp-gauge-line">
+                  <div class="persp-gauge-bar-wrap">
+                    <div class="persp-gauge-bar">
+                      {% if t.current_rescaled is not none %}
+                      <div class="persp-gauge-fill persp-gauge-fill--mk1" style="width: {{ t.current_rescaled|persp_gauge_left_pct }}%"></div>
+                      {% endif %}
+                    </div>
+                  </div>
                   {% if t.current_rescaled is not none %}
-                  <div class="persp-gauge-marker" style="left: {{ t.current_rescaled|persp_gauge_left_pct }}%"></div>
+                  <div class="persp-gauge-valbox">{{ '%.2f'|format(t.current_rescaled|float) }}</div>
+                  {% else %}
+                  <div class="persp-gauge-valbox muted">—</div>
                   {% endif %}
                 </div>
               </div>

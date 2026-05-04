@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+{% block title %}Perspicuus {{ breed_title }} — análise por lote{% endblock %}
+{% block head %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+.alotes-filters{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:8px}
+.alotes-statgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+.alotes-stat{background:var(--surf2);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.alotes-stat .k{font-size:10px;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+.alotes-stat .v{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--accent2)}
+#plotViolin{min-height:280px;width:100%}
+#plotHeatmap{min-height:240px;width:100%}
+.trait-grid-wrap{overflow-x:auto;margin-top:10px}
+.trait-grid{
+  display:grid;
+  grid-template-columns:minmax(100px,140px) repeat(5,minmax(120px,1fr));
+  gap:8px;align-items:start;font-size:11px;
+}
+.trait-grid-h{font-weight:700;font-family:var(--mono);color:var(--muted);padding:6px 4px;border-bottom:1px solid var(--border)}
+.trait-grid-lot{font-weight:700;padding:8px 4px;border-bottom:1px solid var(--border);color:var(--text)}
+.trait-cell{
+  border:1px solid var(--border);border-radius:8px;padding:6px;background:var(--bg);
+  min-height:120px;display:flex;flex-direction:column;gap:4px;align-items:center;text-align:center;
+}
+.trait-cell img{width:100%;max-width:96px;height:72px;object-fit:cover;border-radius:6px;border:1px solid var(--border)}
+.trait-cell .mono{font-family:var(--mono);font-size:10px;color:var(--text2)}
+.trait-cell a{font-size:10px}
+.rank-block{margin-bottom:20px}
+.rank-block h4{margin:0 0 8px;font-size:12px;font-family:var(--mono);color:var(--accent)}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">{{ breed_emoji }} <span>Perspicuus {{ breed_title }}</span> <span style="color:var(--accent)">análise por lote</span></div>
+    <div class="page-sub">Violino por lote (escore global), exemplos por trait e ranking de médias por trait</div>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-title">Fazenda</div>
+  <form method="get" class="alotes-filters">
+    <div class="field" style="min-width:220px">
+      <label>Fazenda</label>
+      <select name="farm">
+        <option value="">— escolher —</option>
+        {% for f in farms %}<option value="{{ f }}" {% if farm_filter == f %}selected{% endif %}>{{ f }}</option>{% endfor %}
+      </select>
+    </div>
+    <button class="btn btn-accent btn-sm" type="submit">Carregar</button>
+  </form>
+  {% if not farm_filter %}
+  <p class="page-sub" style="margin:8px 0 0">Selecione uma fazenda para ver lotes, traits e rankings. Os gráficos usam o registo mais recente por animal (brinco) dentro da fazenda.</p>
+  {% endif %}
+</div>
+
+{% if farm_filter %}
+<div class="alotes-statgrid">
+  <div class="alotes-stat"><span class="k">Registos lidos</span><span class="v">{{ dashboard.n_records_scanned }}</span></div>
+  <div class="alotes-stat"><span class="k">Animais (último reg.)</span><span class="v">{{ dashboard.n_animals }}</span></div>
+  <div class="alotes-stat"><span class="k">Lotes c/ escore global</span><span class="v">{{ dashboard.violin_lots|length }}</span></div>
+  <div class="alotes-stat"><span class="k">Traits (ranking)</span><span class="v">{{ dashboard.traits|length }}</span></div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-title">1 · Distribuição do escore global por lote</div>
+  <p class="page-sub" style="margin:0 0 10px;font-size:11px;color:var(--text2)">Cada faixa horizontal é um lote; pontos = animais (última inferência). Caixa/violino mostra dispersão; linha de média do Plotly.</p>
+  <div id="plotViolin"></div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-title">2 · Grelha por trait (quantis)</div>
+  <p class="page-sub" style="margin:0 0 10px;font-size:11px;color:var(--text2)">Valores do trait na escala 1–9 (reescalados a partir do raw do modelo). Por lote: animal mais próximo do mínimo, 25%, mediana, 75% e máximo.</p>
+  <div class="field" style="max-width:320px">
+    <label>Trait</label>
+    <select id="traitGridSel"></select>
+  </div>
+  <div class="trait-grid-wrap"><div id="traitGridLayout" class="trait-grid"></div></div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-title">3 · Médias por lote e trait</div>
+  <p class="page-sub" style="margin:0 0 10px;font-size:11px;color:var(--text2)">Mapa de calor (lote × trait) e tabelas por trait ordenadas por média.</p>
+  <div id="plotHeatmap"></div>
+  <div id="rankTables" style="margin-top:20px"></div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if farm_filter %}
+<script id="dashboard-json" type="application/json">{{ dashboard | tojson }}</script>
+<script>
+const BREED_KEY = {{ breed_key | tojson }};
+const FARM = {{ farm_filter | tojson }};
+const INDIVIDUAL_ANGUS = {{ url_for('perspicuus_angus_analise_individual') | tojson }};
+const INDIVIDUAL_NELORE = {{ url_for('perspicuus_nelore_analise_individual') | tojson }};
+
+function readDashboard() {
+  const el = document.getElementById('dashboard-json');
+  if (!el) return {};
+  try { return JSON.parse(el.textContent || '{}') || {}; } catch { return {}; }
+}
+
+function animalLink(lot, animal) {
+  const q = new URLSearchParams();
+  q.set('farm', FARM);
+  q.set('animal', animal);
+  if (BREED_KEY === 'nelore') {
+    const l = (lot === '(sem lote)') ? '' : lot;
+    q.set('lot', l);
+    return INDIVIDUAL_NELORE + '?' + q.toString();
+  }
+  return INDIVIDUAL_ANGUS + '?' + q.toString();
+}
+
+function renderViolin(d) {
+  const rows = d.violin_lots || [];
+  const el = document.getElementById('plotViolin');
+  if (!el) return;
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">📭</div>Sem escores globais por lote (importe e infira registos com escore).</div>';
+    return;
+  }
+  const traces = rows.map((row) => ({
+    type: 'violin',
+    orientation: 'h',
+    x: row.scores,
+    y: row.scores.map(() => row.lot),
+    name: row.lot,
+    box: { visible: true },
+    meanline: { visible: true },
+    points: 'outliers',
+    jitter: 0.12,
+    pointpos: 0,
+    marker: { size: 3, opacity: 0.45 },
+    hovertemplate: '%{y}<br>escore %{x:.2f}<extra></extra>',
+  }));
+  const h = Math.min(920, 100 + rows.length * 72);
+  Plotly.newPlot(el, traces, {
+    height: h,
+    margin: { l: 12, r: 24, t: 28, b: 44 },
+    paper_bgcolor: 'transparent',
+    plot_bgcolor: 'transparent',
+    font: { family: 'Inter, system-ui, sans-serif', size: 11, color: '#9aa4b2' },
+    xaxis: { title: 'Escore global (composto, ex. 1–6)', zeroline: false, gridcolor: 'rgba(128,128,128,.15)' },
+    yaxis: { automargin: true, categoryorder: 'array', categoryarray: rows.map((r) => r.lot) },
+    showlegend: false,
+    violinmode: 'overlay',
+  }, { responsive: true, displayModeBar: true, displaylogo: false });
+}
+
+function quintilePicks(sorted) {
+  const n = sorted.length;
+  if (!n) return [];
+  const ix = (q) => Math.min(n - 1, Math.max(0, Math.round(q * (n - 1))));
+  return [0, 0.25, 0.5, 0.75, 1].map((q) => sorted[ix(q)]);
+}
+
+function groupByLot(animals) {
+  const m = {};
+  (animals || []).forEach((a) => {
+    const k = a.lot || '(sem lote)';
+    if (!m[k]) m[k] = [];
+    m[k].push(a);
+  });
+  return m;
+}
+
+function renderTraitGrid(d, trait) {
+  const wrap = document.getElementById('traitGridLayout');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const labels = ['Lote', 'Mín', 'P25', 'Mediana', 'P75', 'Máx'];
+  labels.forEach((t) => {
+    const h = document.createElement('div');
+    h.className = 'trait-grid-h';
+    h.textContent = t;
+    wrap.appendChild(h);
+  });
+  const lotOrder = (d.violin_lots || []).map((r) => r.lot);
+  const byLot = groupByLot(d.animals_grid || []);
+  const lotKeys = lotOrder.length ? lotOrder : Object.keys(byLot).sort();
+
+  lotKeys.forEach((lot) => {
+    const lab = document.createElement('div');
+    lab.className = 'trait-grid-lot';
+    lab.textContent = lot;
+    wrap.appendChild(lab);
+    const members = (byLot[lot] || []).filter((a) => a.traits && a.traits[trait] != null);
+    members.sort((a, b) => a.traits[trait] - b.traits[trait]);
+    const picks = quintilePicks(members);
+    for (let i = 0; i < 5; i += 1) {
+      const cell = document.createElement('div');
+      cell.className = 'trait-cell';
+      const a = picks[i];
+      if (!a) {
+        cell.innerHTML = '<span class="mono">—</span>';
+        wrap.appendChild(cell);
+        continue;
+      }
+      const img = a.thumb
+        ? `<img src="${a.thumb.replace(/"/g, '')}" alt="" loading="lazy">`
+        : '<div class="mono" style="padding:20px 0">sem img</div>';
+      cell.innerHTML = `
+        ${img}
+        <span class="mono">${(a.traits[trait] ?? '').toString()}</span>
+        <span class="mono">${a.animal}</span>
+        ${a.global != null ? `<span class="mono">glob. ${a.global}</span>` : ''}
+        <a class="btn btn-ghost btn-sm" href="${animalLink(lot, a.animal)}">Ficha</a>
+      `;
+      wrap.appendChild(cell);
+    }
+  });
+}
+
+function fillTraitSelect(traits) {
+  const sel = document.getElementById('traitGridSel');
+  if (!sel) return;
+  sel.innerHTML = '';
+  (traits || []).forEach((t) => {
+    const o = document.createElement('option');
+    o.value = t;
+    o.textContent = t;
+    sel.appendChild(o);
+  });
+}
+
+function renderHeatmap(d) {
+  const el = document.getElementById('plotHeatmap');
+  const traits = d.traits || [];
+  const R = d.rank_by_trait || {};
+  const lotSet = new Set((d.violin_lots || []).map((r) => r.lot));
+  Object.values(R).forEach((arr) => (arr || []).forEach((row) => lotSet.add(row.lot)));
+  const lots = [...lotSet].sort();
+  if (!el) return;
+  if (!traits.length || !lots.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">∑</div>Sem dados para heatmap.</div>';
+    return;
+  }
+  const z = lots.map((lot) =>
+    traits.map((tr) => {
+      const row = (R[tr] || []).find((x) => x.lot === lot);
+      return row ? row.mean : null;
+    }),
+  );
+  const h = Math.min(640, 80 + lots.length * 22);
+  Plotly.newPlot(
+    el,
+    [
+      {
+        type: 'heatmap',
+        x: traits,
+        y: lots,
+        z,
+        colorscale: 'Viridis',
+        hovertemplate: '%{y}<br>%{x}<br>média %{z:.2f}<extra></extra>',
+      },
+    ],
+    {
+      height: h,
+      margin: { l: 120, r: 24, t: 28, b: 120 },
+      paper_bgcolor: 'transparent',
+      plot_bgcolor: 'transparent',
+      font: { family: 'Inter, system-ui, sans-serif', size: 10, color: '#9aa4b2' },
+      xaxis: { tickangle: -35, side: 'bottom' },
+      yaxis: { automargin: true },
+    },
+    { responsive: true, displayModeBar: true, displaylogo: false },
+  );
+}
+
+function renderRankTables(d) {
+  const host = document.getElementById('rankTables');
+  if (!host) return;
+  host.innerHTML = '';
+  const R = d.rank_by_trait || {};
+  const traits = d.traits || [];
+  traits.forEach((tr) => {
+    const rows = R[tr] || [];
+    if (!rows.length) return;
+    const blk = document.createElement('div');
+    blk.className = 'rank-block';
+    const cap = rows.slice(0, 24);
+    let html = `<h4>${tr}</h4><div class="table-wrap"><table><thead><tr><th>#</th><th>Lote</th><th>N</th><th>Média trait (1–9)</th></tr></thead><tbody>`;
+    cap.forEach((r) => {
+      html += `<tr><td class="mono">${r.rank}</td><td>${r.lot}</td><td class="mono">${r.n}</td><td class="mono">${r.mean}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    blk.innerHTML = html;
+    host.appendChild(blk);
+  });
+}
+
+const DASH = readDashboard();
+renderViolin(DASH);
+fillTraitSelect(DASH.traits);
+const firstTrait = (DASH.traits && DASH.traits[0]) || '';
+if (firstTrait) renderTraitGrid(DASH, firstTrait);
+document.getElementById('traitGridSel')?.addEventListener('change', (e) => {
+  renderTraitGrid(DASH, e.target.value);
+});
+renderHeatmap(DASH);
+renderRankTables(DASH);
+</script>
+{% endif %}
+{% endblock %}
