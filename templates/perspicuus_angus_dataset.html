@@ -14,6 +14,8 @@
 .reprocess-log{max-height:120px;overflow-y:auto;margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-family:var(--mono);font-size:10px;line-height:1.45}
 .reprocess-log .ok{color:var(--accent)}
 .reprocess-log .err{color:var(--err)}
+.th-chk{width:36px;text-align:center}
+.row-chk{accent-color:var(--accent2)}
 </style>
 {% endblock %}
 {% block content %}
@@ -41,8 +43,10 @@
     <div class="field"><label>&nbsp;</label><button class="btn btn-ghost btn-sm" type="submit">Filtrar</button></div>
   </form>
   <p class="page-sub" style="margin:0 0 8px;font-size:11px;color:var(--text2)">XLSX inclui brinco, fazenda, lote, nascimento, sexo, raw, escores reescalados lote e global (1–9, calibragem), legado BD, URLs de mídia, traits em raw e em 1–9 (resumo + JSON), meta e erro. Limite padrão 50&nbsp;000 linhas (<span class="mono">ANGUS_DATASET_XLSX_MAX</span>).</p>
-  <div class="flex gap-8" style="flex-wrap:wrap;align-items:flex-start">
+  <div class="flex gap-8" style="flex-wrap:wrap;align-items:center">
     <a class="btn btn-ghost btn-sm" href="{{ url_for('download_perspicuus_angus_dataset_xlsx', farm=farm_filter, animal=animal_filter, q=q_filter) }}">Baixar XLSX (filtros)</a>
+    <button class="btn btn-ghost btn-sm" id="btnDeleteSelected" type="button">Excluir selecionados</button>
+    <button class="btn btn-danger btn-sm" id="btnDeleteFiltered" type="button">Excluir todos (filtros)</button>
     <button class="btn btn-accent btn-sm" id="btnReprocessAll" type="button">Reprocessar todos os animais</button>
     <div id="angus-reprocess-progress" class="reprocess-progress" aria-live="polite">
       <div class="reprocess-progress-track"><div id="angus-reprocess-bar" class="reprocess-progress-bar"></div></div>
@@ -56,10 +60,11 @@
   <div class="card-title">Registros ({{ records|length }})</div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>ID</th><th>Data</th><th>Fazenda</th><th>Brinco</th><th>Nascimento</th><th>Sexo</th><th>Raw</th><th>Escore lote</th><th>Escore global</th><th>Imagem</th><th>Status</th><th>Atalho</th><th>Ações</th></tr></thead>
+      <thead><tr><th class="th-chk" title="Nesta página"><input type="checkbox" id="chkSelectAll" class="row-chk" aria-label="Selecionar todos na página"></th><th>ID</th><th>Data</th><th>Fazenda</th><th>Brinco</th><th>Nascimento</th><th>Sexo</th><th>Raw</th><th>Escore lote</th><th>Escore global</th><th>Imagem</th><th>Status</th><th>Atalho</th><th>Ações</th></tr></thead>
       <tbody>
       {% for r in records %}
       <tr id="row-{{ r.id }}">
+        <td class="th-chk"><input type="checkbox" class="row-chk js-row-chk" value="{{ r.id }}" aria-label="Selecionar registro {{ r.id }}"></td>
         <td class="mono">{{ r.id }}</td>
         <td class="mono">{{ r.inference_date }}</td>
         <td>{{ r.farm_id }}</td>
@@ -78,7 +83,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="13"><div class="empty-state"><div class="icon">🗂</div>Sem registros para os filtros atuais.</div></td></tr>
+      <tr><td colspan="14"><div class="empty-state"><div class="icon">🗂</div>Sem registros para os filtros atuais.</div></td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -87,7 +92,31 @@
 {% endblock %}
 {% block scripts %}
 <script>
+const ANGUS_BULK_DELETE_URL = {{ url_for('api_perspicuus_angus_dataset_bulk_delete') | tojson }};
+const DATASET_FILTERS = {{ {'farm': farm_filter or '', 'animal': animal_filter or '', 'q': q_filter or ''} | tojson }};
 
+function selectedIdsOnPage(){
+  return Array.from(document.querySelectorAll('.js-row-chk:checked')).map((c) => parseInt(c.value, 10)).filter((n) => !Number.isNaN(n));
+}
+
+function syncSelectAll(){
+  const master = document.getElementById('chkSelectAll');
+  const boxes = document.querySelectorAll('.js-row-chk');
+  if (!master || !boxes.length) return;
+  const n = boxes.length;
+  const checked = document.querySelectorAll('.js-row-chk:checked').length;
+  master.checked = checked === n && n > 0;
+  master.indeterminate = checked > 0 && checked < n;
+}
+
+document.getElementById('chkSelectAll')?.addEventListener('change', (e) => {
+  const on = e.target.checked;
+  document.querySelectorAll('.js-row-chk').forEach((c) => { c.checked = on; });
+});
+
+document.querySelector('.table-wrap')?.addEventListener('change', (e) => {
+  if (e.target && e.target.classList && e.target.classList.contains('js-row-chk')) syncSelectAll();
+});
 
 async function editMeta(id){
   const currentBirth = (document.getElementById(`birth-${id}`)?.textContent || '').trim();
@@ -115,7 +144,43 @@ async function deleteRow(id){
   if(!r.ok){ toast('Erro ao excluir registro', false); return; }
   const el = document.getElementById(`row-${id}`);
   if(el) el.remove();
+  syncSelectAll();
   toast('Registro excluído');
+}
+
+async function bulkDeleteSelected(){
+  const ids = selectedIdsOnPage();
+  if (!ids.length) { toast('Nenhuma linha selecionada.', false); return; }
+  if (!confirm('Excluir ' + ids.length + ' registro(s) selecionado(s) nesta página?')) return;
+  const r = await fetch(ANGUS_BULK_DELETE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ ids }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { toast(data.error || 'Erro ao excluir em lote', false); return; }
+  toast('Removidos: ' + (data.deleted ?? 0));
+  window.location.reload();
+}
+
+async function bulkDeleteFiltered(){
+  const f = DATASET_FILTERS;
+  const hasF = !!(f.farm || f.animal || f.q);
+  let msg = 'Apagar no banco TODOS os registros Angus que coincidem com os filtros atuais (fazenda, brinco, busca), não só os visíveis nesta página.';
+  if (!hasF) msg = 'Sem filtros: isto apaga TODO o dataset Angus no banco. Confirma?';
+  if (!confirm(msg)) return;
+  if (!hasF && !confirm('Confirmação final: apagar absolutamente todos os registros Angus?')) return;
+  const r = await fetch(ANGUS_BULK_DELETE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ match_filters: true, farm: f.farm, animal: f.animal, q: f.q }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { toast(data.error || 'Erro ao excluir', false); return; }
+  toast('Removidos: ' + (data.deleted ?? 0));
+  window.location.reload();
 }
 
 const ANGUS_REPROCESS_QUEUE_URL = {{ url_for('api_perspicuus_angus_reprocess_queue') | tojson }};
@@ -214,5 +279,8 @@ document.querySelectorAll('.js-edit-meta').forEach((btn) => {
 document.querySelectorAll('.js-delete-row').forEach((btn) => {
   btn.addEventListener('click', () => deleteRow(btn.dataset.id));
 });
+document.getElementById('btnDeleteSelected')?.addEventListener('click', () => bulkDeleteSelected());
+document.getElementById('btnDeleteFiltered')?.addEventListener('click', () => bulkDeleteFiltered());
+syncSelectAll();
 </script>
 {% endblock %}

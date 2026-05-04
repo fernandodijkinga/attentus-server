@@ -1261,7 +1261,8 @@ def _environment_for_request() -> str | None:
         'perspicuus_angus_analise_populacao', 'perspicuus_angus_modelos',
         'perspicuus_angus_dataset', 'serve_perspicuus_angus_media',
         'download_perspicuus_angus_dataset_xlsx',
-        'delete_perspicuus_angus_record', 'api_perspicuus_angus_reprocess_all',
+        'delete_perspicuus_angus_record', 'api_perspicuus_angus_dataset_bulk_delete',
+        'api_perspicuus_angus_reprocess_all',
         'api_perspicuus_angus_reprocess_queue', 'api_perspicuus_angus_reprocess_item',
         'api_perspicuus_angus_importar_lote_item',
         'patch_perspicuus_angus_record',
@@ -1272,7 +1273,8 @@ def _environment_for_request() -> str | None:
         'perspicuus_nelore_analise_populacao', 'perspicuus_nelore_modelos',
         'perspicuus_nelore_dataset', 'serve_perspicuus_nelore_media',
         'download_perspicuus_nelore_dataset_xlsx',
-        'delete_perspicuus_nelore_record', 'api_perspicuus_nelore_reprocess_all',
+        'delete_perspicuus_nelore_record', 'api_perspicuus_nelore_dataset_bulk_delete',
+        'api_perspicuus_nelore_reprocess_all',
         'api_perspicuus_nelore_reprocess_queue', 'api_perspicuus_nelore_reprocess_item',
         'api_perspicuus_nelore_importar_lote_item',
         'patch_perspicuus_nelore_record',
@@ -6499,6 +6501,112 @@ def patch_perspicuus_nelore_record(rid):
     if cur.rowcount == 0:
         return jsonify({'error': 'Não encontrado'}), 404
     return jsonify({'status': 'updated'})
+
+
+def _perspicuus_bulk_delete_by_ids(db, table: str, ids: list[int], max_ids: int) -> int:
+    """Remove linhas por id; devolve número de linhas apagadas."""
+    seen: set[int] = set()
+    clean: list[int] = []
+    for x in ids:
+        if x in seen:
+            continue
+        seen.add(x)
+        clean.append(x)
+        if len(clean) >= max_ids:
+            break
+    if not clean:
+        return 0
+    total = 0
+    chunk_size = 400
+    for i in range(0, len(clean), chunk_size):
+        chunk = clean[i : i + chunk_size]
+        ph = ','.join('?' * len(chunk))
+        cur = db.execute(f'DELETE FROM {table} WHERE id IN ({ph})', chunk)
+        total += cur.rowcount or 0
+    return total
+
+
+@app.route('/api/perspicuus-angus/dataset/bulk-delete', methods=['POST'])
+@login_required
+def api_perspicuus_angus_dataset_bulk_delete():
+    """Apaga vários registos por id ou todos os que coincidem com os filtros do dataset (como XLSX)."""
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    max_filtered = max(1, min(500_000, int(os.environ.get('ANGUS_DATASET_BULK_DELETE_MAX', '100000'))))
+    max_ids = max(1, min(10_000, int(os.environ.get('ANGUS_DATASET_BULK_DELETE_IDS_MAX', '5000'))))
+
+    if data.get('match_filters'):
+        farm = str(data.get('farm') or '').strip()
+        animal = str(data.get('animal') or '').strip()
+        q = str(data.get('q') or '').strip()
+        where, params = _angus_dataset_where_params(farm, animal, q)
+        cnt_row = db.execute(
+            f'SELECT COUNT(*) FROM perspicuus_angus_records WHERE {where}',
+            params,
+        ).fetchone()
+        cnt = int(cnt_row[0]) if cnt_row else 0
+        if cnt > max_filtered:
+            return jsonify({'error': f'Muitos registros ({cnt}); restrinja os filtros ou aumente ANGUS_DATASET_BULK_DELETE_MAX.'}), 400
+        if cnt == 0:
+            return jsonify({'status': 'deleted', 'deleted': 0})
+        cur = db.execute(f'DELETE FROM perspicuus_angus_records WHERE {where}', params)
+        db.commit()
+        return jsonify({'status': 'deleted', 'deleted': cur.rowcount or 0})
+
+    ids_raw = data.get('ids')
+    if not isinstance(ids_raw, list) or not ids_raw:
+        return jsonify({'error': 'Envie "ids" (lista) ou match_filters: true com farm, animal, q.'}), 400
+    clean_ids: list[int] = []
+    for x in ids_raw:
+        try:
+            clean_ids.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    n = _perspicuus_bulk_delete_by_ids(db, 'perspicuus_angus_records', clean_ids, max_ids)
+    db.commit()
+    return jsonify({'status': 'deleted', 'deleted': n})
+
+
+@app.route('/api/perspicuus-nelore/dataset/bulk-delete', methods=['POST'])
+@login_required
+def api_perspicuus_nelore_dataset_bulk_delete():
+    """Apaga vários registos por id ou todos os que coincidem com os filtros do dataset (como XLSX)."""
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    max_filtered = max(1, min(500_000, int(os.environ.get('NELORE_DATASET_BULK_DELETE_MAX', '100000'))))
+    max_ids = max(1, min(10_000, int(os.environ.get('NELORE_DATASET_BULK_DELETE_IDS_MAX', '5000'))))
+
+    if data.get('match_filters'):
+        farm = str(data.get('farm') or '').strip()
+        lot = str(data.get('lot') or '').strip()
+        animal = str(data.get('animal') or '').strip()
+        q = str(data.get('q') or '').strip()
+        where, params = _nelore_dataset_where_params(farm, lot, animal, q)
+        cnt_row = db.execute(
+            f'SELECT COUNT(*) FROM perspicuus_nelore_records WHERE {where}',
+            params,
+        ).fetchone()
+        cnt = int(cnt_row[0]) if cnt_row else 0
+        if cnt > max_filtered:
+            return jsonify({'error': f'Muitos registros ({cnt}); restrinja os filtros ou aumente NELORE_DATASET_BULK_DELETE_MAX.'}), 400
+        if cnt == 0:
+            return jsonify({'status': 'deleted', 'deleted': 0})
+        cur = db.execute(f'DELETE FROM perspicuus_nelore_records WHERE {where}', params)
+        db.commit()
+        return jsonify({'status': 'deleted', 'deleted': cur.rowcount or 0})
+
+    ids_raw = data.get('ids')
+    if not isinstance(ids_raw, list) or not ids_raw:
+        return jsonify({'error': 'Envie "ids" (lista) ou match_filters: true com farm, lot, animal, q.'}), 400
+    clean_ids: list[int] = []
+    for x in ids_raw:
+        try:
+            clean_ids.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    n = _perspicuus_bulk_delete_by_ids(db, 'perspicuus_nelore_records', clean_ids, max_ids)
+    db.commit()
+    return jsonify({'status': 'deleted', 'deleted': n})
 
 
 @app.route('/api/perspicuus-angus/reprocess-all', methods=['POST'])
