@@ -609,6 +609,70 @@ def _perspicuus_traits_items_for_display(
     return items
 
 
+def _perspicuus_trait_global_bounds_map(
+    db,
+    table: str,
+) -> dict[str, tuple[float, float]]:
+    """Limites raw globais por trait (tabela inteira) para reescala global 1…9."""
+    by_trait: dict[str, list[float]] = defaultdict(list)
+    for row in db.execute(
+        f"SELECT traits_json FROM {table}"
+    ).fetchall():
+        try:
+            tj = json.loads(row['traits_json'] or '{}')
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(tj, dict):
+            continue
+        for k, v in tj.items():
+            try:
+                by_trait[str(k)].append(float(v))
+            except (TypeError, ValueError):
+                continue
+    out: dict[str, tuple[float, float]] = {}
+    for t, vals in by_trait.items():
+        if not vals:
+            continue
+        mn = min(vals)
+        mx = max(vals)
+        if mx > mn:
+            out[t] = (float(mn), float(mx))
+    return out
+
+
+def _perspicuus_traits_json_dict(text: str | None) -> dict[str, float]:
+    try:
+        d = json.loads(text or '{}')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        d = {}
+    if not isinstance(d, dict):
+        return {}
+    out: dict[str, float] = {}
+    for k, v in d.items():
+        try:
+            out[str(k)] = float(v)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _perspicuus_trait_export_triples(
+    traits_raw: dict[str, float],
+    trait_keys: list[str],
+    lot_bounds: dict[str, tuple[float, float]],
+    global_bounds: dict[str, tuple[float, float]],
+) -> list[Any]:
+    lot_rs = traits_rescaled_with_per_trait_bounds(traits_raw, lot_bounds)
+    global_rs = traits_rescaled_with_per_trait_bounds(traits_raw, global_bounds)
+    out: list[Any] = []
+    for t in trait_keys:
+        raw_v = traits_raw.get(t)
+        out.append(raw_v if raw_v is not None else None)
+        out.append(lot_rs.get(t))
+        out.append(global_rs.get(t))
+    return out
+
+
 def _perspicuus_score_pair_for_record(
     db,
     breed: str,
@@ -7397,6 +7461,16 @@ def download_perspicuus_angus_dataset_xlsx():
         params + [max_n],
     ).fetchall()
     cache = _perspicuus_export_bounds_cache(db, 'angus')
+    table = PERSPICUUS_BREED_TABLE['angus']
+    global_trait_bounds = _perspicuus_trait_global_bounds_map(db, table)
+    trait_keys: list[str] = sorted(
+        {
+            k
+            for row in rows
+            for k in _perspicuus_traits_json_dict(dict(row).get('traits_json')).keys()
+        },
+        key=lambda x: str(x),
+    )
     headers = [
         'id',
         'criado_utc',
@@ -7420,11 +7494,32 @@ def download_perspicuus_angus_dataset_xlsx():
         'meta_json',
         'erro',
     ]
+    for t in trait_keys:
+        headers.extend([
+            f'trait_{t}_raw',
+            f'trait_{t}_reescalado_lote_1_9',
+            f'trait_{t}_reescalado_global_1_9',
+        ])
     data: list[list[Any]] = []
+    lot_bounds_cache: dict[tuple[str, str], dict[str, tuple[float, float]]] = {}
     for row in rows:
         d = dict(row)
         legado = d.get('score_1_9')
         sl, sg = _perspicuus_export_resolve_lot_global(d, cache)
+        farm_id = str(d.get('farm_id') or '').strip()
+        lot_id = str(d.get('lot_id') or '').strip()
+        lot_key = (farm_id, lot_id)
+        if lot_key not in lot_bounds_cache:
+            lot_bounds_cache[lot_key] = _perspicuus_trait_blended_bounds_map(
+                db, table, farm_id, lot_id
+            )
+        traits_raw = _perspicuus_traits_json_dict(d.get('traits_json'))
+        trait_triples = _perspicuus_trait_export_triples(
+            traits_raw,
+            trait_keys,
+            lot_bounds_cache[lot_key],
+            global_trait_bounds,
+        )
         data.append(
             [
                 d.get('id'),
@@ -7454,7 +7549,7 @@ def download_perspicuus_angus_dataset_xlsx():
                 d.get('traits_json') or '{}',
                 d.get('meta_json') or '{}',
                 d.get('error_text') or '',
-            ]
+            ] + trait_triples
         )
     ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
     return send_file(
@@ -7486,6 +7581,16 @@ def download_perspicuus_nelore_dataset_xlsx():
         params + [max_n],
     ).fetchall()
     cache = _perspicuus_export_bounds_cache(db, 'nelore')
+    table = PERSPICUUS_BREED_TABLE['nelore']
+    global_trait_bounds = _perspicuus_trait_global_bounds_map(db, table)
+    trait_keys: list[str] = sorted(
+        {
+            k
+            for row in rows
+            for k in _perspicuus_traits_json_dict(dict(row).get('traits_json')).keys()
+        },
+        key=lambda x: str(x),
+    )
     headers = [
         'id',
         'criado_utc',
@@ -7509,11 +7614,32 @@ def download_perspicuus_nelore_dataset_xlsx():
         'meta_json',
         'erro',
     ]
+    for t in trait_keys:
+        headers.extend([
+            f'trait_{t}_raw',
+            f'trait_{t}_reescalado_lote_1_9',
+            f'trait_{t}_reescalado_global_1_9',
+        ])
     data = []
+    lot_bounds_cache: dict[tuple[str, str], dict[str, tuple[float, float]]] = {}
     for row in rows:
         d = dict(row)
         legado = d.get('score_1_9')
         sl, sg = _perspicuus_export_resolve_lot_global(d, cache)
+        farm_id = str(d.get('farm_id') or '').strip()
+        lot_id = str(d.get('lot_id') or '').strip()
+        lot_key = (farm_id, lot_id)
+        if lot_key not in lot_bounds_cache:
+            lot_bounds_cache[lot_key] = _perspicuus_trait_blended_bounds_map(
+                db, table, farm_id, lot_id
+            )
+        traits_raw = _perspicuus_traits_json_dict(d.get('traits_json'))
+        trait_triples = _perspicuus_trait_export_triples(
+            traits_raw,
+            trait_keys,
+            lot_bounds_cache[lot_key],
+            global_trait_bounds,
+        )
         data.append(
             [
                 d.get('id'),
@@ -7543,7 +7669,7 @@ def download_perspicuus_nelore_dataset_xlsx():
                 d.get('traits_json') or '{}',
                 d.get('meta_json') or '{}',
                 d.get('error_text') or '',
-            ]
+            ] + trait_triples
         )
     ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
     return send_file(
