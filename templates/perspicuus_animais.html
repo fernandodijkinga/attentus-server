@@ -165,7 +165,10 @@
       <div class="animal-card">
         <div class="animal-top">
           <div>
-            <div class="rfid">{{ card.rfid }}</div>
+            <div class="rfid" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span>{{ card.rfid }}</span>
+              <a class="btn btn-accent btn-sm" href="{{ url_for('perspicuus_animais_individuo', rfid=card.rfid, station=station_filter, q=q_filter) }}">Análise individual</a>
+            </div>
             <div class="meta-line">
               <span><b>status:</b> {{ card.status }}</span>
               <span><b>estação:</b> {{ card.station_id }}</span>

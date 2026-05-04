@@ -673,6 +673,273 @@ def _perspicuus_trait_export_triples(
     return out
 
 
+def _perspicuus_collect_trait_lot_mean_raws(
+    db,
+    table: str,
+    farm_id: str,
+    lot_id: str,
+) -> dict[str, float]:
+    """Média de raw por trait no mesmo fazenda+lote (critério alinhado a ``score_lot``)."""
+    cond = ['farm_id = ?']
+    params: list[Any] = [str(farm_id or '').strip()]
+    lot = str(lot_id or '').strip()
+    if lot:
+        cond.append('lot_id = ?')
+        params.append(lot)
+    acc: dict[str, list[float]] = defaultdict(list)
+    for row in db.execute(
+        f"SELECT traits_json FROM {table} WHERE {' AND '.join(cond)}",
+        params,
+    ).fetchall():
+        try:
+            tj = json.loads(row['traits_json'] or '{}')
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(tj, dict):
+            continue
+        for k, v in tj.items():
+            try:
+                acc[str(k)].append(float(v))
+            except (TypeError, ValueError):
+                continue
+    return {k: float(sum(vals) / len(vals)) for k, vals in acc.items() if vals}
+
+
+def _map_trait_1_9_to_display_5(v9: float | None) -> float | None:
+    """Mapeia escore trait 1…9 para escala de apresentação ~1…5 (mockup)."""
+    if v9 is None:
+        return None
+    try:
+        x = float(v9)
+    except (TypeError, ValueError):
+        return None
+    x = max(1.0, min(9.0, x))
+    return round(1.0 + (x - 1.0) * 4.0 / 8.0, 1)
+
+
+def _trait_quality_label_from_s5(s5: float | None) -> str:
+    if s5 is None:
+        return '—'
+    if s5 >= 4.25:
+        return 'Excelente'
+    if s5 >= 3.5:
+        return 'Boa'
+    if s5 >= 2.75:
+        return 'Média'
+    if s5 >= 2.0:
+        return 'Fraca'
+    return 'Baixa'
+
+
+def _perspicuus_composite_percentile_in_lot(
+    db,
+    table: str,
+    farm_id: str,
+    lot_id: str,
+    score: float | None,
+) -> int | None:
+    if score is None:
+        return None
+    try:
+        x = float(score)
+    except (TypeError, ValueError):
+        return None
+    cond = ['farm_id = ?', 'COALESCE(score_global, score_1_9) IS NOT NULL']
+    params: list[Any] = [str(farm_id or '').strip()]
+    lot = str(lot_id or '').strip()
+    if lot:
+        cond.append('lot_id = ?')
+        params.append(lot)
+    vals: list[float] = []
+    for row in db.execute(
+        f"SELECT COALESCE(score_global, score_1_9) AS s FROM {table} WHERE {' AND '.join(cond)}",
+        params,
+    ).fetchall():
+        try:
+            if row['s'] is not None:
+                vals.append(float(row['s']))
+        except (TypeError, ValueError):
+            continue
+    if not vals:
+        return None
+    le = sum(1 for v in vals if v <= x)
+    return int(max(0, min(100, round(100.0 * le / len(vals)))))
+
+
+def _perspicuus_index_0_100(score: float | None, res_hi: float = 6.0) -> int | None:
+    if score is None:
+        return None
+    try:
+        s = float(score)
+    except (TypeError, ValueError):
+        return None
+    lo = 1.0
+    hi = float(res_hi)
+    if hi <= lo:
+        return None
+    t = (s - lo) / (hi - lo)
+    t = max(0.0, min(1.0, t))
+    return int(round(100.0 * t))
+
+
+def _perspicuus_build_individual_dashboard(
+    *,
+    brand: str,
+    subtitle: str,
+    featured: dict[str, Any],
+    traits_items: list[tuple[str, float, float | None]],
+    db: Any,
+    breed: str | None,
+    farm_id: str,
+    lot_id: str,
+    animal_label: str,
+    birth_date: str = '',
+    sex: str = '',
+    lot_label_display: str = '',
+    show_lot_radar: bool = True,
+) -> dict[str, Any]:
+    """Contexto para ``_perspicuus_individual_dashboard.html`` (layout mockup)."""
+    table = PERSPICUUS_BREED_TABLE.get((breed or '').strip().lower()) if breed else None
+    lot_means: dict[str, float] = {}
+    if table and show_lot_radar:
+        lot_means = _perspicuus_collect_trait_lot_mean_raws(db, table, farm_id, lot_id)
+
+    trait_cards: list[dict[str, Any]] = []
+    labels: list[str] = []
+    animal_raw: list[float] = []
+    lot_raw: list[float | None] = []
+    for name, raw, t_lot9 in traits_items:
+        labels.append(name)
+        try:
+            animal_raw.append(float(raw))
+        except (TypeError, ValueError):
+            animal_raw.append(0.0)
+        lr = lot_means.get(name)
+        lot_raw.append(float(lr) if lr is not None else None)
+        t9 = t_lot9
+        if t9 is None:
+            try:
+                t9 = float(rescale_perspicuus_trait_score(float(raw)))
+            except (TypeError, ValueError):
+                t9 = None
+        s5 = _map_trait_1_9_to_display_5(t9)
+        p_semi = ((s5 - 1.0) / 4.0) if s5 is not None else 0.0
+        p_semi = max(0.0, min(1.0, float(p_semi)))
+        trait_cards.append({
+            'name': name,
+            'raw': raw,
+            's5': s5,
+            's5max': 5.0,
+            'label': _trait_quality_label_from_s5(s5),
+            'semi_p': round(p_semi, 4),
+        })
+
+    insights: list[dict[str, str]] = []
+    if show_lot_radar and lot_means:
+        for name, raw, _ in traits_items:
+            try:
+                rv = float(raw)
+            except (TypeError, ValueError):
+                continue
+            mv = lot_means.get(name)
+            if mv is not None:
+                if rv >= mv + 0.25:
+                    insights.append({'icon': '★', 'html': f'<b>{name}</b> acima da média do lote (raw).'})
+                elif rv <= mv - 0.25:
+                    insights.append({'icon': 'ℹ️', 'html': f'<b>{name}</b> abaixo da média do lote (raw).'})
+    if not insights:
+        if show_lot_radar:
+            insights.append({
+                'icon': '✓',
+                'html': 'Sem desvios fortes face à média do lote nos traits disponíveis.',
+            })
+        else:
+            insights.append({
+                'icon': 'ℹ️',
+                'html': 'MK1 Holandês: traits em escala 1–9 (nominal −4…+4); sem linha de lote na BD.',
+            })
+
+    lot_has_line = show_lot_radar and any(v is not None for v in lot_raw)
+    radar_cfg = {
+        'labels': labels,
+        'animal': animal_raw,
+        'lot': lot_raw if lot_has_line else None,
+    }
+
+    sg = featured.get('score_global')
+    if sg is None:
+        sg = featured.get('score_1_9')
+    pct = None
+    if table:
+        pct = _perspicuus_composite_percentile_in_lot(
+            db, table, farm_id, lot_id, float(sg) if sg is not None else None
+        )
+    idx100 = _perspicuus_index_0_100(float(sg) if sg is not None else None, res_hi=6.0)
+    if idx100 is None and traits_items:
+        try:
+            m = sum(float(t[1]) for t in traits_items) / len(traits_items)
+            t9m = float(rescale_perspicuus_trait_score(m))
+            idx100 = int(max(0, min(100, round((t9m - 1.0) / 8.0 * 100.0))))
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+
+    farm_lbl = 'Fazenda' if breed else 'Estação'
+    lot_lbl = 'Lote' if breed else 'Referência'
+    meta = [
+        {'label': farm_lbl, 'value': farm_id or '—'},
+        {'label': lot_lbl, 'value': lot_label_display or (lot_id or '—')},
+        {'label': 'Animal', 'value': animal_label or '—'},
+        {'label': 'Data', 'value': str(featured.get('inference_date') or '—')},
+        {'label': 'Sexo', 'value': sex or '—'},
+        {'label': 'Nascimento', 'value': birth_date or '—'},
+        {
+            'label': 'Raw médio',
+            'value': (
+                f"{float(featured.get('raw_score')):.4f}"
+                if featured.get('raw_score') is not None
+                else '—'
+            ),
+        },
+        {
+            'label': 'Escore lote',
+            'value': (
+                f"{float(featured.get('score_lot')):.2f}"
+                if featured.get('score_lot') is not None
+                else '—'
+            ),
+        },
+        {
+            'label': 'Escore global',
+            'value': (f"{float(sg):.2f}" if sg is not None else '—'),
+        },
+    ]
+
+    img = featured.get('thumb_path') or featured.get('image_path') or ''
+    bbox = featured.get('bbox_path') or featured.get('image_path') or img
+
+    return {
+        'brand': brand,
+        'subtitle': subtitle,
+        'animal_title': animal_label,
+        'badge_ok': not (str(featured.get('error_text') or '').strip()),
+        'meta': meta,
+        'trait_cards': trait_cards,
+        'radar_json': json.dumps(radar_cfg, ensure_ascii=False),
+        'insights': insights,
+        'img_main': img,
+        'img_bbox': bbox,
+        'index_100': idx100,
+        'pct_lot': pct,
+        'pct_lot_label': (
+            f'Percentil no lote {lot_label_display}' if lot_label_display else 'Percentil no lote'
+        ),
+        'traits_items': traits_items,
+        'raw_score': featured.get('raw_score'),
+        'score_lot': featured.get('score_lot'),
+        'score_global': float(sg) if sg is not None else None,
+    }
+
+
 def _perspicuus_score_pair_for_record(
     db,
     breed: str,
@@ -1304,10 +1571,39 @@ def _perspicuus_dedupe_latest_rows(rows: list[sqlite3.Row]) -> list[dict[str, An
     return out
 
 
-def _perspicuus_farm_lote_dashboard(db, breed: str, farm_id: str) -> dict[str, Any]:
+def _perspicuus_months_between_iso(birth: str, ref: str) -> float | None:
+    """Idade em meses (aprox.) entre datas ISO YYYY-MM-DD."""
+    b = (birth or '').strip()[:10]
+    r = (ref or '').strip()[:10]
+    if len(b) < 10 or len(r) < 10:
+        return None
+    try:
+        bd = datetime.strptime(b, '%Y-%m-%d')
+        rd = datetime.strptime(r, '%Y-%m-%d')
+    except ValueError:
+        return None
+    return (rd - bd).days / 30.4375
+
+
+def _perspicuus_lote_status_from_index(idx: int | None) -> str:
+    if idx is None:
+        return '—'
+    if idx >= 85:
+        return 'Muito bom'
+    if idx >= 70:
+        return 'Bom'
+    if idx >= 55:
+        return 'Razoável'
+    if idx >= 40:
+        return 'Regular'
+    return 'Atenção'
+
+
+def _perspicuus_farm_lote_dashboard(db, breed: str, farm_id: str, lot_focus: str = '') -> dict[str, Any]:
     """
     Dados para análise por lote numa fazenda: violino/box por lote, grelha por trait,
     ranking de lotes por média de trait (1–9 com min/max por trait no lote + shrink).
+    Com ``lot_focus`` opcional, inclui ``lote_detail`` (vista tipo dashboard do lote).
     """
     farm_id = (farm_id or '').strip()
     empty: dict[str, Any] = {
@@ -1318,6 +1614,8 @@ def _perspicuus_farm_lote_dashboard(db, breed: str, farm_id: str) -> dict[str, A
         'traits': [],
         'animals_grid': [],
         'rank_by_trait': {},
+        'lot_list': [],
+        'lote_detail': None,
     }
     if breed not in ('angus', 'nelore') or not farm_id:
         return empty
@@ -1433,6 +1731,284 @@ def _perspicuus_farm_lote_dashboard(db, breed: str, farm_id: str) -> dict[str, A
             }
             animals_grid.append(slim)
 
+    lot_list = sorted({x['lot'] for x in violin_lots}, key=lambda s: (s == '(sem lote)', str(s)))
+
+    lote_detail: dict[str, Any] | None = None
+    lot_focus_raw = (lot_focus or '').strip()
+    lot_focus_key = lot_label(lot_focus_raw) if lot_focus_raw else ''
+    if lot_focus_key and lot_focus_key in by_lot:
+        top4 = traits_published[:4]
+        members = list(by_lot[lot_focus_key])
+        bmap_focus = bounds_by_lot.get(lot_focus_key) or {}
+
+        animal_meta: dict[str, dict[str, str]] = {}
+        for d in deduped:
+            if lot_label(str(d.get('lot_id') or '').strip()) != lot_focus_key:
+                continue
+            tag = str(d.get('animal_tag') or '').strip()
+            if not tag:
+                continue
+            animal_meta[tag] = {
+                'birth_date': str(d.get('birth_date') or '').strip(),
+                'inference_date': str(d.get('inference_date') or '').strip(),
+            }
+
+        lot_raw_rows: list[dict[str, Any]] = []
+        for r in rows:
+            d = dict(r)
+            if lot_label(str(d.get('lot_id') or '').strip()) != lot_focus_key:
+                continue
+            lot_raw_rows.append(d)
+
+        last_update = ''
+        for d in lot_raw_rows:
+            idt = str(d.get('inference_date') or '').strip()[:10]
+            if len(idt) == 10 and idt > last_update:
+                last_update = idt
+
+        ages_m: list[float] = []
+        for m in members:
+            meta = animal_meta.get(str(m.get('animal') or ''))
+            if not meta:
+                continue
+            mo = _perspicuus_months_between_iso(meta.get('birth_date') or '', meta.get('inference_date') or '')
+            if mo is not None and mo >= 0:
+                ages_m.append(float(mo))
+        mean_age_months = round(sum(ages_m) / len(ages_m), 1) if ages_m else None
+
+        hero_img = ''
+        for m in sorted(members, key=lambda x: (-(x.get('global') or -1e9), x.get('animal') or '')):
+            th = str(m.get('thumb') or '').strip()
+            if th:
+                hero_img = th
+                break
+
+        glob_scores = [float(m['global']) for m in members if m.get('global') is not None]
+        mu_g = sum(glob_scores) / len(glob_scores) if glob_scores else None
+        lot_idx = _perspicuus_index_0_100(mu_g, 6.0)
+        lot_status = _perspicuus_lote_status_from_index(lot_idx)
+
+        farm_mean9: dict[str, float | None] = {}
+        for tr in top4:
+            fv = [
+                float((a.get('traits') or {}).get(tr))
+                for a in animals_grid
+                if (a.get('traits') or {}).get(tr) is not None
+            ]
+            farm_mean9[tr] = sum(fv) / len(fv) if fv else None
+
+        by_day_trait_vals: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+        for d in lot_raw_rows:
+            day = str(d.get('inference_date') or '').strip()[:10]
+            if len(day) < 10:
+                continue
+            try:
+                tj = json.loads(d.get('traits_json') or '{}')
+            except (TypeError, ValueError, json.JSONDecodeError):
+                tj = {}
+            if not isinstance(tj, dict):
+                tj = {}
+            traits_res = traits_rescaled_with_per_trait_bounds(tj, bmap_focus) if bmap_focus else {}
+            for tr in top4:
+                v = traits_res.get(tr)
+                if v is not None:
+                    try:
+                        by_day_trait_vals[day][tr].append(float(v))
+                    except (TypeError, ValueError):
+                        continue
+
+        sorted_days = sorted(by_day_trait_vals.keys())
+        evo_series: list[dict[str, Any]] = []
+        for tr in top4:
+            pts: list[float | None] = []
+            for day in sorted_days:
+                arr = by_day_trait_vals[day].get(tr)
+                if not arr:
+                    pts.append(None)
+                    continue
+                m9 = sum(arr) / len(arr)
+                s5 = _map_trait_1_9_to_display_5(m9)
+                pts.append(round(float(s5), 2) if s5 is not None else None)
+            evo_series.append({'trait': tr, 'points': pts})
+
+        trait_cards: list[dict[str, Any]] = []
+        boxplot_s5: dict[str, list[float | None]] = {tr: [] for tr in top4}
+        for tr in top4:
+            vals9 = []
+            for m in members:
+                tv = (m.get('traits') or {}).get(tr)
+                if tv is not None:
+                    try:
+                        vals9.append(float(tv))
+                    except (TypeError, ValueError):
+                        continue
+            mean9 = sum(vals9) / len(vals9) if vals9 else None
+            mean_s5 = _map_trait_1_9_to_display_5(mean9) if mean9 is not None else None
+            farm9 = farm_mean9.get(tr)
+            farm_s5 = _map_trait_1_9_to_display_5(farm9) if farm9 is not None else None
+            delta = None
+            if mean_s5 is not None and farm_s5 is not None:
+                delta = round(float(mean_s5) - float(farm_s5), 2)
+            spark: list[float] = []
+            if evo_series:
+                ser = next((s for s in evo_series if s.get('trait') == tr), None)
+                if ser:
+                    raw_pts = [p for p in (ser.get('points') or []) if p is not None]
+                    spark = [float(x) for x in raw_pts[-20:]]
+            if spark and len(spark) >= 2:
+                d_spark = round(spark[-1] - spark[0], 2)
+            elif spark:
+                d_spark = 0.0
+            else:
+                d_spark = None
+            for v9 in vals9:
+                s5v = _map_trait_1_9_to_display_5(v9)
+                boxplot_s5[tr].append(float(s5v) if s5v is not None else None)
+            trait_cards.append({
+                'trait': tr,
+                'mean_s5': float(mean_s5) if mean_s5 is not None else None,
+                'label': _trait_quality_label_from_s5(mean_s5),
+                'delta_vs_farm': delta,
+                'spark': spark,
+                'delta_spark': d_spark,
+            })
+
+        ordered_lots = [x['lot'] for x in violin_lots]
+        compare_lots = [lot_focus_key] + [lk for lk in ordered_lots if lk != lot_focus_key][:3]
+        compare_means_s5: dict[str, dict[str, float | None]] = {}
+        for lk in compare_lots:
+            mem_lk = by_lot.get(lk, [])
+            compare_means_s5[lk] = {}
+            for tr in top4:
+                vs = [
+                    float((x.get('traits') or {}).get(tr))
+                    for x in mem_lk
+                    if (x.get('traits') or {}).get(tr) is not None
+                ]
+                m9l = sum(vs) / len(vs) if vs else None
+                s5l = _map_trait_1_9_to_display_5(m9l) if m9l is not None else None
+                compare_means_s5[lk][tr] = round(float(s5l), 2) if s5l is not None else None
+
+        radar_farm: list[float] = []
+        for tr in top4:
+            fm = farm_mean9.get(tr)
+            rf = _map_trait_1_9_to_display_5(fm) if fm is not None else None
+            radar_farm.append(round(float(rf), 2) if rf is not None else 2.5)
+        radar_lote: list[float] = []
+        for i, tr in enumerate(top4):
+            row_lot = compare_means_s5.get(lot_focus_key, {})
+            v = row_lot.get(tr)
+            if v is not None:
+                radar_lote.append(float(v))
+            else:
+                radar_lote.append(radar_farm[i] if i < len(radar_farm) else 2.5)
+
+        sorted_members = sorted(
+            members,
+            key=lambda x: (-(x.get('global') if x.get('global') is not None else -1e9), x.get('animal') or ''),
+        )
+        n_m = len(sorted_members)
+        ranking: list[dict[str, Any]] = []
+        for rank, m in enumerate(sorted_members, start=1):
+            g = m.get('global')
+            idx_a = _perspicuus_index_0_100(float(g), 6.0) if g is not None else None
+            top_pct = None
+            if n_m:
+                top_pct = max(1, min(99, int(math.ceil(100 * rank / n_m))))
+            traits_s5: dict[str, float | None] = {}
+            for tr in top4:
+                tv = (m.get('traits') or {}).get(tr)
+                if tv is None:
+                    traits_s5[tr] = None
+                else:
+                    s5a = _map_trait_1_9_to_display_5(float(tv))
+                    traits_s5[tr] = round(float(s5a), 2) if s5a is not None else None
+            ranking.append({
+                'rank': rank,
+                'animal': m.get('animal') or '',
+                'thumb': m.get('thumb') or '',
+                'traits_s5': traits_s5,
+                'index': idx_a,
+                'top_pct': top_pct,
+                'global': m.get('global'),
+            })
+
+        highlights = ranking[:5]
+
+        idx_per_lot: list[int] = []
+        for vl in violin_lots:
+            im = _perspicuus_index_0_100(float(vl['mean']), 6.0) if vl.get('mean') is not None else None
+            if im is not None:
+                idx_per_lot.append(im)
+        avg_idx_lots = int(round(sum(idx_per_lot) / len(idx_per_lot))) if idx_per_lot else None
+
+        insights: list[str] = []
+        std_pairs: list[tuple[str, float]] = []
+        for tr in top4:
+            vals = []
+            for m in members:
+                tv = (m.get('traits') or {}).get(tr)
+                if tv is not None:
+                    try:
+                        vals.append(float(tv))
+                    except (TypeError, ValueError):
+                        continue
+            _mu, sd = _mean_std(vals)
+            std_pairs.append((tr, float(sd or 0.0)))
+        std_pairs.sort(key=lambda x: -x[1])
+        if std_pairs and std_pairs[0][1] > 1e-6:
+            insights.append(
+                f"{std_pairs[0][0]} é o trait com maior variabilidade entre os animais deste lote."
+            )
+        if len(std_pairs) > 1 and std_pairs[-1][1] < 0.08 and n_m > 1:
+            insights.append(f"{std_pairs[-1][0]} está homogéneo no lote (pouca dispersão).")
+        if lot_idx is not None and avg_idx_lots is not None:
+            if lot_idx > avg_idx_lots + 2:
+                insights.append('O índice agregado deste lote está acima da média dos lotes desta fazenda.')
+            elif lot_idx < avg_idx_lots - 2:
+                insights.append('O índice agregado deste lote está abaixo da média dos lotes desta fazenda.')
+        with_mean = [c for c in trait_cards if c.get('mean_s5') is not None]
+        if len(with_mean) >= 2:
+            weakest = min(with_mean, key=lambda c: float(c['mean_s5']))
+            insights.append(
+                f"{weakest.get('trait')} tem a média mais baixa no lote — vale a pena rever em conjunto com o técnico."
+            )
+        if len(sorted_days) >= 2 and evo_series:
+            insights.append(
+                f"Série temporal com {len(sorted_days)} dias distintos de inferência neste lote."
+            )
+        insights = insights[:8]
+
+        lote_detail = {
+            'lot': lot_focus_key,
+            'top_traits': top4,
+            'hero': {
+                'n_animals': len(members),
+                'mean_age_months': mean_age_months,
+                'last_update': last_update,
+                'image': hero_img,
+                'index': lot_idx,
+                'status': lot_status,
+                'mean_global': round(float(mu_g), 3) if mu_g is not None else None,
+            },
+            'trait_cards': trait_cards,
+            'boxplot_s5': {k: [x for x in v if x is not None] for k, v in boxplot_s5.items()},
+            'compare_lots': compare_lots,
+            'compare_means_s5': compare_means_s5,
+            'radar': {
+                'labels': top4,
+                'lote': radar_lote,
+                'media_fazenda': radar_farm,
+            },
+            'ranking': ranking[:24],
+            'highlights': highlights,
+            'evolution': {
+                'dates': sorted_days,
+                'series': evo_series,
+            },
+            'insights': insights,
+        }
+
     return {
         'farm': farm_id,
         'n_records_scanned': n_scanned,
@@ -1441,6 +2017,8 @@ def _perspicuus_farm_lote_dashboard(db, breed: str, farm_id: str) -> dict[str, A
         'traits': traits_published,
         'animals_grid': animals_grid,
         'rank_by_trait': rank_pub,
+        'lot_list': lot_list,
+        'lote_detail': lote_detail,
     }
 
 
@@ -1689,7 +2267,7 @@ def _environment_for_request() -> str | None:
         'delete_image', 'edit_image_notes', 'download_images', 'download_images_xlsx',
     }
     perspicuus_eps = {
-        'perspicuus', 'perspicuus_animais', 'perspicuus_inferencias',
+        'perspicuus', 'perspicuus_animais', 'perspicuus_animais_individuo', 'perspicuus_inferencias',
         'perspicuus_analise_rebanho', 'perspicuus_modelos', 'serve_perspicuus_media',
         'get_perspicuus_record', 'patch_perspicuus_record',
         'delete_perspicuus_record', 'infer_perspicuus_record_api',
@@ -3397,6 +3975,108 @@ def perspicuus_animais():
     )
 
 
+@app.route('/perspicuus/animais/individuo')
+@login_required
+def perspicuus_animais_individuo():
+    """Holandês MK1: análise individual por RFID (layout alinhado a Angus/Nelore)."""
+    db = get_db()
+    rfid = str(request.args.get('rfid', '') or '').strip()
+    station = str(request.args.get('station', '') or '').strip()
+    q_ret = str(request.args.get('q', '') or '').strip()
+    if not rfid:
+        return redirect(url_for('perspicuus_animais', station=station or None, q=q_ret or None))
+    cond = ['animal_rfid = ?']
+    params: list[str] = [rfid]
+    if station:
+        cond.append('station_id = ?')
+        params.append(station)
+    where_sql = ' AND '.join(cond)
+    rows = db.execute(
+        f'SELECT * FROM perspicuus_events WHERE {where_sql} ORDER BY timestamp_utc DESC LIMIT 400',
+        tuple(params),
+    ).fetchall()
+    if not rows:
+        flash('Nenhum evento encontrado para este RFID.', 'warning')
+        return redirect(url_for('perspicuus_animais', station=station or None, q=q_ret or None))
+
+    latest_inf: dict[str, Any] | None = None
+    for row in rows:
+        d = dict(row)
+        if (d.get('inference_at') or '').strip():
+            latest_inf = d
+            break
+    if latest_inf is None:
+        latest_inf = dict(rows[0])
+
+    inf = _safe_load_json(latest_inf.get('inference_json') or '{}', {})
+    traits_mean = _merged_traits_mean(inf)
+    items: list[tuple[str, float, float]] = []
+    for k in sorted(traits_mean.keys(), key=_trait_sort_key):
+        try:
+            rv = float(traits_mean[k])
+            items.append((str(k), rv, float(rescale_perspicuus_trait_score(rv))))
+        except (TypeError, ValueError):
+            continue
+    raw_mean = round(sum(t[1] for t in items) / len(items), 4) if items else None
+
+    lat_path = _last_frame_path(latest_inf.get('lateral_json') or '[]')
+    img_main = _perspicuus_media_url_from_path(lat_path) if lat_path else ''
+    if not img_main:
+        img_main = str(template_perspicuus_first_preview(latest_inf) or '').strip()
+
+    featured: dict[str, Any] = {
+        'inference_date': str(latest_inf.get('timestamp_utc') or '')[:10],
+        'raw_score': raw_mean,
+        'score_lot': None,
+        'score_global': None,
+        'score_1_9': None,
+        'error_text': '',
+        'thumb_path': img_main,
+        'image_path': img_main,
+        'bbox_path': img_main,
+    }
+
+    ind_dashboard = _perspicuus_build_individual_dashboard(
+        brand='Holandês (MK1)',
+        subtitle='Última inferência Perspicuus no brete; sem escore composto nem lote na BD.',
+        featured=featured,
+        traits_items=items,
+        db=db,
+        breed=None,
+        farm_id=str(latest_inf.get('station_id') or ''),
+        lot_id='',
+        animal_label=rfid,
+        birth_date='',
+        sex=str(latest_inf.get('animal_status') or '') or '—',
+        lot_label_display='Eventos Perspicuus',
+        show_lot_radar=False,
+    )
+
+    hist_rows: list[dict[str, Any]] = []
+    for row in rows[:120]:
+        d = dict(row)
+        infj = _safe_load_json(d.get('inference_json') or '{}', {})
+        tm = _merged_traits_mean(infj)
+        rm = round(sum(tm.values()) / len(tm), 4) if tm else None
+        hist_rows.append({
+            'inference_date': str(d.get('timestamp_utc') or '')[:10],
+            'raw_score': rm,
+            'score_lot': None,
+            'score_global': None,
+            'score_1_9': None,
+            'error_text': 'ok' if (d.get('inference_at') or '').strip() else 'sem inferência',
+        })
+
+    return render_template(
+        'perspicuus_animais_individuo.html',
+        rfid=rfid,
+        station_filter=station,
+        q_filter=q_ret,
+        ind_dashboard=ind_dashboard,
+        hist_rows=hist_rows,
+    )
+
+
 @app.route('/perspicuus/inferencias')
 @login_required
 def perspicuus_inferencias():
@@ -4052,7 +4732,7 @@ def perspicuus_angus_analise_individual():
         points = [dict(x) for x in pr]
         im = db.execute(
             """
-            SELECT id, inference_date, filename, image_path, thumb_path, bbox_path, raw_score,
+            SELECT id, inference_date, lot_id, birth_date, sex, filename, image_path, thumb_path, bbox_path, raw_score,
                    COALESCE(score_global, score_1_9) AS score_1_9,
                    score_lot, score_global, traits_json, error_text
             FROM perspicuus_angus_records
@@ -4072,6 +4752,23 @@ def perspicuus_angus_analise_individual():
                 d.get('traits_json'),
             )
             images.append(d)
+    ind_dashboard = None
+    if selected_farm and selected_animal and images:
+        feat = dict(images[0])
+        ind_dashboard = _perspicuus_build_individual_dashboard(
+            brand='Angus',
+            subtitle='Avaliação detalhada por trait; cartões em escala visual 1–5 (derivada de 1–9).',
+            featured=feat,
+            traits_items=list(feat.get('traits_items') or []),
+            db=db,
+            breed='angus',
+            farm_id=str(selected_farm),
+            lot_id=str(feat.get('lot_id') or ''),
+            animal_label=str(selected_animal),
+            birth_date=str(feat.get('birth_date') or ''),
+            sex=str(feat.get('sex') or ''),
+            lot_label_display=str(feat.get('lot_id') or '').strip() or '(sem lote)',
+        )
     return render_template(
         'perspicuus_angus_analise_individual.html',
         records=records[:120],
@@ -4085,6 +4782,8 @@ def perspicuus_angus_analise_individual():
         points=points,
         images=images,
         stats=stats,
+        ind_dashboard=ind_dashboard,
+        hist_rows=images if images else [],
     )
 
 
@@ -4123,8 +4822,9 @@ def perspicuus_angus_analise_populacao():
 def perspicuus_angus_analise_lotes():
     db = get_db()
     farm_filter = str(request.args.get('farm', '')).strip()
+    lot_filter = str(request.args.get('lot', '') or '').strip()
     farms, _, stats = _angus_base_lists(db)
-    dashboard = _perspicuus_farm_lote_dashboard(db, 'angus', farm_filter)
+    dashboard = _perspicuus_farm_lote_dashboard(db, 'angus', farm_filter, lot_focus=lot_filter)
     return render_template(
         'perspicuus_analise_lotes.html',
         breed_key='angus',
@@ -4132,6 +4832,7 @@ def perspicuus_angus_analise_lotes():
         breed_emoji='🐂',
         farms=farms,
         farm_filter=farm_filter,
+        lot_filter=lot_filter,
         stats=stats,
         dashboard=dashboard,
     )
@@ -4742,7 +5443,7 @@ def perspicuus_nelore_analise_individual():
         points = [dict(x) for x in pr]
         im = db.execute(
             """
-            SELECT id, inference_date, lot_id, filename, image_path, thumb_path, bbox_path, raw_score,
+            SELECT id, inference_date, lot_id, birth_date, sex, filename, image_path, thumb_path, bbox_path, raw_score,
                    COALESCE(score_global, score_1_9) AS score_1_9,
                    score_lot, score_global, traits_json, error_text
             FROM perspicuus_nelore_records
@@ -4762,6 +5463,24 @@ def perspicuus_nelore_analise_individual():
                 d.get('traits_json'),
             )
             images.append(d)
+    ind_dashboard = None
+    if selected_farm and selected_animal and images:
+        feat = dict(images[0])
+        lot_eff = str(feat.get('lot_id') or lot_filter or '')
+        ind_dashboard = _perspicuus_build_individual_dashboard(
+            brand='Nelore',
+            subtitle='Avaliação detalhada por trait; cartões em escala visual 1–5 (derivada de 1–9).',
+            featured=feat,
+            traits_items=list(feat.get('traits_items') or []),
+            db=db,
+            breed='nelore',
+            farm_id=str(selected_farm),
+            lot_id=lot_eff,
+            animal_label=str(selected_animal),
+            birth_date=str(feat.get('birth_date') or ''),
+            sex=str(feat.get('sex') or ''),
+            lot_label_display=str(feat.get('lot_id') or lot_filter or '').strip() or '(sem lote)',
+        )
     return render_template(
         'perspicuus_nelore_analise_individual.html',
         records=records[:120],
@@ -4777,6 +5496,8 @@ def perspicuus_nelore_analise_individual():
         points=points,
         images=images,
         stats=stats,
+        ind_dashboard=ind_dashboard,
+        hist_rows=images if images else [],
     )
 
 
@@ -4818,8 +5539,9 @@ def perspicuus_nelore_analise_populacao():
 def perspicuus_nelore_analise_lotes():
     db = get_db()
     farm_filter = str(request.args.get('farm', '')).strip()
+    lot_filter = str(request.args.get('lot', '') or '').strip()
     farms, _, _, stats = _nelore_base_lists(db)
-    dashboard = _perspicuus_farm_lote_dashboard(db, 'nelore', farm_filter)
+    dashboard = _perspicuus_farm_lote_dashboard(db, 'nelore', farm_filter, lot_focus=lot_filter)
     return render_template(
         'perspicuus_analise_lotes.html',
         breed_key='nelore',
@@ -4827,6 +5549,7 @@ def perspicuus_nelore_analise_lotes():
         breed_emoji='🐃',
         farms=farms,
         farm_filter=farm_filter,
+        lot_filter=lot_filter,
         stats=stats,
         dashboard=dashboard,
     )

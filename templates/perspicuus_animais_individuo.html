@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% from "_perspicuus_layout.html" import persp_styles, persp_tabs, persp_individual_styles %}
+{% block title %}Perspicuus — animal {{ rfid }}{% endblock %}
+{% block head %}
+{{ persp_styles() }}
+{{ persp_individual_styles() }}
+{% endblock %}
+{% block content %}
+<div class="persp-section" style="margin-bottom:12px">
+  <a href="{{ url_for('perspicuus_animais', station=station_filter or none, q=q_filter or none) }}" class="btn btn-ghost btn-sm">← Voltar a animais</a>
+</div>
+{{ persp_tabs(active='animais') }}
+{% if ind_dashboard %}
+{% include '_perspicuus_individual_dashboard.html' %}
+{% else %}
+<div class="card"><div class="empty-state"><div class="icon">🐂</div>Sem dados de painel.</div></div>
+{% endif %}
+{% endblock %}

@@ -1,26 +1,12 @@
 {% extends "base.html" %}
-{% from "_perspicuus_layout.html" import persp_styles %}
-{% block title %}Perspicuus Angus - análise individual{% endblock %}
+{% from "_perspicuus_layout.html" import persp_styles, persp_individual_styles %}
+{% block title %}Perspicuus Angus — análise individual{% endblock %}
 {% block head %}
 {{ persp_styles() }}
-<style>
-.meta-line{font-family:var(--mono);font-size:12px;color:var(--text2);margin-bottom:10px}
-.ind-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.animal-cover{width:100%;height:260px;object-fit:contain;object-position:center;border:1px solid var(--border);border-radius:10px;background:var(--surf2)}
-.score-gauge{display:grid;gap:6px}
-.traits-hint{font-size:10px;color:var(--text2);font-family:var(--mono);line-height:1.35;margin:0 0 4px}
-.trait-name{color:var(--text);font-family:var(--mono);letter-spacing:.2px;font-weight:600}
-@media (max-width:980px){.ind-grid{grid-template-columns:1fr}}
-</style>
+{{ persp_individual_styles() }}
 {% endblock %}
 {% block content %}
-<div class="page-header">
-  <div>
-    <div class="page-title">🐂 <span>Perspicuus Angus</span> <span style="color:var(--accent)">análise individual</span></div>
-    <div class="page-sub">Evolução do escore por animal</div>
-  </div>
-</div>
-<div class="card mb-16">
+<div class="card mb-12">
   <form method="get" class="filters-row">
     <div class="field"><label>Fazenda</label><select name="farm"><option value="">Todas</option>{% for f in farms %}<option value="{{ f }}" {% if farm_filter==f %}selected{% endif %}>{{ f }}</option>{% endfor %}</select></div>
     <div class="field"><label>Animal</label><select name="animal"><option value="">Todos</option>{% for a in animals %}<option value="{{ a }}" {% if animal_filter==a %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></div>
@@ -28,150 +14,27 @@
     <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
   </form>
 </div>
-{% set featured = images[0] if images and (images|length) > 0 else none %}
-{% set raw_ref_rescaled = (featured.raw_score|perspicuus_rescaled) if featured and featured.raw_score is not none else none %}
-{% set lot_ref = featured.score_lot if featured else none %}
-{% set global_ref = (featured.score_global if featured and featured.score_global is not none else (featured.score_1_9 if featured else none)) %}
+
+{% if ind_dashboard %}
+{% include '_perspicuus_individual_dashboard.html' %}
+{% else %}
 <div class="card mb-16">
-  <div class="card-title">Análise do animal — {{ selected_farm or '—' }} / {{ selected_animal or '—' }}</div>
-  <div class="meta-line">
-    Fazenda: <b>{{ selected_farm or '—' }}</b> ·
-    Brinco: <b>{{ selected_animal or '—' }}</b> ·
-    Data ref.: <b>{{ featured.inference_date if featured else '—' }}</b> ·
-    Raw ref.: <b>{{ '%.4f'|format(featured.raw_score) if featured and featured.raw_score is not none else '—' }}</b> ·
-    Escore lote ref.: <b>{{ '%g'|format(featured.score_lot) if featured and featured.score_lot is not none else '—' }}</b> ·
-    Escore global ref.: <b>{{ '%g'|format(featured.score_global) if featured and featured.score_global is not none else (('%g'|format(featured.score_1_9)) if featured and featured.score_1_9 is not none else '—') }}</b>
-  </div>
-  <div class="ind-grid">
-    <div class="card">
-      <div class="card-title">Imagem do animal</div>
-      {% if featured and (featured.thumb_path or featured.image_path) %}
-      <img src="{{ featured.thumb_path or featured.image_path }}" class="animal-cover" onclick="window.open('{{ featured.bbox_path or featured.image_path }}')">
-      {% else %}
-      <div class="empty-state"><div class="icon">🖼️</div>Sem imagem para o animal.</div>
-      {% endif %}
-    </div>
-    <div class="card">
-      <div class="card-title">Plot Raw score (sem média)</div>
-      <div class="score-gauge">
-        <p class="traits-hint">Um gauge por trait identificado, sem agregação.</p>
-        {% if featured and featured.traits_items %}
-          {% for tname, tval, _tl in featured.traits_items %}
-          {% set t_raw = tval %}
-          {% set t_raw_clamped = -4 if t_raw < -4 else (4 if t_raw > 4 else t_raw) %}
-          {% set t_raw_pct = ((t_raw_clamped + 4) / 8 * 100) %}
-          <div class="persp-gauge-row">
-            <div class="persp-gauge-label-row">
-              <div class="persp-gauge-trait-stack">
-                <span class="trait-name">{{ tname }}</span>
-                {% if t_raw is not none %}<span class="persp-gauge-val-raw">raw {{ '%.2f'|format(tval|float) }}</span>{% endif %}
-              </div>
-            </div>
-            <div class="persp-gauge-scale-head"><span>-4.00</span><span>0.00</span><span>+4.00</span></div>
-            <div class="persp-gauge-line">
-              <div class="persp-gauge-bar-wrap">
-                <div class="persp-gauge-bar">{% if t_raw is not none %}<div class="persp-gauge-fill persp-gauge-fill--raw" style="width: {{ t_raw_pct }}%"></div>{% endif %}</div>
-              </div>
-              {% if t_raw is not none %}
-              <div class="persp-gauge-valbox">{{ '%.2f'|format(tval|float) }}</div>
-              {% else %}
-              <div class="persp-gauge-valbox muted">—</div>
-              {% endif %}
-            </div>
-          </div>
-          {% endfor %}
-        {% else %}
-        <div class="empty-state"><div class="icon">📉</div>Sem traits identificados.</div>
-        {% endif %}
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-title">Plot Escore lote (sem média)</div>
-      <div class="score-gauge">
-        <p class="traits-hint">Escala 1–9 por trait: min/max raw <em>desse trait</em> no lote (com shrink para −4…+4 em lotes pequenos), depois mapeamento 1–6 para o gauge.</p>
-        {% if featured and featured.traits_items %}
-          {% for tname, tval, t_lot9 in featured.traits_items %}
-          {% set t_lot_1_9 = t_lot9 if t_lot9 is not none else (tval|perspicuus_rescaled) %}
-          {% set t_lot = (1 + ((t_lot_1_9 - 1) * 5 / 8)) if t_lot_1_9 is not none else none %}
-          {% set t_lot_clamped = 1 if t_lot is not none and t_lot < 1 else (6 if t_lot is not none and t_lot > 6 else t_lot) %}
-          {% set t_lot_pct = (((t_lot_clamped - 1) / 5) * 100) if t_lot_clamped is not none else none %}
-          <div class="persp-gauge-row">
-            <div class="persp-gauge-label-row">
-              <div class="persp-gauge-trait-stack">
-                <span class="trait-name">{{ tname }}</span>
-                {% if tval is not none %}<span class="persp-gauge-val-raw">raw {{ '%.2f'|format(tval|float) }}</span>{% endif %}
-              </div>
-            </div>
-            <div class="persp-gauge-scale-head"><span>1.00</span><span>3.50</span><span>6.00</span></div>
-            <div class="persp-gauge-line">
-              <div class="persp-gauge-bar-wrap">
-                <div class="persp-gauge-bar">{% if t_lot is not none %}<div class="persp-gauge-fill persp-gauge-fill--lot" style="width: {{ t_lot_pct }}%"></div>{% endif %}</div>
-              </div>
-              {% if t_lot is not none %}
-              <div class="persp-gauge-valbox">{{ '%.2f'|format(t_lot|float) }}</div>
-              {% else %}
-              <div class="persp-gauge-valbox muted">—</div>
-              {% endif %}
-            </div>
-          </div>
-          {% endfor %}
-        {% else %}
-        <div class="empty-state"><div class="icon">📉</div>Sem traits identificados.</div>
-        {% endif %}
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-title">Plot Escore global (sem média)</div>
-      <div class="score-gauge">
-        <p class="traits-hint">Ajuste por trait com delta do escore global, sem mistura entre traits.</p>
-        {% if featured and featured.traits_items %}
-          {% set global_delta = (global_ref - raw_ref_rescaled) if global_ref is not none and raw_ref_rescaled is not none else none %}
-          {% for tname, tval, _tl in featured.traits_items %}
-          {% set t_raw_1_9 = tval|perspicuus_rescaled %}
-          {% set t_global_1_9 = (t_raw_1_9 + global_delta) if t_raw_1_9 is not none and global_delta is not none else none %}
-          {% set t_global = (1 + ((t_global_1_9 - 1) * 5 / 8)) if t_global_1_9 is not none else none %}
-          {% set t_global_clamped = 1 if t_global is not none and t_global < 1 else (6 if t_global is not none and t_global > 6 else t_global) %}
-          {% set t_global_pct = (((t_global_clamped - 1) / 5) * 100) if t_global_clamped is not none else none %}
-          <div class="persp-gauge-row">
-            <div class="persp-gauge-label-row">
-              <div class="persp-gauge-trait-stack">
-                <span class="trait-name">{{ tname }}</span>
-                {% if tval is not none %}<span class="persp-gauge-val-raw">raw {{ '%.2f'|format(tval|float) }}</span>{% endif %}
-              </div>
-            </div>
-            <div class="persp-gauge-scale-head"><span>1.00</span><span>3.50</span><span>6.00</span></div>
-            <div class="persp-gauge-line">
-              <div class="persp-gauge-bar-wrap">
-                <div class="persp-gauge-bar">{% if t_global is not none %}<div class="persp-gauge-fill persp-gauge-fill--global" style="width: {{ t_global_pct }}%"></div>{% endif %}</div>
-              </div>
-              {% if t_global is not none %}
-              <div class="persp-gauge-valbox">{{ '%.2f'|format(t_global|float) }}</div>
-              {% else %}
-              <div class="persp-gauge-valbox muted">—</div>
-              {% endif %}
-            </div>
-          </div>
-          {% endfor %}
-        {% else %}
-        <div class="empty-state"><div class="icon">📉</div>Sem traits identificados.</div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
+  <div class="empty-state"><div class="icon">🐂</div>Selecione fazenda e animal com inferência para ver o painel.</div>
 </div>
+{% endif %}
+
 <div class="card">
-  <div class="card-title">Registros</div>
+  <div class="card-title">Registos recentes</div>
   <div class="table-wrap"><table>
-    <thead><tr><th>Data</th><th>Fazenda</th><th>Brinco</th><th>Raw</th><th>Escore lote</th><th>Escore global</th><th>Status</th><th>Atalho</th></tr></thead>
+    <thead><tr><th>Data</th><th>Fazenda</th><th>Brinco</th><th>Raw</th><th>Escore lote</th><th>Escore global</th><th>Estado</th><th></th></tr></thead>
     <tbody>{% for r in records %}<tr>
       <td class="mono">{{ r.inference_date }}</td><td>{{ r.farm_id }}</td><td class="mono">{{ r.animal_tag }}</td>
       <td class="mono">{{ '%.4f'|format(r.raw_score) if r.raw_score is not none else '—' }}</td>
       <td class="mono">{{ '%g'|format(r.score_lot) if r.score_lot is not none else '—' }}</td>
       <td class="mono">{{ '%g'|format(r.score_global) if r.score_global is not none else (('%g'|format(r.score_1_9)) if r.score_1_9 is not none else '—') }}</td>
       <td class="mono">{{ r.error_text or 'ok' }}</td>
-      <td><a class="btn btn-ghost btn-sm" href="{{ url_for('perspicuus_angus_analise_individual', farm=r.farm_id, animal=r.animal_tag) }}">Animal</a></td>
+      <td><a class="btn btn-ghost btn-sm" href="{{ url_for('perspicuus_angus_analise_individual', farm=r.farm_id, animal=r.animal_tag) }}">Abrir</a></td>
     </tr>{% else %}<tr><td colspan="8"><div class="empty-state"><div class="icon">📉</div>Sem dados.</div></td></tr>{% endfor %}</tbody>
   </table></div>
 </div>
 {% endblock %}
-{% block scripts %}{% endblock %}

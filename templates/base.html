@@ -439,10 +439,10 @@ select { cursor: pointer; }
 
     {% if can_access_env('perspicuus') %}
     <div class="nav-section">Perspicuus</div>
-    <a href="{{ url_for('perspicuus') }}"  class="nav-link {% if request.endpoint in ['perspicuus', 'perspicuus_animais', 'perspicuus_inferencias', 'perspicuus_modelos', 'perspicuus_analise_rebanho'] %}active{% endif %}">
+    <a href="{{ url_for('perspicuus') }}"  class="nav-link {% if request.endpoint in ['perspicuus', 'perspicuus_animais', 'perspicuus_animais_individuo', 'perspicuus_inferencias', 'perspicuus_modelos', 'perspicuus_analise_rebanho'] %}active{% endif %}">
       <span class="icon">🧠</span> Perspicuus
     </a>
-    <a href="{{ url_for('perspicuus_animais') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_animais' %}active{% endif %}">
+    <a href="{{ url_for('perspicuus_animais') }}" class="nav-link nav-sub {% if request.endpoint in ['perspicuus_animais', 'perspicuus_animais_individuo'] %}active{% endif %}">
       <span class="icon">•</span> Animais
     </a>
     <a href="{{ url_for('perspicuus_inferencias') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_inferencias' %}active{% endif %}">

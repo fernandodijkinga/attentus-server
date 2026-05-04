@@ -10,6 +10,7 @@
 .alotes-stat .v{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--accent2)}
 #plotViolin{min-height:280px;width:100%}
 #plotHeatmap{min-height:240px;width:100%}
+#plotLoteBox,#plotLoteBars,#plotLoteRadar,#plotLoteEvo{min-height:260px;width:100%}
 .trait-grid-wrap{overflow-x:auto;margin-top:10px}
 .trait-grid{
   display:grid;
@@ -27,18 +28,65 @@
 .trait-cell a{font-size:10px}
 .rank-block{margin-bottom:20px}
 .rank-block h4{margin:0 0 8px;font-size:12px;font-family:var(--mono);color:var(--accent)}
+.lote-hero{
+  display:grid;grid-template-columns:minmax(120px,200px) 1fr auto;gap:16px;align-items:center;
+  padding:4px 0;
+}
+@media(max-width:900px){
+  .lote-hero{grid-template-columns:1fr;justify-items:start}
+}
+.lote-hero-img{
+  width:100%;max-width:200px;aspect-ratio:4/3;object-fit:cover;border-radius:10px;border:1px solid var(--border);
+  background:var(--surf2);
+}
+.lote-hero-meta{display:flex;flex-wrap:wrap;gap:16px 24px}
+.lote-hero-meta .kv .k{font-size:10px;font-family:var(--mono);color:var(--muted);text-transform:uppercase}
+.lote-hero-meta .kv .v{font-size:18px;font-weight:700}
+.lote-gauge-wrap{text-align:center;min-width:120px}
+.lote-gauge-num{font-size:28px;font-weight:800;color:var(--accent2);line-height:1}
+.lote-gauge-sub{font-size:11px;color:var(--text2)}
+.lote-trait-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:12px;
+}
+.lote-trait-card{
+  background:var(--surf2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;
+}
+.lote-trait-card h4{margin:0 0 6px;font-size:13px}
+.lote-trait-score{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--accent2)}
+.lote-trait-sub{font-size:11px;color:var(--text2);margin-bottom:8px}
+.lote-trait-bar{
+  position:relative;height:8px;border-radius:4px;
+  background:linear-gradient(90deg,rgba(239,68,68,.35),rgba(234,179,8,.35),rgba(34,197,94,.45));
+  margin-top:4px;
+}
+.lote-trait-pin{
+  position:absolute;top:-3px;width:14px;height:14px;border-radius:50%;background:var(--accent);
+  border:2px solid var(--bg);transform:translateX(-50%);
+}
+.lote-spark{display:flex;align-items:flex-end;gap:2px;height:36px;margin-top:8px;opacity:.85}
+.lote-spark i{display:block;width:4px;border-radius:2px;background:var(--accent);min-height:2px}
+.lote-charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:8px}
+.lote-highlights{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px}
+.lote-hl{
+  width:96px;text-align:center;background:var(--surf2);border:1px solid var(--border);border-radius:10px;padding:8px;
+}
+.lote-hl img{width:64px;height:64px;object-fit:cover;border-radius:50%;border:1px solid var(--border)}
+.lote-hl .tag{font-size:10px;font-family:var(--mono);margin-top:4px;word-break:break-all}
+.lote-insights{margin:0;padding-left:18px;font-size:13px;color:var(--text2);line-height:1.5}
+.lote-insights li{margin-bottom:6px}
+.mb-8{margin-bottom:8px}
 </style>
 {% endblock %}
 {% block content %}
 <div class="page-header">
   <div>
     <div class="page-title">{{ breed_emoji }} <span>Perspicuus {{ breed_title }}</span> <span style="color:var(--accent)">análise por lote</span></div>
-    <div class="page-sub">Violino por lote (escore global), exemplos por trait e ranking de médias por trait</div>
+    <div class="page-sub">Vista geral por fazenda ou foco num lote: distribuição, comparação, radar, ranking e evolução temporal (escala de traits na apresentação ~1–5).</div>
   </div>
 </div>
 
 <div class="card mb-16">
-  <div class="card-title">Fazenda</div>
+  <div class="card-title">Fazenda e lote</div>
   <form method="get" class="alotes-filters">
     <div class="field" style="min-width:220px">
       <label>Fazenda</label>
@@ -47,12 +95,156 @@
         {% for f in farms %}<option value="{{ f }}" {% if farm_filter == f %}selected{% endif %}>{{ f }}</option>{% endfor %}
       </select>
     </div>
+    <div class="field" style="min-width:200px">
+      <label>Lote (opcional)</label>
+      <select name="lot" {% if not farm_filter %}disabled{% endif %}>
+        <option value="">— vista geral —</option>
+        {% for l in dashboard.lot_list %}
+        <option value="{{ l }}" {% if lot_filter|default('') == l %}selected{% endif %}>{{ l }}</option>
+        {% endfor %}
+      </select>
+    </div>
     <button class="btn btn-accent btn-sm" type="submit">Carregar</button>
   </form>
   {% if not farm_filter %}
-  <p class="page-sub" style="margin:8px 0 0">Selecione uma fazenda para ver lotes, traits e rankings. Os gráficos usam o registo mais recente por animal (brinco) dentro da fazenda.</p>
+  <p class="page-sub" style="margin:8px 0 0">Selecione uma fazenda. Com um lote escolhido, abre-se o painel detalhado (índice, traits, gráficos e ranking). Os blocos inferiores mantêm a análise multi-lote.</p>
   {% endif %}
 </div>
+
+{% if farm_filter and dashboard.lote_detail %}
+{% set ld = dashboard.lote_detail %}
+<div class="card mb-16">
+  <div class="card-title">Lote {{ ld.lot }}</div>
+  <div class="lote-hero">
+    {% if ld.hero.image %}
+    <img class="lote-hero-img" src="{{ ld.hero.image }}" alt="" loading="lazy">
+    {% else %}
+    <div class="lote-hero-img" style="display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted)">Sem imagem</div>
+    {% endif %}
+    <div class="lote-hero-meta">
+      <div class="kv"><span class="k">Animais</span><div class="v">{{ ld.hero.n_animals }}</div></div>
+      {% if ld.hero.mean_age_months is not none %}
+      <div class="kv"><span class="k">Idade média</span><div class="v">{{ ld.hero.mean_age_months }} meses</div></div>
+      {% endif %}
+      {% if ld.hero.last_update %}
+      <div class="kv"><span class="k">Última atualização</span><div class="v">{{ ld.hero.last_update }}</div></div>
+      {% endif %}
+      {% if ld.hero.mean_global is not none %}
+      <div class="kv"><span class="k">Escore global (média)</span><div class="v mono">{{ ld.hero.mean_global }}</div></div>
+      {% endif %}
+    </div>
+    <div class="lote-gauge-wrap">
+      <div class="lote-gauge-num">{% if ld.hero.index is not none %}{{ ld.hero.index }}{% else %}—{% endif %}<span style="font-size:14px;font-weight:600;color:var(--muted)">/100</span></div>
+      <div class="lote-gauge-sub">Status: {{ ld.hero.status }}</div>
+    </div>
+  </div>
+
+  <div class="lote-trait-grid">
+    {% for c in ld.trait_cards %}
+    <div class="lote-trait-card">
+      <h4>{{ c.trait }}</h4>
+      <div class="lote-trait-score">{% if c.mean_s5 is not none %}{{ '%.1f'|format(c.mean_s5) }}{% else %}—{% endif %} <span style="font-size:12px;font-weight:500;color:var(--muted)">/ 5.0</span></div>
+      <div class="lote-trait-sub">{{ c.label }}{% if c.delta_vs_farm is not none %} · vs fazenda: {% if c.delta_vs_farm > 0 %}+{% endif %}{{ c.delta_vs_farm }}{% endif %}{% if c.delta_spark is not none %} · período: {% if c.delta_spark > 0 %}+{% endif %}{{ c.delta_spark }}{% endif %}</div>
+      <div class="lote-trait-bar" aria-hidden="true">
+        {% if c.mean_s5 is not none %}
+        {% set pinp = [[0, (c.mean_s5 - 1) / 4 * 100]|max, 100]|min %}
+        <span class="lote-trait-pin" style="left:{{ '%.1f'|format(pinp) }}%"></span>
+        {% endif %}
+      </div>
+      {% if c.spark and c.spark|length %}
+      <div class="lote-spark" title="Tendência (últimos dias com inferência)">
+        {% set mx = (c.spark|max) %}
+        {% set mn = (c.spark|min) %}
+        {% set span = (mx - mn) if (mx - mn) > 0.01 else 1 %}
+        {% for v in c.spark %}
+        <i style="height:{{ 4 + ((v - mn) / span * 32)|round|int }}px"></i>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="lote-charts-grid mb-16">
+  <div class="card mb-8">
+    <div class="card-title">Distribuição dos traits (1–5)</div>
+    <p class="page-sub" style="margin:0 0 8px;font-size:11px;color:var(--text2)">Caixas por trait no lote (valores por animal, escala de apresentação).</p>
+    <div id="plotLoteBox"></div>
+  </div>
+  <div class="card mb-8">
+    <div class="card-title">Comparação com outros lotes</div>
+    <p class="page-sub" style="margin:0 0 8px;font-size:11px;color:var(--text2)">Médias por trait (~1–5) neste lote e até três lotes vizinhos na ordenação por escore global.</p>
+    <div id="plotLoteBars"></div>
+  </div>
+  <div class="card mb-8" style="grid-column:1/-1">
+    <div class="card-title">Perfil do lote (radar)</div>
+    <div id="plotLoteRadar" style="max-width:520px;margin:0 auto"></div>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-title">Ranking dos animais do lote</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Animal</th>
+          {% for t in ld.top_traits %}<th>{{ t }}</th>{% endfor %}
+          <th>Índice</th>
+          <th>Top</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in ld.ranking %}
+        <tr>
+          <td class="mono">{{ r.rank }}</td>
+          <td>
+            {% if r.thumb %}<img src="{{ r.thumb }}" alt="" style="width:28px;height:28px;object-fit:cover;border-radius:4px;vertical-align:middle;margin-right:6px">{% endif %}
+            <span class="mono">{{ r.animal }}</span>
+          </td>
+          {% for t in ld.top_traits %}
+          <td class="mono">{% if t in r.traits_s5 and r.traits_s5[t] is not none %}{{ '%.1f'|format(r.traits_s5[t]) }}{% else %}—{% endif %}</td>
+          {% endfor %}
+          <td class="mono">{% if r.index is not none %}{{ r.index }}{% else %}—{% endif %}</td>
+          <td class="mono">{% if r.top_pct is not none %}Top {{ r.top_pct }}%{% else %}—{% endif %}</td>
+          <td><a class="btn btn-ghost btn-sm" href="#" data-lote-animal="{{ r.animal }}">Ficha</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-title">Animais em destaque</div>
+  <div class="lote-highlights">
+    {% for h in ld.highlights %}
+    <div class="lote-hl">
+      {% if h.thumb %}<img src="{{ h.thumb }}" alt="">{% endif %}
+      <div class="tag">{{ h.animal }}</div>
+      <div class="mono" style="font-size:11px;margin-top:4px">{% if h.index is not none %}{{ h.index }}/100{% else %}—{% endif %}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-title">Evolução do lote (médias por dia)</div>
+  <p class="page-sub" style="margin:0 0 8px;font-size:11px;color:var(--text2)">Média diária por trait na escala ~1–5, quando há várias inferências ao longo do tempo.</p>
+  <div id="plotLoteEvo"></div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-title">Insights automáticos</div>
+  <ul class="lote-insights">
+    {% for ins in ld.insights %}<li>{{ ins }}</li>{% endfor %}
+    {% if not ld.insights %}<li>Sem notas automáticas para este recorte.</li>{% endif %}
+  </ul>
+</div>
+{% endif %}
 
 {% if farm_filter %}
 <div class="alotes-statgrid">
@@ -93,6 +285,7 @@
 <script>
 const BREED_KEY = {{ breed_key | tojson }};
 const FARM = {{ farm_filter | tojson }};
+const LOTE_FOCUS = {{ (dashboard.lote_detail.lot if dashboard.lote_detail else '') | tojson }};
 const INDIVIDUAL_ANGUS = {{ url_for('perspicuus_angus_analise_individual') | tojson }};
 const INDIVIDUAL_NELORE = {{ url_for('perspicuus_nelore_analise_individual') | tojson }};
 
@@ -112,6 +305,127 @@ function animalLink(lot, animal) {
     return INDIVIDUAL_NELORE + '?' + q.toString();
   }
   return INDIVIDUAL_ANGUS + '?' + q.toString();
+}
+
+function plotlyFont() {
+  return { family: 'Inter, system-ui, sans-serif', size: 11, color: '#9aa4b2' };
+}
+
+function renderLoteFocusCharts(detail) {
+  if (!detail) return;
+  const colA = '#15803d';
+  const colB = '#94a3b8';
+  const box = document.getElementById('plotLoteBox');
+  const bp = detail.boxplot_s5 || {};
+  const labels = detail.top_traits || [];
+  if (box && labels.length) {
+    const traces = labels.map((tr) => ({
+      type: 'box',
+      name: tr,
+      y: bp[tr] || [],
+      boxmean: 'sd',
+      marker: { color: colA },
+    }));
+    Plotly.newPlot(box, traces, {
+      height: 280,
+      margin: { l: 48, r: 16, t: 28, b: 48 },
+      paper_bgcolor: 'transparent',
+      plot_bgcolor: 'transparent',
+      font: plotlyFont(),
+      yaxis: { title: 'Escala ~1–5', range: [0.8, 5.2], gridcolor: 'rgba(128,128,128,.12)' },
+      showlegend: false,
+    }, { responsive: true, displayModeBar: true, displaylogo: false });
+  }
+
+  const barEl = document.getElementById('plotLoteBars');
+  const lots = detail.compare_lots || [];
+  const cm = detail.compare_means_s5 || {};
+  if (barEl && labels.length && lots.length) {
+    const traces = lots.map((lot, i) => ({
+      type: 'bar',
+      name: lot,
+      x: labels,
+      y: labels.map((tr) => (cm[lot] && cm[lot][tr] != null ? cm[lot][tr] : null)),
+      marker: { color: i === 0 ? colA : (i === 1 ? '#166534' : i === 2 ? '#22c55e' : '#86efac') },
+    }));
+    Plotly.newPlot(barEl, traces, {
+      height: 300,
+      barmode: 'group',
+      margin: { l: 48, r: 16, t: 28, b: 72 },
+      paper_bgcolor: 'transparent',
+      plot_bgcolor: 'transparent',
+      font: plotlyFont(),
+      yaxis: { title: 'Média ~1–5', range: [0, 5.5], gridcolor: 'rgba(128,128,128,.12)' },
+      xaxis: { tickangle: -25 },
+      legend: { orientation: 'h', y: -0.28 },
+    }, { responsive: true, displayModeBar: true, displaylogo: false });
+  }
+
+  const radEl = document.getElementById('plotLoteRadar');
+  const R = detail.radar || {};
+  const labs = (R.labels || []).slice();
+  if (radEl && labs.length) {
+    const theta = [...labs, labs[0]];
+    const rL = [...(R.lote || []), (R.lote || [])[0]];
+    const rF = [...(R.media_fazenda || []), (R.media_fazenda || [])[0]];
+    Plotly.newPlot(radEl, [
+      {
+        type: 'scatterpolar',
+        r: rF,
+        theta,
+        name: 'Média fazenda',
+        line: { color: colB, dash: 'dot', width: 2 },
+        fillcolor: 'rgba(148,163,184,.12)',
+        fill: 'toself',
+      },
+      {
+        type: 'scatterpolar',
+        r: rL,
+        theta,
+        name: 'Este lote',
+        line: { color: colA, width: 2 },
+        fillcolor: 'rgba(21,128,61,.25)',
+        fill: 'toself',
+      },
+    ], {
+      height: 360,
+      margin: { l: 36, r: 36, t: 36, b: 36 },
+      paper_bgcolor: 'transparent',
+      font: plotlyFont(),
+      polar: {
+        radialaxis: { visible: true, range: [0, 5], gridcolor: 'rgba(128,128,128,.15)' },
+        angularaxis: { direction: 'clockwise' },
+      },
+      showlegend: true,
+      legend: { orientation: 'h', y: -0.12 },
+    }, { responsive: true, displayModeBar: true, displaylogo: false });
+  }
+
+  const evoEl = document.getElementById('plotLoteEvo');
+  const ev = detail.evolution || {};
+  const dates = ev.dates || [];
+  const series = ev.series || [];
+  if (evoEl && dates.length && series.length) {
+    const tracesE = series.map((s, i) => ({
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: s.trait,
+      x: dates,
+      y: s.points || [],
+      connectgaps: false,
+      line: { width: 2, shape: 'spline', smoothing: 0.35 },
+    }));
+    Plotly.newPlot(evoEl, tracesE, {
+      height: 320,
+      margin: { l: 48, r: 16, t: 28, b: 56 },
+      paper_bgcolor: 'transparent',
+      plot_bgcolor: 'transparent',
+      font: plotlyFont(),
+      yaxis: { title: 'Média ~1–5', range: [0.8, 5.2], gridcolor: 'rgba(128,128,128,.12)' },
+      xaxis: { title: 'Dia (inferência)' },
+      legend: { orientation: 'h', y: -0.22 },
+    }, { responsive: true, displayModeBar: true, displaylogo: false });
+  }
 }
 
 function renderViolin(d) {
@@ -293,6 +607,14 @@ function renderRankTables(d) {
 }
 
 const DASH = readDashboard();
+renderLoteFocusCharts(DASH.lote_detail);
+document.querySelectorAll('[data-lote-animal]').forEach((a) => {
+  a.addEventListener('click', (e) => {
+    e.preventDefault();
+    const an = a.getAttribute('data-lote-animal') || '';
+    window.location.href = animalLink(LOTE_FOCUS || '(sem lote)', an);
+  });
+});
 renderViolin(DASH);
 fillTraitSelect(DASH.traits);
 const firstTrait = (DASH.traits && DASH.traits[0]) || '';
