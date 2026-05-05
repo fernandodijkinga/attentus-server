@@ -1,0 +1,771 @@
+{% extends "base.html" %}
+{% block title %}Perspicuus {{ breed_title }} — análise de população{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+.pp-filters{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:8px}
+.pp-hero{display:grid;grid-template-columns:minmax(100px,160px) 1fr auto;gap:18px;align-items:center;padding:8px 0}
+@media(max-width:900px){.pp-hero{grid-template-columns:1fr}}
+.pp-hero-img{width:140px;height:140px;border-radius:50%;object-fit:cover;border:3px solid var(--border);background:var(--surf2)}
+.pp-hero-meta{display:flex;flex-wrap:wrap;gap:18px 28px}
+.pp-hero-meta .kv .k{font-size:10px;font-family:var(--mono);color:var(--muted);text-transform:uppercase}
+.pp-hero-meta .kv .v{font-size:17px;font-weight:700}
+.pp-gauge{text-align:center;min-width:120px}
+.pp-gauge-num{font-size:26px;font-weight:800;color:var(--accent2)}
+.pp-badge{display:inline-block;background:rgba(21,128,61,.15);color:#15803d;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:600;margin-left:8px}
+.pp-trait-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin-top:12px}
+.pp-trait-card{background:var(--surf2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;border-left:4px solid var(--trait-c,#15803d)}
+.pp-trait-card h4{margin:0 0 6px;font-size:13px;display:flex;align-items:center;gap:8px}
+.pp-trait-score{font-family:var(--mono);font-size:19px;font-weight:700;color:var(--accent2)}
+.pp-trait-sub{font-size:11px;color:var(--text2);margin:6px 0}
+.pp-trait-bar{position:relative;height:8px;border-radius:4px;background:linear-gradient(90deg,rgba(239,68,68,.35),rgba(234,179,8,.35),rgba(34,197,94,.45));margin-top:6px}
+.pp-trait-pin{position:absolute;top:-3px;width:14px;height:14px;border-radius:50%;background:var(--accent);border:2px solid var(--bg);transform:translateX(-50%)}
+.pp-spark{display:flex;align-items:flex-end;gap:2px;height:32px;margin-top:8px}
+.pp-spark i{display:block;width:4px;border-radius:2px;background:var(--trait-c,#15803d);min-height:2px}
+.pp-grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.pp-stat6{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:12px 0}
+.pp-mini{background:var(--surf2);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.pp-mini .k{font-size:10px;color:var(--muted);text-transform:uppercase;font-family:var(--mono)}
+.pp-mini .v{font-size:16px;font-weight:700}
+.pp-hl{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px}
+.pp-hl-it{width:100px;text-align:center;background:var(--surf2);border:1px solid var(--border);border-radius:10px;padding:8px}
+.pp-hl-it img{width:64px;height:64px;object-fit:cover;border-radius:50%}
+.pp-ins{margin:0;padding-left:18px;font-size:13px;color:var(--text2);line-height:1.55}
+.pp-ins li{margin-bottom:6px}
+#plotPopSd,#plotPopRadar,#plotPopHist,#plotPopCorr,#plotPopBox,#plotPopScatt,#plotFarmBar,#plotPopMonth,#plotPopBubble{min-height:240px;width:100%}
+.stab-ref{font-size:12px;color:var(--text2)}
+.stab-ref td{padding:4px 8px;border-bottom:1px solid var(--border)}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">{{ breed_emoji }} <span>Perspicuus {{ breed_title }}</span> <span style="color:var(--accent)">análise de população</span></div>
+    <div class="page-sub">Visão consolidada da população avaliada (índice 0–100, traits na escala ~1–5), variabilidade e benchmarking.</div>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-title">Filtros</div>
+  <form method="get" class="pp-filters">
+    <div class="field" style="min-width:200px"><label>Fazenda</label>
+      <select name="farm"><option value="">Todas</option>{% for f in farms %}<option value="{{ f }}" {% if farm_filter==f %}selected{% endif %}>{{ f }}</option>{% endfor %}</select>
+    </div>
+    {% if lots and lots|length %}
+    <div class="field" style="min-width:180px"><label>Lote</label>
+      <select name="lot"><option value="">Todos</option>{% for l in lots %}<option value="{{ l }}" {% if lot_filter==l %}selected{% endif %}>{{ l }}</option>{% endfor %}</select>
+    </div>
+    {% endif %}
+    <div class="field" style="min-width:220px"><label>Busca</label><input name="q" value="{{ q_filter }}" placeholder="brinco, fazenda…"></div>
+    <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
+    <a class="btn btn-ghost btn-sm" href="{{ request.path }}">Limpar filtros</a>
+  </form>
+</div>
+
+{% set U = pop_ui if pop_ui is defined else {} %}
+{% if U and U.hero and U.hero.n_records > 0 %}
+<div class="card mb-16">
+  <div class="d-flex align-center justify-between flex-wrap gap-8" style="margin-bottom:8px">
+    <div>
+      <span class="card-title" style="margin:0">População filtrada</span>
+      <span class="pp-badge">Ativa</span>
+    </div>
+  </div>
+  <div class="pp-hero">
+    {% if U.hero.image %}
+    <img class="pp-hero-img" src="{{ U.hero.image }}" alt="" loading="lazy">
+    {% else %}
+    <div class="pp-hero-img" style="display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);padding:12px;text-align:center">Sem imagem</div>
+    {% endif %}
+    <div>
+      <div class="page-sub" style="margin-bottom:10px">Resumo agregado (último registo por animal no recorte).</div>
+      <div class="pp-hero-meta">
+        <div class="kv"><span class="k">Animais</span><div class="v">{{ U.hero.n_animals }}</div></div>
+        <div class="kv"><span class="k">Registos</span><div class="v">{{ U.hero.n_records }}</div></div>
+        <div class="kv"><span class="k">Lotes</span><div class="v">{{ U.hero.n_lots }}</div></div>
+        <div class="kv"><span class="k">Fazendas</span><div class="v">{{ U.hero.n_farms }}</div></div>
+        {% if U.hero.last_update %}<div class="kv"><span class="k">Última atualização</span><div class="v">{{ U.hero.last_update }}</div></div>{% endif %}
+      </div>
+    </div>
+    <div class="pp-gauge">
+      <div class="pp-gauge-num">{% if U.hero.index_mean is not none %}{{ U.hero.index_mean }}{% else %}—{% endif %}<span style="font-size:13px;font-weight:600;color:var(--muted)">/100</span></div>
+      <div class="page-sub" style="margin:0">Status: {{ U.hero.status }}</div>
+    </div>
+  </div>
+
+  <div class="pp-trait-grid">
+    {% for c in U.trait_cards %}
+    <div class="pp-trait-card" style="--trait-c: {{ c.color }}">
+      <h4><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:{{ c.color }}"></span> {{ c.trait }}</h4>
+      <div class="pp-trait-score">{% if c.mean_s5 is not none %}{{ '%.1f'|format(c.mean_s5) }}{% else %}—{% endif %} <span style="font-size:12px;color:var(--muted)">/ 5.0</span></div>
+      <div class="pp-trait-sub">{{ c.label }} · DP {% if c.sd_s5 is not none %}{{ '%.2f'|format(c.sd_s5) }}{% else %}—{% endif %}{% if c.cv_pct is not none %} · CV {{ c.cv_pct }}%{% endif %}
+        {% if c.delta_vs_period is not none %} · {% if c.delta_vs_period > 0 %}↑{% elif c.delta_vs_period < 0 %}↓{% endif %} {{ c.delta_vs_period }} vs. período{% endif %}
+      </div>
+      <div class="pp-trait-bar">
+        {% if c.mean_s5 is not none %}
+        {% set pinp = [[0, (c.mean_s5 - 1) / 4 * 100]|max, 100]|min %}
+        <span class="pp-trait-pin" style="left:{{ '%.1f'|format(pinp) }}%"></span>
+        {% endif %}
+      </div>
+      {% if c.spark and c.spark|length %}
+      {% set mx = c.spark|max %}
+      {% set mn = c.spark|min %}
+      {% set span = (mx - mn) if (mx - mn) > 0.01 else 1 %}
+      <div class="pp-spark">{% for v in c.spark %}<i style="height:{{ 4 + ((v - mn) / span * 28)|round|int }}px;background:{{ c.color }}"></i>{% endfor %}</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="pp-grid4 mb-16">
+  <div class="card"><div class="card-title">Desvio padrão por trait (~1–5)</div>
+    <p class="page-sub" style="font-size:11px;margin:0 0 8px">Menor σ → mais uniformidade.</p>
+    <div id="plotPopSd"></div>
+  </div>
+  <div class="card"><div class="card-title">Perfil médio (radar)</div>
+    <div id="plotPopRadar" style="max-width:400px;margin:0 auto"></div>
+  </div>
+  <div class="card"><div class="card-title">Distribuição do índice Perspicuus</div>
+    <p class="page-sub mono" style="font-size:11px;margin:0 0 6px">Média: {{ U.index_histogram.mean if U.index_histogram.mean is not none else '—' }} · Mediana: {{ U.index_histogram.median if U.index_histogram.median is not none else '—' }}</p>
+    <div id="plotPopHist"></div>
+  </div>
+  <div class="card"><div class="card-title">Segmentação</div>
+    <div class="table-wrap"><table><thead><tr><th>Faixa</th><th>N</th><th>%</th></tr></thead><tbody>
+      {% for s in U.segments %}<tr><td>{{ s.label }}</td><td class="mono">{{ s.count }}</td><td class="mono">{{ s.pct }}%</td></tr>{% endfor %}
+    </tbody></table></div>
+  </div>
+</div>
+
+<div class="grid-2 mb-16">
+  <div class="card">
+    <div class="card-title">Métricas populacionais por trait (~1–5)</div>
+    <div class="table-wrap" style="max-height:420px;overflow:auto"><table>
+      <thead><tr><th>Trait</th><th>Média</th><th>Mediana</th><th>DP</th><th>CV%</th><th>Mín</th><th>Máx</th><th>P25</th><th>P75</th></tr></thead>
+      <tbody>
+        {% for r in U.trait_metrics %}
+        <tr>
+          <td>{{ r.trait }}</td>
+          <td class="mono">{{ r.mean if r.mean is not none else '—' }}</td>
+          <td class="mono">{{ r.median if r.median is not none else '—' }}</td>
+          <td class="mono">{{ r.sd if r.sd is not none else '—' }}</td>
+          <td class="mono">{{ r.cv_pct if r.cv_pct is not none else '—' }}</td>
+          <td class="mono">{{ r.min if r.min is not none else '—' }}</td>
+          <td class="mono">{{ r.max if r.max is not none else '—' }}</td>
+          <td class="mono">{{ r.p25 if r.p25 is not none else '—' }}</td>
+          <td class="mono">{{ r.p75 if r.p75 is not none else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Insights automáticos</div>
+    <ul class="pp-ins">{% for ins in U.insights %}<li>{{ ins }}</li>{% endfor %}</ul>
+    <div class="card-title" style="margin-top:16px;font-size:13px">Percentis do índice (população)</div>
+    <p class="page-sub mono" style="font-size:12px">
+      P90 {{ U.percentiles_index.p90 if U.percentiles_index.p90 is not none else '—' }} ·
+      P75 {{ U.percentiles_index.p75 if U.percentiles_index.p75 is not none else '—' }} ·
+      P50 {{ U.percentiles_index.p50 if U.percentiles_index.p50 is not none else '—' }} ·
+      P25 {{ U.percentiles_index.p25 if U.percentiles_index.p25 is not none else '—' }} ·
+      P10 {{ U.percentiles_index.p10 if U.percentiles_index.p10 is not none else '—' }}
+    </p>
+    <div id="plotPopPct" style="height:100px"></div>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-title">Variabilidade por trait</div>
+  <div class="pp-stat6">
+    <div class="pp-mini"><div class="k">Total animais</div><div class="v">{{ U.variability.summary.n_animals }}</div></div>
+    <div class="pp-mini"><div class="k">Média global (~1–5)</div><div class="v">{{ U.variability.summary.mean_s5_grand if U.variability.summary.mean_s5_grand is not none else '—' }}</div></div>
+    <div class="pp-mini"><div class="k">DP médio (traits)</div><div class="v">{{ U.variability.summary.sd_mean_traits if U.variability.summary.sd_mean_traits is not none else '—' }}</div></div>
+    <div class="pp-mini"><div class="k">CV médio %</div><div class="v">{{ U.variability.summary.cv_mean_pct if U.variability.summary.cv_mean_pct is not none else '—' }}</div></div>
+    <div class="pp-mini"><div class="k">Assimetria média</div><div class="v">{{ U.variability.summary.skew_mean if U.variability.summary.skew_mean is not none else '—' }}</div></div>
+    <div class="pp-mini"><div class="k">Outliers (soma traits)</div><div class="v">{{ U.variability.summary.outliers_hint }}</div></div>
+  </div>
+  <div class="pp-grid4" style="margin-top:12px">
+    <div class="card" style="box-shadow:none;border:1px solid var(--border)"><div class="card-title">Boxplot (~1–5)</div><div id="plotPopBox"></div></div>
+    <div class="card" style="box-shadow:none;border:1px solid var(--border)"><div class="card-title">CV % por trait</div><div id="plotPopCv"></div></div>
+    <div class="card" style="box-shadow:none;border:1px solid var(--border);grid-column:1/-1"><div class="card-title">Correlação (Pearson, escala reescalada)</div><div id="plotPopCorr"></div></div>
+    <div class="card" style="box-shadow:none;border:1px solid var(--border)"><div class="card-title">Média × DP por trait</div><div id="plotPopScatt"></div></div>
+    <div class="card" style="box-shadow:none;border:1px solid var(--border)">
+      <div class="card-title">Faixas de estabilidade (CV%)</div>
+      <table class="stab-ref" style="width:100%"><tbody>
+        <tr><td>&lt; 10%</td><td>Muito estável</td></tr>
+        <tr><td>10–15%</td><td>Estável</td></tr>
+        <tr><td>15–20%</td><td>Moderado</td></tr>
+        <tr><td>&gt; 20%</td><td>Variável</td></tr>
+      </tbody></table>
+    </div>
+  </div>
+  <div class="table-wrap mt-16"><table>
+    <thead><tr><th>Trait</th><th>Média</th><th>DP</th><th>CV%</th><th>Assimetria</th><th>Curtose</th><th>N</th><th>Outliers</th></tr></thead>
+    <tbody>
+      {% for r in U.trait_metrics[:8] %}
+      <tr>
+        <td>{{ r.trait }}</td>
+        <td class="mono">{{ r.mean if r.mean is not none else '—' }}</td>
+        <td class="mono">{{ r.sd if r.sd is not none else '—' }}</td>
+        <td class="mono">{{ r.cv_pct if r.cv_pct is not none else '—' }}</td>
+        <td class="mono">{{ r.skew if r.skew is not none else '—' }}</td>
+        <td class="mono">{{ r.kurtosis if r.kurtosis is not none else '—' }}</td>
+        <td class="mono">{{ r.n }}</td>
+        <td class="mono">{{ r.outliers }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-title">Benchmarking populacional</div>
+  {% if U.benchmark.farm_bars.farms and U.benchmark.farm_bars.farms|length > 1 %}
+  <p class="page-sub" style="font-size:11px">Comparação entre fazendas (médias ~1–5 por trait).</p>
+  <div id="plotFarmBar"></div>
+  {% else %}
+  <p class="page-sub">Só há uma fazenda no filtro — agrupamentos abaixo usam {% if breed_key == 'nelore' %}lotes{% else %}fazendas{% endif %}.</p>
+  {% endif %}
+  <div id="plotPopMonth" class="mt-16"></div>
+  <div class="grid-2 mt-16">
+    <div>
+      <div class="card-title">Ranking de grupos</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>Grupo</th><th>N</th><th>Índice</th><th>Top</th>{% for t in U.radar.labels %}<th>{{ t }}</th>{% endfor %}</tr></thead>
+        <tbody>
+          {% for g in U.benchmark.group_ranking %}
+          <tr>
+            <td class="mono">{{ g.rank }}</td>
+            <td>{{ g.label }}</td>
+            <td class="mono">{{ g.n }}</td>
+            <td class="mono">{{ g.index_mean if g.index_mean is not none else '—' }}</td>
+            <td class="mono">{% if g.top_pct is not none %}Top {{ g.top_pct }}%{% else %}—{% endif %}</td>
+            {% for t in U.radar.labels %}
+            <td class="mono">{% if t in g.traits and g.traits[t] is not none %}{{ g.traits[t] }}{% else %}—{% endif %}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+    <div>
+      <div class="card-title">Mapa média × dispersão (índice vs DP global do grupo)</div>
+      <div id="plotPopBubble"></div>
+    </div>
+  </div>
+  {% if U.benchmark.index_gain_12m is not none %}
+  <p class="page-sub mt-16">Variação do índice médio (primeiro vs último mês com dados): <strong>{{ U.benchmark.index_gain_12m }}</strong> pontos.</p>
+  {% endif %}
+  <div class="card-title mt-16">Animais em destaque (índice)</div>
+  <div class="pp-hl">
+    {% for h in U.benchmark.highlights %}
+    <div class="pp-hl-it">
+      {% if h.thumb %}<img src="{{ h.thumb }}" alt="">{% endif %}
+      <div class="mono" style="font-size:11px;margin-top:4px">{{ h.animal }}</div>
+      <div class="mono" style="font-size:12px;font-weight:700">{{ h.index }}/100</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<div class="card mb-16"><div class="empty-state"><div class="icon">📭</div>Ajuste os filtros ou importe inferências com escores e traits para ver o painel consolidado.</div></div>
+{% endif %}
+
+<details class="card mb-16">
+  <summary class="card-title" style="cursor:pointer">Análise técnica avançada (distribuições, efeitos fixos, séries por trait)</summary>
+  <div class="stat-grid mb-16 mt-16">
+    <div class="stat-card"><div class="stat-label">Registros</div><div class="stat-value">{{ cards.records }}</div></div>
+    <div class="stat-card"><div class="stat-label">Com raw</div><div class="stat-value blue">{{ cards.with_raw }}</div></div>
+    <div class="stat-card"><div class="stat-label">Com escore lote</div><div class="stat-value accent">{{ cards.with_lot }}</div></div>
+    <div class="stat-card"><div class="stat-label">Com escore global</div><div class="stat-value">{{ cards.with_global }}</div></div>
+    <div class="stat-card"><div class="stat-label">Traits ativos</div><div class="stat-value orange">{{ cards.traits }}</div></div>
+    <div class="stat-card"><div class="stat-label">Escore global μ ± σ</div><div class="stat-sub">{{ cards.global_mean if cards.global_mean is not none else '—' }} ± {{ cards.global_std if cards.global_std is not none else '—' }}</div></div>
+  </div>
+  <div class="grid-2 mb-16">
+    <div class="card">
+      <div class="card-title">Distribuição de escore (lote × global)</div>
+      <div class="field" style="max-width:260px"><label>Trait</label><select id="traitSelDist"></select></div>
+      <div style="height:280px"><canvas id="legacy-pop-dist"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Média por dia (raw × lote × global)</div>
+      <div class="field" style="max-width:260px"><label>Trait</label><select id="traitSelSeries"></select></div>
+      <div style="height:280px"><canvas id="legacy-pop-series"></canvas></div>
+    </div>
+  </div>
+  {% for t in top_traits %}
+  <div class="card mb-16">
+    <div class="card-title">Trait: {{ t }}</div>
+    <div class="grid-2">
+      <div><div class="page-sub" style="margin-bottom:8px">Média por dia</div><div style="height:260px"><canvas id="trait-series-{{ loop.index0 }}"></canvas></div></div>
+      <div><div class="page-sub" style="margin-bottom:8px">Volume diário</div><div style="height:260px"><canvas id="trait-volume-{{ loop.index0 }}"></canvas></div></div>
+    </div>
+  </div>
+  {% endfor %}
+  <div class="grid-2 mb-16">
+    <div class="card"><div class="card-title">Boxplot raw por efeito fixo</div><div class="field" style="max-width:260px"><label>Efeito</label><select id="effectSelRaw"></select></div><div id="boxRaw" style="height:300px"></div></div>
+    <div class="card"><div class="card-title">Boxplot reescalado por efeito fixo</div><div class="field" style="max-width:260px"><label>Efeito</label><select id="effectSelRes"></select></div><div id="boxRes" style="height:300px"></div></div>
+  </div>
+  <div class="card mb-16"><div class="card-title">Significância por efeito fixo</div><div class="table-wrap"><table>
+    <thead><tr><th>Efeito</th><th>N raw</th><th>Grupos</th><th>η² raw</th><th>p raw</th><th>N res</th><th>Grupos</th><th>η² res</th><th>p res</th></tr></thead>
+    <tbody>{% for r in effect_overall %}<tr>
+      <td>{{ r.label }}</td><td class="mono">{{ r.raw_n }}</td><td class="mono">{{ r.raw_groups }}</td>
+      <td class="mono">{{ '%.4f'|format(r.raw_eta2) if r.raw_eta2 is not none else '—' }}</td><td class="mono">{{ '%.4f'|format(r.raw_p) if r.raw_p is not none else '—' }}</td>
+      <td class="mono">{{ r.res_n }}</td><td class="mono">{{ r.res_groups }}</td>
+      <td class="mono">{{ '%.4f'|format(r.res_eta2) if r.res_eta2 is not none else '—' }}</td><td class="mono">{{ '%.4f'|format(r.res_p) if r.res_p is not none else '—' }}</td>
+    </tr>{% else %}<tr><td colspan="9"><div class="empty-state">Sem dados suficientes.</div></td></tr>{% endfor %}</tbody>
+  </table></div></div>
+  <div class="card mb-16"><div class="card-title">Traits × efeito fixo</div><div class="table-wrap"><table>
+    <thead><tr><th>Efeito</th><th>Trait</th><th>N</th><th>Grupos</th><th>η²</th><th>p</th></tr></thead>
+    <tbody>{% for r in effect_traits %}<tr>
+      <td>{{ r.effect_label }}</td><td class="mono">{{ r.trait }}</td><td class="mono">{{ r.n }}</td><td class="mono">{{ r.groups }}</td>
+      <td class="mono">{{ '%.4f'|format(r.eta2) if r.eta2 is not none else '—' }}</td><td class="mono">{{ '%.4f'|format(r.p) if r.p is not none else '—' }}</td>
+    </tr>{% else %}<tr><td colspan="6"><div class="empty-state">Sem dados.</div></td></tr>{% endfor %}</tbody>
+  </table></div></div>
+  <div class="card"><div class="card-title">Maior variação temporal por animal</div><div class="table-wrap"><table>
+    <thead><tr><th>Fazenda</th>{% if breed_key == 'nelore' %}<th>Lote</th>{% endif %}<th>Brinco</th><th>N</th><th>Média</th><th>Mín</th><th>Máx</th><th>Spread</th></tr></thead>
+    <tbody>{% for r in ranked %}<tr>
+      <td>{{ r.farm_id }}</td>{% if breed_key == 'nelore' %}<td>{{ r.lot_id or '—' }}</td>{% endif %}
+      <td class="mono">{{ r.animal_tag }}</td><td class="mono">{{ r.n }}</td>
+      <td class="mono">{{ '%.2f'|format(r.mean) }}</td><td class="mono">{{ '%.2f'|format(r.min) }}</td><td class="mono">{{ '%.2f'|format(r.max) }}</td><td class="mono">{{ '%.2f'|format(r.spread) }}</td>
+    </tr>{% else %}<tr><td colspan="{% if breed_key == 'nelore' %}8{% else %}7{% endif %}"><div class="empty-state">Sem dados.</div></td></tr>{% endfor %}</tbody>
+  </table></div></div>
+</details>
+{% endblock %}
+
+{% block scripts %}
+<script id="pop-ui-json" type="application/json">{{ pop_ui | tojson }}</script>
+<script id="legacy-dist-lot-json" type="application/json">{{ dist_lot|tojson }}</script>
+<script id="legacy-dist-global-json" type="application/json">{{ dist_global|tojson }}</script>
+<script id="legacy-pop-series-json" type="application/json">{{ pop_series|tojson }}</script>
+<script id="legacy-trait-series-json" type="application/json">{{ trait_series|tojson }}</script>
+<script id="legacy-trait-dist-json" type="application/json">{{ trait_dist|tojson }}</script>
+<script id="legacy-top-traits-json" type="application/json">{{ top_traits|tojson }}</script>
+<script id="legacy-box-json" type="application/json">{{ boxplot_by_effect|tojson }}</script>
+<script id="legacy-effects-json" type="application/json">{{ effect_overall|tojson }}</script>
+<script>
+const BREED_KEY = {{ breed_key | tojson }};
+function readJson(id, fallback) {
+  const el = document.getElementById(id);
+  if (!el) return fallback;
+  try { return JSON.parse(el.textContent || 'null') ?? fallback; } catch { return fallback; }
+}
+const POP_UI = readJson('pop-ui-json', null);
+
+function plotlyFont() {
+  return { family: 'Inter, system-ui, sans-serif', size: 11, color: '#9aa4b2' };
+}
+
+function renderPopDashboard(ui) {
+  if (!ui || !ui.hero || !(ui.hero.n_records > 0)) return;
+  const sd = ui.sd_bars || [];
+  if (sd.length && document.getElementById('plotPopSd')) {
+    Plotly.newPlot('plotPopSd', [{
+      type: 'bar',
+      x: sd.map((x) => x.trait),
+      y: sd.map((x) => x.sd),
+      marker: { color: sd.map((x) => x.color) },
+    }], {
+      height: 260,
+      margin: { t: 24, b: 72, l: 48, r: 16 },
+      paper_bgcolor: 'transparent',
+      plot_bgcolor: 'transparent',
+      font: plotlyFont(),
+      yaxis: { title: 'DP (σ)', gridcolor: 'rgba(128,128,128,.12)' },
+      xaxis: { tickangle: -20 },
+    }, { responsive: true, displaylogo: false });
+  }
+
+  const R = ui.radar || {};
+  const labs = R.labels || [];
+  const vals = R.values || [];
+  if (labs.length && document.getElementById('plotPopRadar')) {
+    const theta = [...labs, labs[0]];
+    const rr = [...vals, vals[0]];
+    Plotly.newPlot('plotPopRadar', [{
+      type: 'scatterpolar',
+      r: rr,
+      theta,
+      fill: 'toself',
+      line: { color: '#15803d' },
+      fillcolor: 'rgba(21,128,61,.2)',
+    }], {
+      height: 320,
+      margin: { t: 24, b: 24, l: 48, r: 48 },
+      paper_bgcolor: 'transparent',
+      font: plotlyFont(),
+      polar: { radialaxis: { range: [0, 5], gridcolor: 'rgba(128,128,128,.15)' } },
+      showlegend: false,
+    }, { responsive: true, displaylogo: false });
+  }
+
+  const H = ui.index_histogram || {};
+  const bins = H.bins || [];
+  if (bins.length && document.getElementById('plotPopHist')) {
+    Plotly.newPlot('plotPopHist', [{
+      type: 'bar',
+      x: bins.map((b) => b.label),
+      y: bins.map((b) => b.pct),
+      text: bins.map((b) => `${b.count}`),
+      marker: { color: 'rgba(21,128,61,.65)' },
+    }], {
+      height: 260,
+      margin: { t: 16, b: 56, l: 48, r: 16 },
+      paper_bgcolor: 'transparent',
+      font: plotlyFont(),
+      yaxis: { title: '% animais', gridcolor: 'rgba(128,128,128,.12)' },
+    }, { responsive: true, displaylogo: false });
+  }
+
+  const pct = ui.percentiles_index || {};
+  const pOrder = [
+    ['P90', 'p90'], ['P75', 'p75'], ['P50', 'p50'], ['P25', 'p25'], ['P10', 'p10'],
+  ];
+  const px = [];
+  const py = [];
+  pOrder.forEach(([lab, key]) => {
+    const v = pct[key];
+    if (v != null) {
+      px.push(lab);
+      py.push(v);
+    }
+  });
+  if (px.length && document.getElementById('plotPopPct')) {
+    Plotly.newPlot('plotPopPct', [{
+      type: 'scatter',
+      x: px,
+      y: py,
+      mode: 'markers',
+      marker: { size: 12, color: '#15803d' },
+    }], {
+      height: 120,
+      margin: { t: 8, b: 40, l: 40, r: 16 },
+      paper_bgcolor: 'transparent',
+      font: plotlyFont(),
+      yaxis: { title: 'Índice', range: [0, 100] },
+    }, { responsive: true, displaylogo: false });
+  }
+
+  const V = ui.variability || {};
+  const bp = V.boxplot_s5 || {};
+  const bkeys = Object.keys(bp);
+  if (bkeys.length && document.getElementById('plotPopBox')) {
+    const traces = bkeys.map((k) => ({
+      type: 'box',
+      name: k,
+      y: bp[k],
+      boxmean: 'sd',
+    }));
+    Plotly.newPlot('plotPopBox', traces, {
+      height: 280,
+      paper_bgcolor: 'transparent',
+      font: plotlyFont(),
+      yaxis: { title: '~1–5', range: [0.5, 5.5] },
+      showlegend: false,
+    }, { responsive: true, displaylogo: false });
+  }
+
+  const tc = ui.trait_cards || [];
+  if (tc.length && document.getElementById('plotPopCv')) {
+    Plotly.newPlot('plotPopCv', [{
+      type: 'bar',
+      x: tc.map((x) => x.trait),
+      y: tc.map((x) => x.cv_pct || 0),
+      marker: { color: tc.map((x) => x.color) },
+    }], {
+      height: 260,
+      paper_bgcolor: 'transparent',
+      font: plotlyFont(),
+      yaxis: { title: 'CV %', rangemode: 'tozero' },
+    }, { responsive: true, displaylogo: false });
+  }
+
+  const cm = V.corr_matrix || [];
+  const clabs = V.corr_labels || [];
+  if (cm.length && document.getElementById('plotPopCorr')) {
+    const z = cm.map((row) => row.map((v) => (v == null ? null : v)));
+    Plotly.newPlot('plotPopCorr', [{
+      type: 'heatmap',
+      x: clabs,
+      y: clabs,
+      z,
+      colorscale: [
+        [0, '#b91c1c'],
+        [0.5, '#f8fafc'],
+        [1, '#15803d'],
+      ],
+      zmid: 0,
+      zmin: -1,
+      zmax: 1,
+    }], {
+      height: 320,
+      margin: { t: 24, l: 80, r: 24, b: 80 },
+      paper_bgcolor: 'transparent',
+      font: plotlyFont(),
+    }, { responsive: true, displaylogo: false });
+  }
+
+  const sc = V.scatter || [];
+  if (sc.length && document.getElementById('plotPopScatt')) {
+    Plotly.newPlot('plotPopScatt', [{
+      type: 'scatter',
+      mode: 'markers',
+      x: sc.map((x) => x.mean),
+      y: sc.map((x) => x.sd),
+      text: sc.map((x) => x.trait),
+      marker: { size: 14, color: sc.map((x) => x.color) },
+    }], {
+      height: 280,
+      paper_bgcolor: 'transparent',
+      font: plotlyFont(),
+      xaxis: { title: 'Média ~1–5' },
+      yaxis: { title: 'DP ~1–5' },
+    }, { responsive: true, displaylogo: false });
+  }
+
+  const FB = ui.benchmark?.farm_bars || {};
+  const farms = FB.farms || [];
+  const traits = FB.traits || [];
+  const matrix = FB.matrix || {};
+  if (farms.length > 1 && document.getElementById('plotFarmBar')) {
+    const traces = farms.map((f, i) => ({
+      type: 'bar',
+      name: f,
+      x: traits,
+      y: traits.map((t) => matrix[f]?.[t] ?? null),
+      marker: { opacity: 0.85 },
+    }));
+    Plotly.newPlot('plotFarmBar', traces, {
+      height: 340,
+      barmode: 'group',
+      paper_bgcolor: 'transparent',
+      font: plotlyFont(),
+      yaxis: { title: 'Média ~1–5', range: [0, 5.5] },
+      legend: { orientation: 'h', y: -0.25 },
+      margin: { t: 24, b: 120 },
+    }, { responsive: true, displaylogo: false });
+  }
+
+  const ms = ui.benchmark?.monthly_series || [];
+  if (ms.length && document.getElementById('plotPopMonth')) {
+    const traces = ms.map((s) => ({
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: s.trait,
+      x: s.months,
+      y: s.points,
+      connectgaps: false,
+    }));
+    Plotly.newPlot('plotPopMonth', traces, {
+      height: 300,
+      paper_bgcolor: 'transparent',
+      font: plotlyFont(),
+      yaxis: { title: 'Média ~1–5', range: [0.8, 5.2] },
+      xaxis: { title: 'Mês' },
+      legend: { orientation: 'h', y: -0.22 },
+      margin: { t: 24, b: 72 },
+    }, { responsive: true, displaylogo: false });
+  }
+
+  const bub = ui.benchmark?.bubble || [];
+  if (bub.length && document.getElementById('plotPopBubble')) {
+    Plotly.newPlot('plotPopBubble', [{
+      type: 'scatter',
+      mode: 'markers',
+      x: bub.map((b) => b.x),
+      y: bub.map((b) => b.y),
+      text: bub.map((b) => b.label),
+      marker: {
+        size: bub.map((b) => 8 + Math.min(28, Math.sqrt((b.n || 1)) * 3)),
+        color: bub.map((b) => b.y),
+        colorscale: 'Viridis',
+        showscale: true,
+        colorbar: { title: 'Índice' },
+      },
+    }], {
+      height: 320,
+      paper_bgcolor: 'transparent',
+      font: plotlyFont(),
+      xaxis: { title: 'DP escore global (grupo)' },
+      yaxis: { title: 'Índice médio', range: [0, 100] },
+    }, { responsive: true, displaylogo: false });
+  }
+}
+
+renderPopDashboard(POP_UI);
+
+const DIST_LOT = readJson('legacy-dist-lot-json', []);
+const DIST_GLOBAL = readJson('legacy-dist-global-json', []);
+const SER = readJson('legacy-pop-series-json', []);
+const TRAIT_SER = readJson('legacy-trait-series-json', {});
+const TRAIT_DIST = readJson('legacy-trait-dist-json', {});
+const TOP_TRAITS = readJson('legacy-top-traits-json', []);
+const BOX = readJson('legacy-box-json', {});
+const EFFECTS = readJson('legacy-effects-json', []);
+
+let distChart = null;
+let seriesChart = null;
+
+function renderDistTrait(trait) {
+  const id = 'legacy-pop-dist';
+  const c = document.getElementById(id);
+  if (!c) return;
+  const valsGlobalTrait = trait ? ((TRAIT_DIST || {})[trait] || [0, 0, 0, 0]) : null;
+  const valsGlobal = valsGlobalTrait || (DIST_GLOBAL || [0, 0, 0, 0]);
+  const valsLot = DIST_LOT || [0, 0, 0, 0];
+  if (distChart) distChart.destroy();
+  distChart = new Chart(c.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: ['1-3', '3-5', '5-7', '7-9'],
+      datasets: [
+        { label: 'Escore lote', data: valsLot, backgroundColor: 'rgba(13,122,94,.45)', borderColor: '#0d7a5e', borderWidth: 1 },
+        { label: 'Escore global', data: valsGlobal, backgroundColor: 'rgba(26,111,212,.45)', borderColor: '#1a6fd4', borderWidth: 1 },
+      ],
+    },
+    options: { responsive: true, maintainAspectRatio: false },
+  });
+}
+
+function renderSeriesTrait(trait) {
+  const c = document.getElementById('legacy-pop-series');
+  if (!c) return;
+  const arr = trait ? ((TRAIT_SER || {})[trait] || []) : (SER || []);
+  if (seriesChart) seriesChart.destroy();
+  const labels = arr.map((x) => x.date);
+  const rawData = arr.map((x) => (x.raw_mean ?? null));
+  const lotData = arr.map((x) => (x.lot_mean ?? x.res_mean ?? null));
+  const globalData = arr.map((x) => (x.global_mean ?? x.mean ?? x.res_mean ?? null));
+  seriesChart = new Chart(c.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Raw mean', data: rawData, borderColor: '#d9782b', tension: 0.2, yAxisID: 'yRaw' },
+        { label: 'Escore lote mean', data: lotData, borderColor: '#0d7a5e', tension: 0.2, yAxisID: 'yScore' },
+        { label: 'Escore global mean', data: globalData, borderColor: '#1a6fd4', tension: 0.2, yAxisID: 'yScore' },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        yRaw: { position: 'left' },
+        yScore: { position: 'right', min: 1, max: 9, grid: { drawOnChartArea: false } },
+      },
+    },
+  });
+}
+
+function initTraitTopCharts() {
+  const keys = (TOP_TRAITS || []).slice();
+  const selDist = document.getElementById('traitSelDist');
+  const selSeries = document.getElementById('traitSelSeries');
+  if (selDist) {
+    keys.forEach((k) => {
+      const o = document.createElement('option');
+      o.value = k;
+      o.textContent = k;
+      selDist.appendChild(o);
+    });
+    if (keys.length) {
+      selDist.value = keys[0];
+      renderDistTrait(keys[0]);
+    } else renderDistTrait('');
+    selDist.addEventListener('change', () => renderDistTrait(selDist.value));
+  }
+  if (selSeries) {
+    keys.forEach((k) => {
+      const o = document.createElement('option');
+      o.value = k;
+      o.textContent = k;
+      selSeries.appendChild(o);
+    });
+    if (keys.length) {
+      selSeries.value = keys[0];
+      renderSeriesTrait(keys[0]);
+    } else renderSeriesTrait('');
+    selSeries.addEventListener('change', () => renderSeriesTrait(selSeries.value));
+  }
+}
+
+function buildTraitSections() {
+  (TOP_TRAITS || []).forEach((t, idx) => {
+    const arr = (TRAIT_SER || {})[t] || [];
+    const c1 = document.getElementById(`trait-series-${idx}`);
+    if (c1) {
+      new Chart(c1.getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: arr.map((x) => x.date),
+          datasets: [
+            { label: 'Raw mean', data: arr.map((x) => x.raw_mean), borderColor: '#d9782b', tension: 0.2, yAxisID: 'yRaw' },
+            { label: 'Escore mean', data: arr.map((x) => x.res_mean), borderColor: '#1a6fd4', tension: 0.2, yAxisID: 'yRes' },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            yRaw: { position: 'left' },
+            yRes: { position: 'right', min: 1, max: 9, grid: { drawOnChartArea: false } },
+          },
+        },
+      });
+    }
+    const c2 = document.getElementById(`trait-volume-${idx}`);
+    if (c2) {
+      new Chart(c2.getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels: arr.map((x) => x.date),
+          datasets: [{ label: 'N registros', data: arr.map((x) => x.n), backgroundColor: 'rgba(13,122,94,.35)', borderColor: '#0d7a5e', borderWidth: 1 }],
+        },
+        options: { responsive: true, maintainAspectRatio: false },
+      });
+    }
+  });
+}
+
+function buildBox(targetId, effectKey, metric) {
+  const host = document.getElementById(targetId);
+  if (!host) return;
+  const rows = (BOX || {})[effectKey] || [];
+  const traces = rows.map((r) => ({
+    y: (metric === 'raw' ? r.raw : r.res) || [],
+    type: 'box',
+    name: r.group,
+    boxpoints: false,
+  }));
+  Plotly.newPlot(
+    host,
+    traces,
+    { margin: { t: 10, l: 40, r: 10, b: 80 }, xaxis: { tickangle: -30 }, yaxis: { title: metric === 'raw' ? 'raw' : 'reescalado' } },
+    { displayModeBar: false, responsive: true },
+  );
+}
+
+const effectKeys = (EFFECTS || []).map((x) => x.effect);
+function initEff(id, cb) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  effectKeys.forEach((k) => {
+    const o = document.createElement('option');
+    o.value = k;
+    o.textContent = k;
+    el.appendChild(o);
+  });
+  if (effectKeys.length) {
+    el.value = effectKeys[0];
+    cb();
+  }
+  el.addEventListener('change', cb);
+}
+initEff('effectSelRaw', () => buildBox('boxRaw', document.getElementById('effectSelRaw').value, 'raw'));
+initEff('effectSelRes', () => buildBox('boxRes', document.getElementById('effectSelRes').value, 'res'));
+buildTraitSections();
+initTraitTopCharts();
+</script>
+{% endblock %}

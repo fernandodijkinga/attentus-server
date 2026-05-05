@@ -1165,6 +1165,85 @@ def _mean_std(vals: list[float]) -> tuple[float | None, float | None]:
     return float(mu), float(math.sqrt(max(0.0, var)))
 
 
+def _pearson_r(xs: list[float], ys: list[float]) -> float | None:
+    n = len(xs)
+    if n != len(ys) or n < 2:
+        return None
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    num = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+    dx = math.sqrt(sum((x - mx) ** 2 for x in xs))
+    dy = math.sqrt(sum((y - my) ** 2 for y in ys))
+    if dx <= 1e-12 or dy <= 1e-12:
+        return None
+    return float(round(num / (dx * dy), 4))
+
+
+def _skew_sample(vals: list[float]) -> float | None:
+    n = len(vals)
+    if n < 3:
+        return None
+    mu = sum(vals) / n
+    v = sum((x - mu) ** 2 for x in vals) / (n - 1)
+    if v <= 1e-18:
+        return 0.0
+    sd = math.sqrt(v)
+    m3 = sum((x - mu) ** 3 for x in vals) / n
+    return float(round(m3 / (sd**3), 4))
+
+
+def _kurtosis_excess_sample(vals: list[float]) -> float | None:
+    n = len(vals)
+    if n < 4:
+        return None
+    mu = sum(vals) / n
+    v = sum((x - mu) ** 2 for x in vals) / (n - 1)
+    if v <= 1e-18:
+        return 0.0
+    sd = math.sqrt(v)
+    m4 = sum((x - mu) ** 4 for x in vals) / n
+    kurt = m4 / (v**2)
+    return float(round(kurt - 3.0, 4))
+
+
+def _iqr_outlier_indices(vals: list[float]) -> tuple[float, float, list[int]]:
+    """Tuplo (q1, q3, índices outliers tipo Tukey)."""
+    if len(vals) < 4:
+        s = sorted(vals)
+        return s[0], s[-1], []
+    s = sorted(vals)
+    q1 = _pct(s, 0.25)
+    q3 = _pct(s, 0.75)
+    if q1 is None or q3 is None:
+        return s[0], s[-1], []
+    iqr = float(q3) - float(q1)
+    lo = float(q1) - 1.5 * iqr
+    hi = float(q3) + 1.5 * iqr
+    bad = [i for i, x in enumerate(vals) if x < lo or x > hi]
+    return lo, hi, bad
+
+
+def _perspicuus_dedupe_latest_dict_rows(rows: list[dict[str, Any]], breed: str) -> list[dict[str, Any]]:
+    """Um registo por animal (mais recente primeiro, como na lista de entrada)."""
+    seen: set[tuple[str, ...]] = set()
+    out: list[dict[str, Any]] = []
+    for d in rows:
+        farm = str(d.get('farm_id') or '').strip()
+        animal = str(d.get('animal_tag') or '').strip()
+        lot = str(d.get('lot_id') or '').strip()
+        if not farm or not animal:
+            continue
+        if breed == 'nelore':
+            k = (farm, lot, animal)
+        else:
+            k = (farm, animal)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(d)
+    return out
+
+
 def _anova_eta2_with_permutation(
     groups: dict[str, list[float]],
     permutations: int = 250,
@@ -1236,6 +1315,503 @@ def _anova_eta2_with_permutation(
             ge += 1
     p = (ge + 1) / (max(1, int(permutations)) + 1)
     return {'n': n2, 'groups': len(usable_groups), 'eta2': eta2, 'f': f_obs, 'p': p}
+
+
+def _perspicuus_population_ui_pack(
+    all_rows: list[dict[str, Any]],
+    breed: str,
+    trait_bounds_cache: dict[tuple[str, str], dict[str, tuple[float, float]]],
+    top_traits: list[str],
+    trait_series: dict[str, list[dict[str, Any]]],
+    traits_res_all: dict[str, list[float]],
+    cards: dict[str, Any],
+) -> dict[str, Any]:
+    """Payload para UI tipo dashboard (visão geral, variabilidade, benchmarking)."""
+    colors = ['#15803d', '#0ea5e9', '#84cc16', '#ea580c', '#6366f1', '#c026d3']
+    empty_ui: dict[str, Any] = {
+        'hero': {
+            'n_animals': 0, 'n_records': 0, 'n_lots': 0, 'n_farms': 0, 'last_update': '',
+            'image': '', 'index_mean': None, 'status': '—',
+        },
+        'trait_cards': [],
+        'sd_bars': [],
+        'radar': {'labels': [], 'values': []},
+        'index_histogram': {'bins': [], 'mean': None, 'median': None},
+        'segments': [],
+        'trait_metrics': [],
+        'percentiles_index': {},
+        'insights': [],
+        'variability': {'summary': {}, 'corr_labels': [], 'corr_matrix': [], 'scatter': [], 'boxplot_s5': {}},
+        'benchmark': {
+            'farm_bars': {'farms': [], 'traits': [], 'matrix': {}},
+            'monthly_series': [],
+            'group_ranking': [],
+            'bubble': [],
+            'highlights': [],
+            'index_gain_12m': None,
+        },
+        'cards_legacy': cards,
+    }
+    if not all_rows:
+        return empty_ui
+
+    deduped = _perspicuus_dedupe_latest_dict_rows(all_rows, breed)
+    n_records = len(all_rows)
+    n_animals = len(deduped)
+    farms_set = {str(r.get('farm_id') or '').strip() for r in deduped if str(r.get('farm_id') or '').strip()}
+    n_farms = len(farms_set)
+    lots_set: set[str] = set()
+    for r in deduped:
+        lid = str(r.get('lot_id') or '').strip()
+        lots_set.add(lid if lid else '(sem lote)')
+    n_lots = len(lots_set)
+
+    last_update = ''
+    for r in all_rows:
+        idt = str(r.get('inference_date') or '').strip()[:10]
+        if len(idt) == 10 and idt > last_update:
+            last_update = idt
+
+    hero_img = ''
+    for r in deduped:
+        th = str(r.get('thumb_path') or r.get('image_path') or '').strip()
+        if th:
+            hero_img = th
+            break
+
+    idx_list: list[int] = []
+    for r in deduped:
+        g = _perspicuus_row_global_score(r)
+        ix = _perspicuus_index_0_100(g, 6.0)
+        if ix is not None:
+            idx_list.append(int(ix))
+    idx_sorted = sorted(idx_list)
+    ns = len(idx_list)
+    mean_idx = int(round(sum(idx_list) / ns)) if ns else None
+    median_idx = int(round(_pct(idx_sorted, 0.5) or 0.0)) if idx_sorted else None
+    status = _perspicuus_lote_status_from_index(mean_idx)
+
+    bin_defs = [
+        ('0–30', 0, 30),
+        ('31–50', 31, 50),
+        ('51–70', 51, 70),
+        ('71–89', 71, 89),
+        ('90–100', 90, 100),
+    ]
+    hist_bins: list[dict[str, Any]] = []
+    for lab, lo, hi in bin_defs:
+        ct = sum(1 for x in idx_list if lo <= x <= hi)
+        hist_bins.append({
+            'label': lab, 'from': lo, 'to': hi, 'count': ct,
+            'pct': round(100.0 * ct / ns, 1) if ns else 0.0,
+        })
+    c_top10 = sum(1 for x in idx_list if x >= 90)
+    c_abv = sum(1 for x in idx_list if 71 <= x <= 89)
+    c_mid = sum(1 for x in idx_list if 51 <= x <= 70)
+    c_bel = sum(1 for x in idx_list if 31 <= x <= 50)
+    c_crit = sum(1 for x in idx_list if x <= 30)
+    segments = [
+        {'tier': 'top10', 'label': 'Top 10% (índice ≥ 90)', 'count': c_top10, 'pct': round(100.0 * c_top10 / ns, 1) if ns else 0.0},
+        {'tier': 'above', 'label': 'Acima da média (71–89)', 'count': c_abv, 'pct': round(100.0 * c_abv / ns, 1) if ns else 0.0},
+        {'tier': 'mid', 'label': 'Média (51–70)', 'count': c_mid, 'pct': round(100.0 * c_mid / ns, 1) if ns else 0.0},
+        {'tier': 'below', 'label': 'Abaixo da média (31–50)', 'count': c_bel, 'pct': round(100.0 * c_bel / ns, 1) if ns else 0.0},
+        {'tier': 'crit', 'label': 'Críticos (≤ 30)', 'count': c_crit, 'pct': round(100.0 * c_crit / ns, 1) if ns else 0.0},
+    ]
+
+    top4 = top_traits[:4]
+
+    trait_cards: list[dict[str, Any]] = []
+    boxplot_s5: dict[str, list[float]] = {}
+    for i, t in enumerate(top4):
+        vals_res = traits_res_all.get(t, [])
+        vals_s5: list[float] = []
+        for v in vals_res:
+            s5 = _map_trait_1_9_to_display_5(float(v))
+            if s5 is not None:
+                vals_s5.append(float(s5))
+        boxplot_s5[t] = vals_s5[:]
+        mu, sd = _mean_std(vals_s5)
+        cv_pct = round(100.0 * float(sd) / float(mu), 1) if mu is not None and sd is not None and mu > 1e-9 else None
+        entries = trait_series.get(t, [])
+        by_m: dict[str, list[float]] = defaultdict(list)
+        for e in entries:
+            d = str(e.get('date') or '')
+            if len(d) < 7:
+                continue
+            month = d[:7]
+            rm = e.get('res_mean')
+            if rm is None:
+                continue
+            s5d = _map_trait_1_9_to_display_5(float(rm))
+            if s5d is not None:
+                by_m[month].append(float(s5d))
+        months_ord = sorted(by_m.keys())
+        spark = [round(sum(by_m[m]) / len(by_m[m]), 2) for m in months_ord]
+        delta_spark = round(spark[-1] - spark[0], 2) if len(spark) >= 2 else (0.0 if len(spark) == 1 else None)
+        trait_cards.append({
+            'trait': t,
+            'color': colors[i % len(colors)],
+            'mean_s5': round(float(mu), 2) if mu is not None else None,
+            'sd_s5': round(float(sd), 2) if sd is not None else None,
+            'cv_pct': cv_pct,
+            'label': _trait_quality_label_from_s5(mu),
+            'spark': spark[-16:],
+            'delta_vs_period': delta_spark,
+            'n': len(vals_s5),
+        })
+
+    sd_bars = [{'trait': c['trait'], 'sd': c['sd_s5'], 'color': c['color']} for c in trait_cards]
+    radar = {'labels': top4, 'values': [c['mean_s5'] for c in trait_cards]}
+
+    percentiles_index: dict[str, int | None] = {}
+    for p in (10, 25, 50, 75, 90):
+        pv = _pct(idx_sorted, p / 100.0) if idx_sorted else None
+        percentiles_index[f'p{p}'] = int(round(float(pv))) if pv is not None else None
+
+    trait_metrics: list[dict[str, Any]] = []
+    for t in top_traits[:12]:
+        vals_res = traits_res_all.get(t, [])
+        vals_s5 = []
+        for v in vals_res:
+            s5 = _map_trait_1_9_to_display_5(float(v))
+            if s5 is not None:
+                vals_s5.append(float(s5))
+        mu, sd = _mean_std(vals_s5)
+        ss = sorted(vals_s5)
+        med = _pct(ss, 0.5) if vals_s5 else None
+        pq1 = _pct(ss, 0.25) if vals_s5 else None
+        pq3 = _pct(ss, 0.75) if vals_s5 else None
+        cv_pct = round(100.0 * float(sd) / float(mu), 2) if mu and sd and mu > 1e-9 else None
+        mn = min(vals_s5) if vals_s5 else None
+        mx = max(vals_s5) if vals_s5 else None
+        _, _, oix = _iqr_outlier_indices(vals_s5)
+        trait_metrics.append({
+            'trait': t,
+            'mean': round(float(mu), 3) if mu is not None else None,
+            'median': round(float(med), 3) if med is not None else None,
+            'sd': round(float(sd), 3) if sd is not None else None,
+            'cv_pct': cv_pct,
+            'min': round(float(mn), 2) if mn is not None else None,
+            'max': round(float(mx), 2) if mx is not None else None,
+            'p25': round(float(pq1), 2) if pq1 is not None else None,
+            'p75': round(float(pq3), 2) if pq3 is not None else None,
+            'skew': _skew_sample(vals_s5),
+            'kurtosis': _kurtosis_excess_sample(vals_s5),
+            'n': len(vals_s5),
+            'outliers': len(oix),
+        })
+
+    row_vecs: list[dict[str, float]] = []
+    for r in all_rows:
+        fk = str(r.get('farm_id') or '').strip()
+        lk = str(r.get('lot_id') or '').strip()
+        bmap = trait_bounds_cache.get((fk, lk), {})
+        try:
+            traits = json.loads(r.get('traits_json') or '{}')
+        except (TypeError, ValueError, json.JSONDecodeError):
+            traits = {}
+        if not isinstance(traits, dict):
+            continue
+        row: dict[str, float] = {}
+        for tn in top4:
+            if tn not in traits:
+                continue
+            try:
+                tv = float(traits[tn])
+            except (TypeError, ValueError):
+                continue
+            if bmap:
+                tr_one = traits_rescaled_with_per_trait_bounds({tn: tv}, bmap)
+                trs = float(tr_one.get(tn, rescale_perspicuus_trait_score(tv)))
+            else:
+                trs = float(rescale_perspicuus_trait_score(tv))
+            row[tn] = trs
+        if len(row) >= 2:
+            row_vecs.append(row)
+
+    corr_mat: list[list[float | None]] = []
+    for i, ti in enumerate(top4):
+        rowm: list[float | None] = []
+        for j, tj in enumerate(top4):
+            if j < i:
+                rowm.append(corr_mat[j][i])
+                continue
+            xs: list[float] = []
+            ys: list[float] = []
+            for rv in row_vecs:
+                if ti in rv and tj in rv:
+                    xs.append(rv[ti])
+                    ys.append(rv[tj])
+            rowm.append(_pearson_r(xs, ys))
+        corr_mat.append(rowm)
+
+    flat_s5: list[float] = []
+    for t in top4:
+        for v in traits_res_all.get(t, []):
+            s5 = _map_trait_1_9_to_display_5(float(v))
+            if s5 is not None:
+                flat_s5.append(float(s5))
+    grand_mu = sum(flat_s5) / len(flat_s5) if flat_s5 else None
+    sds = [float(c['sd_s5']) for c in trait_cards if c.get('sd_s5') is not None]
+    cvs = [float(c['cv_pct']) for c in trait_cards if c.get('cv_pct') is not None]
+    sks = [float(tm['skew']) for tm in trait_metrics[:4] if tm.get('skew') is not None]
+    outlier_sum = sum(int(tm['outliers']) for tm in trait_metrics[:4])
+
+    variability_summary = {
+        'n_animals': n_animals,
+        'mean_s5_grand': round(float(grand_mu), 2) if grand_mu is not None else None,
+        'sd_mean_traits': round(sum(sds) / len(sds), 3) if sds else None,
+        'cv_mean_pct': round(sum(cvs) / len(cvs), 1) if cvs else None,
+        'skew_mean': round(sum(sks) / len(sks), 3) if sks else None,
+        'outliers_hint': outlier_sum,
+    }
+
+    scatter_traits = [
+        {'trait': c['trait'], 'mean': c['mean_s5'], 'sd': c['sd_s5'], 'color': c['color']}
+        for c in trait_cards
+    ]
+
+    farm_bars: dict[str, Any] = {'farms': [], 'traits': top4, 'matrix': {}}
+    if n_farms > 1:
+        by_farm: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for r in deduped:
+            f = str(r.get('farm_id') or '').strip()
+            if f:
+                by_farm[f].append(r)
+        farm_list = sorted(by_farm.keys())[:12]
+        farm_bars['farms'] = farm_list
+        for f in farm_list:
+            farm_bars['matrix'][f] = {}
+            for ti in top4:
+                vals: list[float] = []
+                for r in by_farm[f]:
+                    fk = str(r.get('farm_id') or '').strip()
+                    lk = str(r.get('lot_id') or '').strip()
+                    bmap = trait_bounds_cache.get((fk, lk), {})
+                    try:
+                        traits = json.loads(r.get('traits_json') or '{}')
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        traits = {}
+                    if not isinstance(traits, dict) or ti not in traits:
+                        continue
+                    try:
+                        tv = float(traits[ti])
+                    except (TypeError, ValueError):
+                        continue
+                    if bmap:
+                        tr_one = traits_rescaled_with_per_trait_bounds({ti: tv}, bmap)
+                        trs = float(tr_one.get(ti, rescale_perspicuus_trait_score(tv)))
+                    else:
+                        trs = float(rescale_perspicuus_trait_score(tv))
+                    s5 = _map_trait_1_9_to_display_5(trs)
+                    if s5 is not None:
+                        vals.append(float(s5))
+                mu_f = sum(vals) / len(vals) if vals else None
+                farm_bars['matrix'][f][ti] = round(float(mu_f), 2) if mu_f is not None else None
+
+    monthly: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    for r in all_rows:
+        d = str(r.get('inference_date') or '')[:10]
+        if len(d) < 7:
+            continue
+        ym = d[:7]
+        fk = str(r.get('farm_id') or '').strip()
+        lk = str(r.get('lot_id') or '').strip()
+        bmap = trait_bounds_cache.get((fk, lk), {})
+        try:
+            traits = json.loads(r.get('traits_json') or '{}')
+        except (TypeError, ValueError, json.JSONDecodeError):
+            traits = {}
+        if not isinstance(traits, dict):
+            continue
+        for ti in top4:
+            if ti not in traits:
+                continue
+            try:
+                tv = float(traits[ti])
+            except (TypeError, ValueError):
+                continue
+            if bmap:
+                tr_one = traits_rescaled_with_per_trait_bounds({ti: tv}, bmap)
+                trs = float(tr_one.get(ti, rescale_perspicuus_trait_score(tv)))
+            else:
+                trs = float(rescale_perspicuus_trait_score(tv))
+            s5 = _map_trait_1_9_to_display_5(trs)
+            if s5 is not None:
+                monthly[ym][ti].append(float(s5))
+    months_sorted = sorted(monthly.keys())
+    monthly_series = []
+    for ti in top4:
+        pts: list[float | None] = []
+        for ym in months_sorted:
+            arr = monthly[ym].get(ti, [])
+            pts.append(round(sum(arr) / len(arr), 2) if arr else None)
+        monthly_series.append({'trait': ti, 'months': months_sorted, 'points': pts})
+
+    index_by_month: dict[str, list[int]] = defaultdict(list)
+    for r in all_rows:
+        d = str(r.get('inference_date') or '')[:10]
+        if len(d) < 7:
+            continue
+        ym = d[:7]
+        g = _perspicuus_row_global_score(r)
+        ix = _perspicuus_index_0_100(g, 6.0)
+        if ix is not None:
+            index_by_month[ym].append(int(ix))
+    idx_gain = None
+    if months_sorted:
+        first_m = months_sorted[0]
+        last_m = months_sorted[-1]
+        a = index_by_month.get(first_m)
+        b = index_by_month.get(last_m)
+        if a and b and len(months_sorted) >= 2:
+            ma = sum(a) / len(a)
+            mb = sum(b) / len(b)
+            idx_gain = round(mb - ma, 1)
+
+    group_ranking: list[dict[str, Any]] = []
+    bubble_groups: list[dict[str, Any]] = []
+    grp_map: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in deduped:
+        if breed == 'nelore':
+            farm = str(r.get('farm_id') or '').strip()
+            lot = str(r.get('lot_id') or '').strip()
+            label = f'{farm} · Lote {lot}' if lot else f'{farm} · (sem lote)'
+        else:
+            label = str(r.get('farm_id') or '').strip() or '—'
+        if label == '—':
+            continue
+        grp_map[label].append(r)
+
+    for label, members in grp_map.items():
+        globs: list[float] = []
+        for r in members:
+            g = _perspicuus_row_global_score(r)
+            if g is not None:
+                globs.append(float(g))
+        mu_g = sum(globs) / len(globs) if globs else None
+        ix_mean = _perspicuus_index_0_100(mu_g, 6.0) if mu_g is not None else None
+        sd_gl = _mean_std(globs)[1] if globs else None
+        traits_row: dict[str, float | None] = {}
+        for ti in top4:
+            vals_g: list[float] = []
+            for r in members:
+                fk = str(r.get('farm_id') or '').strip()
+                lk = str(r.get('lot_id') or '').strip()
+                bmap = trait_bounds_cache.get((fk, lk), {})
+                try:
+                    traits = json.loads(r.get('traits_json') or '{}')
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    traits = {}
+                if not isinstance(traits, dict) or ti not in traits:
+                    continue
+                try:
+                    tv = float(traits[ti])
+                except (TypeError, ValueError):
+                    continue
+                if bmap:
+                    tr_one = traits_rescaled_with_per_trait_bounds({ti: tv}, bmap)
+                    trs = float(tr_one.get(ti, rescale_perspicuus_trait_score(tv)))
+                else:
+                    trs = float(rescale_perspicuus_trait_score(tv))
+                s5 = _map_trait_1_9_to_display_5(trs)
+                if s5 is not None:
+                    vals_g.append(float(s5))
+            traits_row[ti] = round(sum(vals_g) / len(vals_g), 2) if vals_g else None
+        group_ranking.append({
+            'label': label,
+            'n': len(members),
+            'index_mean': int(ix_mean) if ix_mean is not None else None,
+            'traits': traits_row,
+        })
+        bubble_groups.append({
+            'label': label,
+            'x': round(float(sd_gl), 3) if sd_gl is not None else None,
+            'y': int(ix_mean) if ix_mean is not None else None,
+            'n': len(members),
+        })
+
+    group_ranking.sort(key=lambda x: (-(x['index_mean'] or -1), -x['n']))
+    ng = len(group_ranking)
+    for i, gr in enumerate(group_ranking[:24], start=1):
+        gr['rank'] = i
+        gr['top_pct'] = max(1, min(99, int(math.ceil(100 * i / ng)))) if ng else None
+
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for r in deduped:
+        g = _perspicuus_row_global_score(r)
+        ix = _perspicuus_index_0_100(g, 6.0)
+        if ix is None:
+            continue
+        scored.append((int(ix), r))
+    scored.sort(key=lambda x: -x[0])
+    highlights: list[dict[str, Any]] = []
+    for ix, r in scored[:5]:
+        highlights.append({
+            'animal': str(r.get('animal_tag') or ''),
+            'thumb': str(r.get('thumb_path') or r.get('image_path') or ''),
+            'index': ix,
+        })
+
+    insights: list[str] = []
+    if trait_cards:
+        tc_sorted_sd = sorted(
+            [c for c in trait_cards if c.get('sd_s5') is not None],
+            key=lambda c: float(c['sd_s5']),
+        )
+        if tc_sorted_sd:
+            u = tc_sorted_sd[0]
+            v = tc_sorted_sd[-1]
+            insights.append(
+                f"{u['trait']} é o trait mais uniforme (menor dispersão ~1–5: σ≈{u.get('sd_s5')})."
+            )
+            insights.append(f"{v['trait']} apresenta maior variabilidade entre animais.")
+        if mean_idx is not None and median_idx is not None and abs(mean_idx - median_idx) <= 3:
+            insights.append('Média e mediana do índice estão alinhadas — pouca assimetria global.')
+        if n_farms > 1 and farm_bars.get('farms'):
+            insights.append(
+                f"Comparação entre fazendas disponível ({len(farm_bars['farms'])} fazendas no filtro)."
+            )
+    insights = insights[:10]
+
+    hero = {
+        'n_animals': n_animals,
+        'n_records': n_records,
+        'n_lots': n_lots,
+        'n_farms': n_farms,
+        'last_update': last_update,
+        'image': hero_img,
+        'index_mean': mean_idx,
+        'status': status,
+    }
+
+    return {
+        'hero': hero,
+        'trait_cards': trait_cards,
+        'sd_bars': sd_bars,
+        'radar': radar,
+        'index_histogram': {'bins': hist_bins, 'mean': mean_idx, 'median': median_idx},
+        'segments': segments,
+        'trait_metrics': trait_metrics,
+        'percentiles_index': percentiles_index,
+        'insights': insights,
+        'variability': {
+            'summary': variability_summary,
+            'corr_labels': top4,
+            'corr_matrix': corr_mat,
+            'scatter': scatter_traits,
+            'boxplot_s5': boxplot_s5,
+        },
+        'benchmark': {
+            'farm_bars': farm_bars,
+            'monthly_series': monthly_series,
+            'group_ranking': group_ranking[:15],
+            'bubble': bubble_groups[:40],
+            'highlights': highlights,
+            'index_gain_12m': idx_gain,
+        },
+        'cards_legacy': cards,
+    }
 
 
 def _perspicuus_population_analysis(rows: list[sqlite3.Row], breed: str) -> dict[str, Any]:
@@ -1524,6 +2100,16 @@ def _perspicuus_population_analysis(rows: list[sqlite3.Row], breed: str) -> dict
         'global_std': round(global_sd, 3) if global_sd is not None else None,
     }
 
+    ui = _perspicuus_population_ui_pack(
+        all_rows,
+        breed,
+        trait_bounds_cache,
+        top_traits,
+        trait_series,
+        traits_res_all,
+        cards,
+    )
+
     return {
         'cards': cards,
         'dist_lot': dist_lot,
@@ -1537,6 +2123,7 @@ def _perspicuus_population_analysis(rows: list[sqlite3.Row], breed: str) -> dict
         'effect_overall': effect_overall,
         'effect_traits': effect_traits[:80],
         'boxplot_by_effect': boxplot_by_effect,
+        'ui': ui,
     }
 
 
@@ -4797,11 +5384,17 @@ def perspicuus_angus_analise_populacao():
     farms, _, stats = _angus_base_lists(db)
     deep = _perspicuus_population_analysis(rows, 'angus')
     return render_template(
-        'perspicuus_angus_analise_populacao.html',
+        'perspicuus_analise_populacao.html',
+        breed_key='angus',
+        breed_title='Angus',
+        breed_emoji='🐂',
         farms=farms,
+        lots=[],
         farm_filter=farm_filter,
+        lot_filter='',
         q_filter=q,
         stats=stats,
+        pop_ui=deep.get('ui') or {},
         cards=deep['cards'],
         dist_lot=deep['dist_lot'],
         dist_global=deep['dist_global'],
@@ -5512,13 +6105,17 @@ def perspicuus_nelore_analise_populacao():
     farms, lots, _, stats = _nelore_base_lists(db)
     deep = _perspicuus_population_analysis(rows, 'nelore')
     return render_template(
-        'perspicuus_nelore_analise_populacao.html',
+        'perspicuus_analise_populacao.html',
+        breed_key='nelore',
+        breed_title='Nelore',
+        breed_emoji='🐃',
         farms=farms,
         lots=lots,
         farm_filter=farm_filter,
         lot_filter=lot_filter,
         q_filter=q,
         stats=stats,
+        pop_ui=deep.get('ui') or {},
         cards=deep['cards'],
         dist_lot=deep['dist_lot'],
         dist_global=deep['dist_global'],
