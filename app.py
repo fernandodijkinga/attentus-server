@@ -29,6 +29,7 @@ import re
 import math
 import random
 import hashlib
+import uuid
 import sqlite3
 import json
 import threading
@@ -164,6 +165,9 @@ os.makedirs(ANGUS_UPLOADS_DIR, exist_ok=True)
 NELORE_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
 NELORE_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'perspicuus_nelore')
 os.makedirs(NELORE_UPLOADS_DIR, exist_ok=True)
+
+ECC_RECALC_JOBS: dict[str, dict[str, Any]] = {}
+ECC_RECALC_JOBS_LOCK = threading.Lock()
 
 PERSPICUUS_BREED_TABLE = {
     'angus': 'perspicuus_angus_records',
@@ -6478,6 +6482,87 @@ def _ecc_reinfer_record_by_id(db, rid: int) -> dict:
     return {'id': rid, 'ok': not err, 'error': err or None}
 
 
+def _ecc_init_recalc_job(farm_id: str, total: int, started_by: str) -> str:
+    job_id = uuid.uuid4().hex
+    with ECC_RECALC_JOBS_LOCK:
+        ECC_RECALC_JOBS[job_id] = {
+            'job_id': job_id,
+            'farm_id_filter': farm_id or None,
+            'status': 'running',
+            'started_at': datetime.utcnow().isoformat() + 'Z',
+            'finished_at': None,
+            'started_by': started_by,
+            'total': int(total),
+            'processed': 0,
+            'ok': 0,
+            'errors': 0,
+            'current_record_id': None,
+            'current_step': 'Preparando pipeline ECC',
+            'sample_errors': [],
+        }
+    return job_id
+
+
+def _ecc_update_recalc_job(job_id: str, **fields) -> None:
+    with ECC_RECALC_JOBS_LOCK:
+        job = ECC_RECALC_JOBS.get(job_id)
+        if not job:
+            return
+        job.update(fields)
+
+
+def _ecc_run_recalc_job(job_id: str, ids: list[int]) -> None:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    ok_n = 0
+    err_n = 0
+    total = len(ids)
+    try:
+        for i, rid in enumerate(ids, start=1):
+            _ecc_update_recalc_job(
+                job_id,
+                processed=i - 1,
+                current_record_id=int(rid),
+                current_step=f'Processando {i}/{total}',
+            )
+            rr = _ecc_reinfer_record_by_id(conn, int(rid))
+            if rr.get('ok'):
+                ok_n += 1
+            else:
+                err_n += 1
+                with ECC_RECALC_JOBS_LOCK:
+                    job = ECC_RECALC_JOBS.get(job_id)
+                    if job and len(job.get('sample_errors') or []) < 25:
+                        errs = list(job.get('sample_errors') or [])
+                        errs.append(rr)
+                        job['sample_errors'] = errs
+            _ecc_update_recalc_job(job_id, processed=i, ok=ok_n, errors=err_n)
+        _ecc_update_recalc_job(
+            job_id,
+            status='done',
+            finished_at=datetime.utcnow().isoformat() + 'Z',
+            current_step='Concluído',
+            current_record_id=None,
+            processed=total,
+            ok=ok_n,
+            errors=err_n,
+        )
+    except Exception as e:
+        log.exception('[ECC] recálculo em background falhou job=%s', job_id)
+        _ecc_update_recalc_job(
+            job_id,
+            status='failed',
+            finished_at=datetime.utcnow().isoformat() + 'Z',
+            current_step=f'Falhou: {e}',
+            current_record_id=None,
+            processed=min(total, int(ECC_RECALC_JOBS.get(job_id, {}).get('processed') or 0)),
+            ok=ok_n,
+            errors=err_n + 1,
+        )
+    finally:
+        conn.close()
+
+
 def _ecc_save_one(db, now_iso: str, farm_id: str, inference_date: str, animal_tag: str, fs) -> tuple[bool, str]:
     ext = os.path.splitext(fs.filename or '')[1].lower()
     if ext not in ECC_IMAGE_EXTS:
@@ -7225,6 +7310,75 @@ def api_ecc_recalculate_all():
         'farm_id_filter': farm or None,
         'sample_errors': sample_errs,
     })
+
+
+@app.route('/api/ecc/recalculate-all/start', methods=['POST'])
+@login_required
+def api_ecc_recalculate_all_start():
+    """Inicia recálculo ECC em background e devolve ``job_id`` para polling."""
+    try:
+        from perspicuus_inference import get_engine
+        eng = get_engine()
+    except ImportError as e:
+        return jsonify({'error': f'Módulo de inferência indisponível: {e}'}), 503
+    if not eng.is_ready() or not eng.onnx_path_for('posterior'):
+        return jsonify({'error': 'Motor ONNX (YOLO + posterior) não está configurado.'}), 400
+
+    data = request.get_json(silent=True) or {}
+    farm = str(data.get('farm_id') or request.args.get('farm_id', '') or '').strip()
+    max_n = max(1, min(10000, int(os.environ.get('ECC_RECALC_MAX', '5000'))))
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cond = ['1=1']
+    params: list[str] = []
+    if farm:
+        cond.append('farm_id = ?')
+        params.append(farm)
+    where = ' AND '.join(cond)
+    ids = [
+        int(r['id'])
+        for r in conn.execute(
+            f'SELECT id FROM ecc_bcs_records WHERE {where} ORDER BY id ASC LIMIT ?',
+            params + [max_n],
+        ).fetchall()
+    ]
+    conn.close()
+
+    job_id = _ecc_init_recalc_job(
+        farm_id=farm,
+        total=len(ids),
+        started_by=str(session.get('username') or 'unknown'),
+    )
+    if not ids:
+        _ecc_update_recalc_job(
+            job_id,
+            status='done',
+            finished_at=datetime.utcnow().isoformat() + 'Z',
+            current_step='Sem registros para recalcular',
+        )
+        return jsonify({'status': 'done', 'job_id': job_id, 'total': 0})
+
+    threading.Thread(
+        target=_ecc_run_recalc_job,
+        args=(job_id, ids),
+        daemon=True,
+    ).start()
+    return jsonify({'status': 'started', 'job_id': job_id, 'total': len(ids), 'farm_id_filter': farm or None})
+
+
+@app.route('/api/ecc/recalculate-all/status/<job_id>', methods=['GET'])
+@login_required
+def api_ecc_recalculate_all_status(job_id: str):
+    with ECC_RECALC_JOBS_LOCK:
+        job = dict(ECC_RECALC_JOBS.get(job_id) or {})
+    if not job:
+        return jsonify({'error': 'job_not_found'}), 404
+    total = int(job.get('total') or 0)
+    processed = int(job.get('processed') or 0)
+    pct = int(round((processed / total) * 100)) if total > 0 else 100
+    job['progress_pct'] = max(0, min(100, pct))
+    return jsonify(job)
 
 
 @app.route('/ecc/analise-rebanho')

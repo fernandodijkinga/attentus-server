@@ -197,6 +197,11 @@
   line-height: 1;
   cursor: pointer;
 }
+.cal-recalc-progress{margin-top:10px;border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--surf2);display:none}
+.cal-recalc-progress.visible{display:block}
+.cal-recalc-progress .track{width:100%;height:8px;border-radius:999px;background:var(--surf3);border:1px solid var(--border);overflow:hidden;margin:8px 0}
+.cal-recalc-progress .fill{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .2s ease}
+.cal-recalc-progress .meta{display:flex;justify-content:space-between;gap:8px;font-family:var(--mono);font-size:11px;color:var(--text2)}
 </style>
 {% endblock %}
 
@@ -281,6 +286,18 @@
       </div>
       <button id="ecc-cal-apply" class="btn btn-accent btn-sm" type="button">Aplicar e corrigir BCS</button>
     </div>
+    <div style="margin-top:10px;display:flex;gap:10px;align-items:end;flex-wrap:wrap">
+      <div class="field" style="margin:0;min-width:220px">
+        <label>Recalcular pipeline ECC (opcional fazenda)</label>
+        <input id="ecc-cal-recalc-farm" type="text" placeholder="vazio = todas as fazendas" value="{{ farm_filter or '' }}">
+      </div>
+      <button id="ecc-cal-recalc-btn" class="btn btn-ghost btn-sm" type="button">↻ Recalcular via pipeline</button>
+    </div>
+    <div id="ecc-cal-recalc-progress" class="cal-recalc-progress" aria-live="polite">
+      <div class="meta"><span id="ecc-cal-recalc-status">Aguardando…</span><span id="ecc-cal-recalc-count">0 / 0</span></div>
+      <div class="track"><div id="ecc-cal-recalc-fill" class="fill"></div></div>
+      <div id="ecc-cal-recalc-result" class="meta"><span>—</span></div>
+    </div>
   </div>
 </div>
 
@@ -340,9 +357,19 @@
 {% block scripts %}
 <script>
 const ECC_CAL_APPLY_URL = {{ url_for(calibration_apply_endpoint) | tojson }};
+const ECC_RECALC_START_URL = "{{ url_for('api_ecc_recalculate_all_start') }}";
+const ECC_RECALC_STATUS_BASE = "{{ url_for('api_ecc_recalculate_all_status', job_id='__JOB__') }}";
 const ECC_FARM_FILTER = {{ farm_filter | tojson }};
 const ECC_RAW_BOUNDS = {{ raw_bounds | tojson }};
 let carouselSeq = 0;
+
+function eccRecalcStatusUrl(jobId) {
+  return ECC_RECALC_STATUS_BASE.replace('__JOB__', encodeURIComponent(jobId || ''));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function calcBCS(raw, rawMin, rawMax) {
   const x = Number(raw);
@@ -481,7 +508,63 @@ async function applyCalibration() {
   }
 }
 
+async function pollEccCalRecalc(jobId) {
+  const wrap = document.getElementById('ecc-cal-recalc-progress');
+  const fill = document.getElementById('ecc-cal-recalc-fill');
+  const count = document.getElementById('ecc-cal-recalc-count');
+  const status = document.getElementById('ecc-cal-recalc-status');
+  const result = document.getElementById('ecc-cal-recalc-result');
+  wrap?.classList.add('visible');
+  for (;;) {
+    const r = await fetch(eccRecalcStatusUrl(jobId), { credentials: 'same-origin' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    const total = Number(j.total || 0);
+    const processed = Number(j.processed || 0);
+    const pct = Number(j.progress_pct || 0);
+    if (fill) fill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+    if (count) count.textContent = `${processed} / ${total}`;
+    if (status) status.textContent = j.current_step || 'Processando pipeline ECC…';
+    if (result) result.innerHTML = `<span>OK ${j.ok || 0} · erros ${j.errors || 0}</span>`;
+    if (j.status === 'done' || j.status === 'failed') return j;
+    await sleep(900);
+  }
+}
+
+async function recalcFromCalibrationPage() {
+  const farm = (document.getElementById('ecc-cal-recalc-farm')?.value || '').trim();
+  const scope = farm ? `fazenda «${farm}»` : 'todas as fazendas';
+  if (!confirm(`Reexecutar o pipeline ECC para ${scope}?`)) return;
+  const btn = document.getElementById('ecc-cal-recalc-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const startResp = await fetch(ECC_RECALC_START_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ farm_id: farm }),
+    });
+    const start = await startResp.json().catch(() => ({}));
+    if (!startResp.ok) {
+      toast(start.error || ('HTTP ' + startResp.status), false);
+      return;
+    }
+    const done = await pollEccCalRecalc(start.job_id);
+    if (done.status === 'failed') {
+      toast(`Recálculo ECC falhou: ${done.current_step || 'erro interno'}`, false);
+      return;
+    }
+    toast(`ECC: ${done.ok || 0} OK · ${done.errors || 0} erro(s) · total ${done.total || 0}.`);
+    setTimeout(() => window.location.reload(), 900);
+  } catch (err) {
+    toast('Falha ao acompanhar recálculo ECC.', false);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 document.getElementById('ecc-cal-apply')?.addEventListener('click', applyCalibration);
+document.getElementById('ecc-cal-recalc-btn')?.addEventListener('click', recalcFromCalibrationPage);
 document.getElementById('ecc-cal-raw-min')?.addEventListener('input', refreshPreview);
 document.getElementById('ecc-cal-raw-max')?.addEventListener('input', refreshPreview);
 refreshPreview();
