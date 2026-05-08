@@ -336,12 +336,22 @@ async function eccPollRecalc(jobId) {
 }
 
 async function eccRecalculateAll() {
+  const wrap = document.getElementById('ecc-recalc-progress');
+  const fill = document.getElementById('ecc-recalc-fill');
+  const count = document.getElementById('ecc-recalc-count');
+  const status = document.getElementById('ecc-recalc-status');
+  const result = document.getElementById('ecc-recalc-result');
   const farmEl = document.getElementById('ecc-recalc-farm');
   const farm = (farmEl && farmEl.value) ? farmEl.value.trim() : '';
   const scope = farm ? `fazenda «${farm}»` : 'todas as fazendas';
   if (!confirm(`Recalcular todos os escores ECC em disco para ${scope}?`)) return;
   const btn = document.getElementById('ecc-recalc-btn');
   const hbtn = document.getElementById('ecc-recalc-header-btn');
+  if (wrap) wrap.classList.add('visible');
+  if (fill) fill.style.width = '0%';
+  if (count) count.textContent = '0 / 0';
+  if (status) status.textContent = 'Iniciando recálculo ECC...';
+  if (result) result.innerHTML = '<span>Preparando job...</span>';
   [btn, hbtn].forEach((b) => { if (b) b.disabled = true; });
   try {
     const startResp = await fetch(ECC_RECALC_START_URL, {
@@ -352,21 +362,31 @@ async function eccRecalculateAll() {
     });
     const start = await startResp.json().catch(() => ({}));
     if (!startResp.ok) {
+      if (status) status.textContent = 'Falha ao iniciar recálculo';
+      if (result) result.innerHTML = `<span>${start.error || ('HTTP ' + startResp.status)}</span>`;
       toast(start.error || ('HTTP ' + startResp.status), false);
       return;
     }
     if (!start.job_id) {
+      if (status) status.textContent = 'Falha ao iniciar recálculo';
+      if (result) result.innerHTML = `<span>${start.error || 'job_id ausente'}</span>`;
       toast(start.error || 'Servidor não devolveu job_id para o recálculo.', false);
       return;
     }
+    if (status) status.textContent = 'Job iniciado. Processando...';
+    if (count) count.textContent = `0 / ${Number(start.total || 0)}`;
     const done = await eccPollRecalc(start.job_id);
     if (done.status === 'failed') {
+      if (status) status.textContent = 'Recálculo finalizado com falha';
       toast(`Recálculo ECC falhou: ${done.current_step || 'erro interno'}`, false);
       return;
     }
+    if (status) status.textContent = 'Recálculo concluído';
     toast(`ECC: ${done.ok || 0} OK · ${done.errors || 0} com erro · ${done.total || 0} registo(s).`);
     setTimeout(() => { window.location.reload(); }, 900);
   } catch (e) {
+    if (status) status.textContent = 'Erro ao acompanhar recálculo';
+    if (result) result.innerHTML = '<span>Falha de comunicação com o servidor.</span>';
     toast('Falha ao acompanhar recálculo ECC.', false);
   } finally {
     [btn, hbtn].forEach((b) => { if (b) b.disabled = false; });
