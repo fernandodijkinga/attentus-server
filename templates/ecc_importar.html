@@ -355,6 +355,10 @@ async function eccRecalculateAll() {
       toast(start.error || ('HTTP ' + startResp.status), false);
       return;
     }
+    if (!start.job_id) {
+      toast(start.error || 'Servidor não devolveu job_id para o recálculo.', false);
+      return;
+    }
     const done = await eccPollRecalc(start.job_id);
     if (done.status === 'failed') {
       toast(`Recálculo ECC falhou: ${done.current_step || 'erro interno'}`, false);

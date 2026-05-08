@@ -7404,7 +7404,7 @@ def api_ecc_recalculate_all():
     """
     try:
         from perspicuus_inference import get_engine
-        eng = get_engine()
+        eng = get_engine('ecc')
     except ImportError as e:
         return jsonify({'error': f'Módulo de inferência indisponível: {e}'}), 503
     if not eng.is_ready() or not eng.onnx_path_for('posterior'):
@@ -7455,7 +7455,7 @@ def api_ecc_recalculate_all_start():
     """Inicia recálculo ECC em background e devolve ``job_id`` para polling."""
     try:
         from perspicuus_inference import get_engine
-        eng = get_engine()
+        eng = get_engine('ecc')
     except ImportError as e:
         return jsonify({'error': f'Módulo de inferência indisponível: {e}'}), 503
     if not eng.is_ready() or not eng.onnx_path_for('posterior'):
