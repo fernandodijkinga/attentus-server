@@ -74,7 +74,7 @@ def infer_ecc_posterior(abs_path: str) -> dict[str, Any]:
     except ImportError as e:
         return {"error": f"Módulo de inferência indisponível: {e}"}
 
-    eng = get_engine()
+    eng = get_engine("ecc")
     if not eng.is_ready():
         return {"error": "Motor Perspicuus não está pronto (YOLO + ONNX)."}
     if not eng.onnx_path_for("posterior"):

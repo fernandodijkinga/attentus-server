@@ -94,6 +94,11 @@
       </div>
     </div>
     <div class="bcs-hero-actions">
+      {% if is_master_admin_user %}
+      <a href="{{ url_for('ecc_modelos') }}" class="btn btn-ghost btn-sm" title="Upload de modelo ONNX/metadata do ECC">
+        🧠 Modelos ECC
+      </a>
+      {% endif %}
       <button type="button" class="btn btn-ghost btn-sm" id="ecc-recalc-header-btn"
               title="Reaplica YOLO + modelo em todas as imagens já guardadas">
         ↻ Recalcular ECC

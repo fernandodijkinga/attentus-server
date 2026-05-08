@@ -518,7 +518,7 @@ select { cursor: pointer; }
 
     {% if can_access_env('bcs') %}
     <div class="nav-section">ECC</div>
-    <a href="{{ url_for('ecc_analise') }}" class="nav-link {% if request.endpoint in ['ecc_analise', 'ecc_importar', 'ecc_analise_rebanho', 'ecc_analise_individual', 'ecc_pontos_atencao'] %}active{% endif %}">
+    <a href="{{ url_for('ecc_analise') }}" class="nav-link {% if request.endpoint in ['ecc_analise', 'ecc_importar', 'ecc_modelos', 'ecc_analise_rebanho', 'ecc_analise_individual', 'ecc_pontos_atencao'] %}active{% endif %}">
       <span class="icon">📈</span> ECC
     </a>
     <a href="{{ url_for('ecc_analise') }}" class="nav-link nav-sub {% if request.endpoint == 'ecc_analise' %}active{% endif %}">
@@ -539,6 +539,11 @@ select { cursor: pointer; }
     <a href="{{ url_for('ecc_pontos_atencao') }}" class="nav-link nav-sub {% if request.endpoint == 'ecc_pontos_atencao' %}active{% endif %}">
       <span class="icon">•</span> relatório individual
     </a>
+    {% if is_master_admin_user %}
+    <a href="{{ url_for('ecc_modelos') }}" class="nav-link nav-sub {% if request.endpoint == 'ecc_modelos' %}active{% endif %}">
+      <span class="icon">•</span> modelos ECC
+    </a>
+    {% endif %}
     {% endif %}
 
     {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') or can_access_env('angus') or can_access_env('nelore') or can_access_env('bcs') %}

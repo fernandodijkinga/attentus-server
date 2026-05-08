@@ -132,6 +132,9 @@ PERSPICUUS_MODEL_ROLE_EXT = {
     'nelore_yolo': {'.onnx'},
     'nelore_lateral': {'.onnx'},
     'nelore_lateral_meta': {'.json'},
+    'ecc_yolo': {'.onnx'},
+    'ecc_posterior': {'.onnx'},
+    'ecc_posterior_meta': {'.json'},
 }
 log.info(f"DATA_DIR={DATA_DIR}")
 
@@ -2827,6 +2830,16 @@ def _refresh_auth_users() -> dict[str, dict[str, Any]]:
 AUTH_USERS = _refresh_auth_users()
 
 
+def _is_master_admin_account(username: str, account: dict[str, Any] | None) -> bool:
+    """Master admin = credencial principal vinda do ambiente."""
+    if not account:
+        return False
+    if not bool(account.get('is_admin')):
+        return False
+    source = str(account.get('source') or '')
+    return source == 'env_admin' and username == ADMIN_USER
+
+
 def _session_allowed_envs() -> set[str]:
     envs = session.get('allowed_envs') or []
     return _normalize_env_access(envs)
@@ -2836,6 +2849,10 @@ def _session_can_access(env_name: str) -> bool:
     if session.get('is_admin'):
         return True
     return env_name in _session_allowed_envs()
+
+
+def _session_is_master_admin() -> bool:
+    return bool(session.get('is_admin') and session.get('is_master_admin'))
 
 
 def _environment_for_request() -> str | None:
@@ -2894,6 +2911,7 @@ def _environment_for_request() -> str | None:
     bcs_eps = {
         'serve_ecc_media', 'ecc_analise', 'ecc_importar', 'api_ecc_upload_one',
         'api_ecc_recalculate_all', 'api_ecc_calibragem_apply', 'ecc_calibragem',
+        'ecc_modelos',
         'ecc_analise_rebanho', 'ecc_analise_individual',
         'ecc_pontos_atencao', 'ecc_pontos_atencao_pdf',
         'download_ecc_xlsx',
@@ -2960,6 +2978,7 @@ def inject_auth_flags():
     env_labels = [ENV_LABELS[e] for e in ('weather', 'perspicuus', 'angus', 'nelore', 'calves', 'bcs') if can_access(e)]
     return {
         'is_admin_user': is_admin,
+        'is_master_admin_user': _session_is_master_admin(),
         'can_access_env': can_access,
         'current_user_role': 'admin' if is_admin else (' | '.join(env_labels) if env_labels else 'restricted'),
     }
@@ -3632,6 +3651,18 @@ def admin_required(f):
     return decorated
 
 
+def master_admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('logged_in'):
+            return redirect(url_for('login', next=request.path))
+        if not _session_is_master_admin():
+            flash('Acesso restrito ao administrador master.', 'error')
+            return redirect(_first_allowed_endpoint())
+        return f(*args, **kwargs)
+    return decorated
+
+
 def api_auth(f):
     """Autenticação por X-API-Key ou ?key= (dispensada se API_KEY não configurada)"""
     @wraps(f)
@@ -3659,6 +3690,7 @@ def login():
             session['logged_in'] = True
             session['username']  = user
             session['is_admin'] = bool(account.get('is_admin'))
+            session['is_master_admin'] = _is_master_admin_account(user, account)
             session['allowed_envs'] = sorted(list(account.get('envs') or []))
 
             next_url = request.args.get('next') or (url_for('index') if session.get('is_admin') else _first_allowed_endpoint())
@@ -7099,6 +7131,111 @@ def ecc_importar():
         farm_filter=farm_filter, animal_filter=animal_filter, q_filter=q,
         stats=stats,
         ecc_today_iso=datetime.now(TZ_BR).date().isoformat(),
+    )
+
+
+@app.route('/ecc/modelos', methods=['GET', 'POST'])
+@login_required
+@master_admin_required
+def ecc_modelos():
+    from perspicuus_inference import (
+        get_models_dir,
+        load_registry,
+        save_registry,
+        reset_engine,
+        resolve_model_path,
+        model_path_source,
+        ROLE_TO_ENV,
+        get_engine,
+    )
+
+    roles = ['ecc_yolo', 'ecc_posterior', 'ecc_posterior_meta']
+    role_labels = {
+        'ecc_yolo': 'ECC YOLO (detecção / crop)',
+        'ecc_posterior': 'ECC iudicium — vista posterior',
+        'ecc_posterior_meta': 'ECC metadata JSON — posterior',
+    }
+    if request.method == 'POST':
+        action = request.form.get('action', 'upload')
+        role = request.form.get('role', '').strip()
+        if role not in roles or role not in ROLE_TO_ENV:
+            flash('Função inválida.', 'error')
+            return redirect(url_for('ecc_modelos'))
+        if action == 'clear':
+            _clear_perspicuus_model_slot(role)
+            reset_engine('ecc')
+            flash(
+                'Registo ECC removido do registry.json e ficheiro apagado da pasta ml_models (se existia). '
+                'Se uma variável ECC_* estiver definida, ela continua com prioridade.',
+                'success',
+            )
+            return redirect(url_for('ecc_modelos'))
+
+        file = request.files.get('file')
+        if not file or not file.filename:
+            flash('Selecione um ficheiro.', 'error')
+            return redirect(url_for('ecc_modelos'))
+        cl = request.content_length
+        if cl is not None and cl > MAX_MODEL_UPLOAD_BYTES:
+            flash(
+                f'Ficheiro demasiado grande (máx. {MAX_MODEL_UPLOAD_BYTES // (1024 * 1024)} MB).',
+                'error',
+            )
+            return redirect(url_for('ecc_modelos'))
+        ext = os.path.splitext(file.filename)[1].lower()
+        allow = PERSPICUUS_MODEL_ROLE_EXT.get(role, set())
+        if ext not in allow:
+            flash('Extensão inválida para esta função (permitido: ' + ', '.join(sorted(allow)) + ').', 'error')
+            return redirect(url_for('ecc_modelos'))
+        fname = secure_filename(file.filename)
+        if not fname:
+            flash('Nome de ficheiro inválido.', 'error')
+            return redirect(url_for('ecc_modelos'))
+        models_dir = get_models_dir()
+        dest = os.path.join(models_dir, fname)
+        reg = load_registry()
+        old_fn = reg.get(role)
+        try:
+            file.save(dest)
+        except OSError as e:
+            log.warning('Upload modelo ECC: %s', e)
+            flash(f'Erro ao gravar ficheiro: {e}', 'error')
+            return redirect(url_for('ecc_modelos'))
+        save_registry({role: fname})
+        if old_fn and os.path.basename(str(old_fn)) != fname:
+            old_fp = os.path.join(models_dir, os.path.basename(str(old_fn)))
+            abd = os.path.abspath(models_dir) + os.sep
+            if old_fp.startswith(abd) and os.path.isfile(old_fp):
+                try:
+                    os.remove(old_fp)
+                except OSError:
+                    pass
+        reset_engine('ecc')
+        flash(f'Modelo ECC guardado: {fname}. Sessões ONNX serão recarregadas na próxima inferência.', 'success')
+        return redirect(url_for('ecc_modelos'))
+
+    reg = load_registry()
+    slots = []
+    for role in roles:
+        p = resolve_model_path(role)
+        src = model_path_source(role)
+        sz = os.path.getsize(p) if p and os.path.isfile(p) else None
+        slots.append({
+            'role': role,
+            'env_var': ROLE_TO_ENV[role],
+            'source': src,
+            'path': p,
+            'size': sz,
+            'registry_name': reg.get(role),
+        })
+    return render_template(
+        'ecc_modelos.html',
+        slots=slots,
+        max_mb=MAX_MODEL_UPLOAD_BYTES // (1024 * 1024),
+        ml_models_dir=ML_MODELS_DIR,
+        inference_engine_ready=get_engine('ecc').is_ready(),
+        role_ext=PERSPICUUS_MODEL_ROLE_EXT,
+        role_labels=role_labels,
     )
 
 
