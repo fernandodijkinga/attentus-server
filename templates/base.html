@@ -438,9 +438,9 @@ select { cursor: pointer; }
     {% endif %}
 
     {% if can_access_env('perspicuus') %}
-    <div class="nav-section">Perspicuus</div>
+    <div class="nav-section">Perspicuus Brete</div>
     <a href="{{ url_for('perspicuus') }}"  class="nav-link {% if request.endpoint in ['perspicuus', 'perspicuus_animais', 'perspicuus_animais_individuo', 'perspicuus_inferencias', 'perspicuus_modelos', 'perspicuus_analise_rebanho'] %}active{% endif %}">
-      <span class="icon">🧠</span> Perspicuus
+      <span class="icon">🧠</span> Brete
     </a>
     <a href="{{ url_for('perspicuus_animais') }}" class="nav-link nav-sub {% if request.endpoint in ['perspicuus_animais', 'perspicuus_animais_individuo'] %}active{% endif %}">
       <span class="icon">•</span> Animais
@@ -454,6 +454,36 @@ select { cursor: pointer; }
     <a href="{{ url_for('perspicuus_modelos') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_modelos' %}active{% endif %}">
       <span class="icon">•</span> Modelos
     </a>
+    {% endif %}
+
+    {% if can_access_env('holandes') %}
+    <div class="nav-section">Perspicuus Holandês</div>
+    <a href="{{ url_for('perspicuus_holandes_importar') }}" class="nav-link {% if request.endpoint in ['perspicuus_holandes_importar', 'perspicuus_holandes_analise_individual', 'perspicuus_holandes_analise_populacao', 'perspicuus_holandes_analise_lotes', 'perspicuus_holandes_dataset', 'perspicuus_holandes_calibragem', 'perspicuus_holandes_modelos'] %}active{% endif %}">
+      <span class="icon">🐄</span> Holandês
+    </a>
+    <a href="{{ url_for('perspicuus_holandes_importar') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_holandes_importar' %}active{% endif %}">
+      <span class="icon">•</span> importar
+    </a>
+    <a href="{{ url_for('perspicuus_holandes_analise_individual') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_holandes_analise_individual' %}active{% endif %}">
+      <span class="icon">•</span> análise individual
+    </a>
+    <a href="{{ url_for('perspicuus_holandes_analise_populacao') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_holandes_analise_populacao' %}active{% endif %}">
+      <span class="icon">•</span> análise população
+    </a>
+    <a href="{{ url_for('perspicuus_holandes_analise_lotes') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_holandes_analise_lotes' %}active{% endif %}">
+      <span class="icon">•</span> análise lotes
+    </a>
+    <a href="{{ url_for('perspicuus_holandes_dataset') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_holandes_dataset' %}active{% endif %}">
+      <span class="icon">•</span> dataset
+    </a>
+    <a href="{{ url_for('perspicuus_holandes_calibragem') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_holandes_calibragem' %}active{% endif %}">
+      <span class="icon">•</span> calibragem
+    </a>
+    {% if is_admin_user %}
+    <a href="{{ url_for('perspicuus_holandes_modelos') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_holandes_modelos' %}active{% endif %}">
+      <span class="icon">•</span> modelos IA
+    </a>
+    {% endif %}
     {% endif %}
 
     {% if can_access_env('angus') %}
@@ -546,7 +576,7 @@ select { cursor: pointer; }
     {% endif %}
     {% endif %}
 
-    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') or can_access_env('angus') or can_access_env('nelore') or can_access_env('bcs') %}
+    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') or can_access_env('holandes') or can_access_env('angus') or can_access_env('nelore') or can_access_env('bcs') %}
     <div class="nav-section">Dados</div>
     {% endif %}
     {% if can_access_env('weather') %}
@@ -564,13 +594,18 @@ select { cursor: pointer; }
       <span class="icon">◆</span> Perspicuus DB
     </a>
     {% endif %}
+    {% if can_access_env('holandes') %}
+    <a href="{{ url_for('perspicuus_holandes_dataset') }}" class="nav-link {% if request.endpoint == 'perspicuus_holandes_dataset' %}active{% endif %}">
+      <span class="icon">◆</span> Holandês DB
+    </a>
+    {% endif %}
     {% if can_access_env('bcs') %}
     <a href="{{ url_for('database', tab='ecc') }}" class="nav-link {% if request.endpoint == 'database' and request.args.get('tab')=='ecc' %}active{% endif %}">
       <span class="icon">◈</span> BCS DB
     </a>
     {% endif %}
 
-    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') or can_access_env('angus') or can_access_env('nelore') or can_access_env('bcs') %}
+    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') or can_access_env('holandes') or can_access_env('angus') or can_access_env('nelore') or can_access_env('bcs') %}
     <div class="nav-section">Export</div>
     {% endif %}
     {% if can_access_env('weather') %}

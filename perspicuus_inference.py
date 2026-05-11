@@ -66,6 +66,11 @@ ROLE_TO_ENV: Dict[str, str] = {
     "nelore_yolo": "NELORE_YOLO_ONNX",
     "nelore_lateral": "NELORE_LATERAL_ONNX",
     "nelore_lateral_meta": "NELORE_LATERAL_METADATA_JSON",
+    "holandes_yolo": "HOLANDES_YOLO_ONNX",
+    "holandes_lateral": "HOLANDES_LATERAL_ONNX",
+    "holandes_posterior": "HOLANDES_POSTERIOR_ONNX",
+    "holandes_lateral_meta": "HOLANDES_LATERAL_METADATA_JSON",
+    "holandes_posterior_meta": "HOLANDES_POSTERIOR_METADATA_JSON",
     "ecc_yolo": "ECC_YOLO_ONNX",
     "ecc_posterior": "ECC_POSTERIOR_ONNX",
     "ecc_posterior_meta": "ECC_POSTERIOR_METADATA_JSON",
@@ -489,6 +494,8 @@ def get_engine(kind: str = "default") -> PerspicuusInferenceEngine:
         eng = PerspicuusInferenceEngine(role_prefix="angus", views=("lateral",))
     elif k == "nelore":
         eng = PerspicuusInferenceEngine(role_prefix="nelore", views=("lateral",))
+    elif k == "holandes":
+        eng = PerspicuusInferenceEngine(role_prefix="holandes", views=("lateral", "posterior"))
     elif k == "ecc":
         eng = PerspicuusInferenceEngine(role_prefix="ecc", views=("posterior",))
     else:

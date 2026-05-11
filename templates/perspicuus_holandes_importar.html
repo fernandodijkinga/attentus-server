@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}Perspicuus Holandês - importar{% endblock %}
+{% block head %}
+<style>
+.grid-2a{display:grid;grid-template-columns:1fr 1fr;gap:16px}.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:980px){.grid-2a,.row2{grid-template-columns:1fr}}
+.thumb{width:68px;height:52px;object-fit:cover;border:1px solid var(--border);border-radius:6px;cursor:zoom-in}
+.pose-thumbs{display:flex;gap:6px;align-items:center}
+.batch-progress-wrap{margin-top:12px;display:none}
+.batch-progress-wrap.visible{display:block}
+.batch-progress-track{height:10px;border-radius:999px;background:var(--surf2);border:1px solid var(--border);overflow:hidden}
+.batch-progress-bar{height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--accent));transition:width .2s ease}
+.batch-progress-meta{font-family:var(--mono);font-size:11px;color:var(--text2);margin-top:6px}
+.batch-log{max-height:140px;overflow-y:auto;margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-family:var(--mono);font-size:10px;line-height:1.45}
+.batch-log .ok{color:var(--accent)}
+.batch-log .err{color:var(--err)}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">🐄 <span>Perspicuus</span> <span style="color:var(--accent)">Holandês importar</span></div>
+    <div class="page-sub">Duas poses por animal · imagem lateral + imagem posterior</div>
+  </div>
+  <div class="flex gap-8">
+    <span class="pill pill-blue">{{ stats.total_records }} registros</span>
+    <span class="pill pill-green">{{ stats.with_score }} com score</span>
+    <span class="pill pill-orange">{{ stats.lots }} lotes</span>
+  </div>
+</div>
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}{% for category, message in messages %}
+<div class="bcs-flash {{ category }}">{{ message }}</div>
+{% endfor %}{% endif %}
+{% endwith %}
+
+<div class="grid-2a">
+  <div class="card">
+    <div class="card-title">Upload individual (lateral + posterior)</div>
+    <form method="post" enctype="multipart/form-data">
+      <div class="row2">
+        <div class="field"><label>Fazenda</label><input name="farm_id" required></div>
+        <div class="field"><label>Lote</label><input name="lot_id" placeholder="opcional"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Data</label><input type="date" name="inference_date" value="{{ today_iso }}" required></div>
+        <div class="field"><label>Brinco</label><input name="animal_tag" required></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Nascimento</label><input type="date" name="birth_date"></div>
+        <div class="field"><label>Sexo</label><select name="sex"><option value="">não informado</option><option value="f">fêmea (f)</option><option value="m">macho (m)</option></select></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Imagem lateral</label><input type="file" name="image_lateral" accept="image/*" required></div>
+        <div class="field"><label>Imagem posterior</label><input type="file" name="image_posterior" accept="image/*" required></div>
+      </div>
+      <button class="btn btn-accent btn-sm" type="submit">Inferir e guardar</button>
+    </form>
+  </div>
+  <div class="card">
+    <div class="card-title">Upload lote pareado</div>
+    <p class="page-sub" style="margin:0 0 10px;font-size:12px">Selecione laterais e posteriores. Os pares são montados pelo nome do arquivo após remover sufixos como <span class="mono">_lateral</span> e <span class="mono">_posterior</span>.</p>
+    <form id="form-holandes-batch" method="post" enctype="multipart/form-data">
+      <div class="row2">
+        <div class="field"><label>Fazenda</label><input id="hol_batch_farm" required></div>
+        <div class="field"><label>Lote</label><input id="hol_batch_lot" placeholder="opcional"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Data</label><input type="date" id="hol_batch_date" value="{{ today_iso }}" required></div>
+        <div class="field"><label>Nascimento (aplica ao lote)</label><input type="date" id="hol_batch_birth"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Sexo (aplica ao lote)</label><select id="hol_batch_sex"><option value="">não informado</option><option value="f">fêmea (f)</option><option value="m">macho (m)</option></select></div>
+        <div class="field"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Arquivos laterais</label><input type="file" id="hol_batch_lateral" multiple accept=".jpg,.jpeg,.png,.webp" required></div>
+        <div class="field"><label>Arquivos posteriores</label><input type="file" id="hol_batch_posterior" multiple accept=".jpg,.jpeg,.png,.webp" required></div>
+      </div>
+      <button class="btn btn-accent btn-sm" type="submit" id="btn-hol-batch">Processar lote pareado</button>
+    </form>
+    <div id="hol-batch-progress" class="batch-progress-wrap" aria-live="polite">
+      <div class="batch-progress-track"><div id="hol-batch-progress-bar" class="batch-progress-bar"></div></div>
+      <div id="hol-batch-progress-meta" class="batch-progress-meta"></div>
+      <div id="hol-batch-log" class="batch-log"></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Últimos registros Holandês</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Data</th><th>Fazenda</th><th>Lote</th><th>Brinco</th><th>Raw</th><th>Escore lote</th><th>Escore global</th><th>Imagens</th><th>Status</th><th>Atalho</th></tr></thead>
+      <tbody>
+      {% for r in records %}
+      <tr>
+        <td class="mono">{{ r.inference_date }}</td><td>{{ r.farm_id }}</td><td>{{ r.lot_id or '—' }}</td><td class="mono">{{ r.animal_tag }}</td>
+        <td class="mono">{{ '%.4f'|format(r.raw_score) if r.raw_score is not none else '—' }}</td>
+        <td class="mono">{{ '%g'|format(r.score_lot) if r.score_lot is not none else '—' }}</td>
+        <td class="mono">{{ '%g'|format(r.score_global) if r.score_global is not none else (('%g'|format(r.score_1_9)) if r.score_1_9 is not none else '—') }}</td>
+        <td><div class="pose-thumbs">
+          {% if r.thumb_path or r.image_path %}<img class="thumb" title="lateral" src="{{ r.thumb_path or r.image_path }}" onclick="window.open('{{ r.bbox_path or r.image_path }}')">{% endif %}
+          {% if r.posterior_thumb_path or r.posterior_image_path %}<img class="thumb" title="posterior" src="{{ r.posterior_thumb_path or r.posterior_image_path }}" onclick="window.open('{{ r.posterior_bbox_path or r.posterior_image_path }}')">{% endif %}
+          {% if not (r.thumb_path or r.image_path or r.posterior_thumb_path or r.posterior_image_path) %}—{% endif %}
+        </div></td>
+        <td class="mono">{{ r.error_text or 'ok' }}</td>
+        <td><a class="btn btn-ghost btn-sm" href="{{ url_for('perspicuus_holandes_analise_individual', farm=r.farm_id, lot=r.lot_id, animal=r.animal_tag) }}">Animal</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="10"><div class="empty-state"><div class="icon">📷</div>Sem registros ainda.</div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const form = document.getElementById('form-holandes-batch');
+  const btn = document.getElementById('btn-hol-batch');
+  const wrap = document.getElementById('hol-batch-progress');
+  const bar = document.getElementById('hol-batch-progress-bar');
+  const meta = document.getElementById('hol-batch-progress-meta');
+  const logEl = document.getElementById('hol-batch-log');
+  const apiUrl = {{ url_for('api_perspicuus_holandes_importar_lote_item') | tojson }};
+  if (!form) return;
+
+  function keyFor(file) {
+    const base = (file.name || '').replace(/\.[^.]+$/, '').toLowerCase();
+    return base
+      .replace(/(?:^|[_\-\s])(lateral|lat|lado)$/i, '')
+      .replace(/(?:^|[_\-\s])(posterior|post|traseira)$/i, '')
+      .replace(/[_\-\s]+$/g, '')
+      .trim();
+  }
+
+  function mapFiles(inputId) {
+    const out = new Map();
+    Array.from(document.getElementById(inputId)?.files || []).forEach((f) => {
+      const k = keyFor(f);
+      if (k) out.set(k, f);
+    });
+    return out;
+  }
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const farm = (document.getElementById('hol_batch_farm') || {}).value.trim();
+    const lot = (document.getElementById('hol_batch_lot') || {}).value.trim();
+    const date = (document.getElementById('hol_batch_date') || {}).value.trim();
+    const birth = (document.getElementById('hol_batch_birth') || {}).value.trim();
+    const sex = (document.getElementById('hol_batch_sex') || {}).value.trim();
+    if (!farm || !date) { toast('Informe fazenda e data do lote.', false); return; }
+    const laterals = mapFiles('hol_batch_lateral');
+    const posteriors = mapFiles('hol_batch_posterior');
+    const pairs = Array.from(laterals.entries()).filter(([k]) => posteriors.has(k));
+    if (!pairs.length) { toast('Nenhum par lateral/posterior encontrado pelos nomes.', false); return; }
+
+    btn.disabled = true;
+    wrap.classList.add('visible');
+    bar.style.width = '0%';
+    logEl.innerHTML = '';
+    let nOk = 0;
+    let nErr = 0;
+    const total = pairs.length;
+    for (let i = 0; i < total; i++) {
+      const [tag, latFile] = pairs[i];
+      const postFile = posteriors.get(tag);
+      meta.textContent = 'A processar ' + (i + 1) + ' / ' + total + ' — ' + tag;
+      const fd = new FormData();
+      fd.append('farm_id', farm);
+      fd.append('lot_id', lot);
+      fd.append('inference_date', date);
+      fd.append('animal_tag', tag);
+      if (birth) fd.append('birth_date', birth);
+      if (sex) fd.append('sex', sex);
+      fd.append('image_lateral', latFile, latFile.name);
+      fd.append('image_posterior', postFile, postFile.name);
+      try {
+        const r = await fetch(apiUrl, { method: 'POST', body: fd, credentials: 'same-origin' });
+        const j = await r.json().catch(() => ({}));
+        const line = document.createElement('div');
+        if (r.ok && j.ok) {
+          nOk += 1;
+          line.className = 'ok';
+          line.textContent = '✓ ' + tag;
+        } else {
+          nErr += 1;
+          line.className = 'err';
+          line.textContent = '✗ ' + tag + ' — ' + (j.error || ('HTTP ' + r.status));
+        }
+        logEl.appendChild(line);
+      } catch (err) {
+        nErr += 1;
+        const line = document.createElement('div');
+        line.className = 'err';
+        line.textContent = '✗ ' + tag + ' — rede';
+        logEl.appendChild(line);
+      }
+      bar.style.width = (((i + 1) / total) * 100).toFixed(1) + '%';
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    meta.textContent = 'Concluído: ' + nOk + ' ok · ' + nErr + ' erro(s) · ' + total + ' par(es)';
+    btn.disabled = false;
+    toast('Holandês: ' + nOk + ' guardado(s), ' + nErr + ' erro(s).', nErr === 0);
+    if (nOk) window.location.reload();
+  });
+})();
+</script>
+{% endblock %}

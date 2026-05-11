@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_perspicuus_layout.html" import persp_styles, persp_tabs %}
-{% block title %}Perspicuus — eventos{% endblock %}
+{% block title %}Perspicuus Brete — eventos{% endblock %}
 
 {% block head %}
 {{ persp_styles() }}
@@ -115,7 +115,7 @@
   <div class="persp-hero-top">
     <div>
       <div class="persp-hero-eyebrow">Brete inteligente · ingestão</div>
-      <div class="persp-hero-title">Eventos do brete <em>Perspicuus</em></div>
+      <div class="persp-hero-title">Eventos do <em>Perspicuus Brete</em></div>
       <div class="persp-hero-sub">RFID e pacotes de imagens (frontal, lateral, posterior, superior) capturados em cada passagem. Inferência morfológica MK1 disparada por evento.</div>
     </div>
     <form class="persp-filter-row" method="get" action="{{ url_for('perspicuus') }}">
@@ -343,7 +343,7 @@
       {% else %}
       <div class="persp-empty">
         <div class="icon">🧠</div>
-        Nenhum evento Perspicuus encontrado para o filtro atual.
+        Nenhum evento Perspicuus Brete encontrado para o filtro atual.
       </div>
       {% endfor %}
     </div>

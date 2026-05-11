@@ -132,6 +132,11 @@ PERSPICUUS_MODEL_ROLE_EXT = {
     'nelore_yolo': {'.onnx'},
     'nelore_lateral': {'.onnx'},
     'nelore_lateral_meta': {'.json'},
+    'holandes_yolo': {'.onnx'},
+    'holandes_lateral': {'.onnx'},
+    'holandes_posterior': {'.onnx'},
+    'holandes_lateral_meta': {'.json'},
+    'holandes_posterior_meta': {'.json'},
     'ecc_yolo': {'.onnx'},
     'ecc_posterior': {'.onnx'},
     'ecc_posterior_meta': {'.json'},
@@ -141,10 +146,11 @@ log.info(f"DATA_DIR={DATA_DIR}")
 # Autenticação de usuário web
 ADMIN_USER      = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS_HASH = generate_password_hash(os.environ.get('ADMIN_PASS', 'attentus2024'))
-ALL_ENVIRONMENTS = {'weather', 'perspicuus', 'angus', 'nelore', 'calves', 'bcs'}
+ALL_ENVIRONMENTS = {'weather', 'perspicuus', 'holandes', 'angus', 'nelore', 'calves', 'bcs'}
 ENV_LABELS = {
     'weather': 'Attentus Weather',
-    'perspicuus': 'Perspicuus',
+    'perspicuus': 'Perspicuus Brete',
+    'holandes': 'Perspicuus Holandês',
     'angus': 'Perspicuus Angus',
     'nelore': 'Perspicuus Nelore',
     'calves': 'Attentus Calves',
@@ -168,6 +174,9 @@ os.makedirs(ANGUS_UPLOADS_DIR, exist_ok=True)
 NELORE_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
 NELORE_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'perspicuus_nelore')
 os.makedirs(NELORE_UPLOADS_DIR, exist_ok=True)
+HOLANDES_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
+HOLANDES_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'perspicuus_holandes')
+os.makedirs(HOLANDES_UPLOADS_DIR, exist_ok=True)
 
 ECC_RECALC_JOBS: dict[str, dict[str, Any]] = {}
 ECC_RECALC_JOBS_LOCK = threading.Lock()
@@ -175,14 +184,17 @@ ECC_RECALC_JOBS_LOCK = threading.Lock()
 PERSPICUUS_BREED_TABLE = {
     'angus': 'perspicuus_angus_records',
     'nelore': 'perspicuus_nelore_records',
+    'holandes': 'perspicuus_holandes_records',
 }
 PERSPICUUS_CAL_TABLE = {
     'angus': 'perspicuus_angus_calibration',
     'nelore': 'perspicuus_nelore_calibration',
+    'holandes': 'perspicuus_holandes_calibration',
 }
 PERSPICUUS_FIXED_EFFECTS = {
     'angus': ('', 'farm', 'birth_year', 'sex'),
     'nelore': ('', 'farm', 'lot', 'birth_year', 'sex'),
+    'holandes': ('', 'farm', 'lot', 'birth_year', 'sex'),
 }
 PERSPICUUS_FIXED_EFFECT_LABELS = {
     '': 'Nenhum (sem ajuste)',
@@ -2753,6 +2765,7 @@ def _build_auth_users() -> dict[str, dict[str, Any]]:
     env_shortcuts = {
         'weather': ('WEATHER_USER', 'WEATHER_PASS'),
         'perspicuus': ('PERSPICUUS_USER', 'PERSPICUUS_PASS'),
+        'holandes': ('HOLANDES_USER', 'HOLANDES_PASS'),
         'angus': ('ANGUS_USER', 'ANGUS_PASS'),
         'nelore': ('NELORE_USER', 'NELORE_PASS'),
         'calves': ('CALVES_USER', 'CALVES_PASS'),
@@ -2895,6 +2908,15 @@ def _environment_for_request() -> str | None:
         'patch_perspicuus_angus_record',
         'perspicuus_angus_calibragem', 'api_perspicuus_angus_calibragem_apply',
     }
+    holandes_eps = {
+        'perspicuus_holandes_importar', 'perspicuus_holandes_analise_individual',
+        'perspicuus_holandes_analise_populacao', 'perspicuus_holandes_analise_lotes',
+        'perspicuus_holandes_modelos',
+        'perspicuus_holandes_dataset', 'serve_perspicuus_holandes_media',
+        'api_perspicuus_holandes_importar_lote_item',
+        'patch_perspicuus_holandes_record', 'delete_perspicuus_holandes_record',
+        'perspicuus_holandes_calibragem', 'api_perspicuus_holandes_calibragem_apply',
+    }
     nelore_eps = {
         'perspicuus_nelore_importar', 'perspicuus_nelore_analise_individual',
         'perspicuus_nelore_analise_populacao', 'perspicuus_nelore_analise_lotes',
@@ -2925,6 +2947,8 @@ def _environment_for_request() -> str | None:
         return 'perspicuus'
     if ep in angus_eps:
         return 'angus'
+    if ep in holandes_eps:
+        return 'holandes'
     if ep in nelore_eps:
         return 'nelore'
     if ep in bcs_eps:
@@ -2937,6 +2961,8 @@ def _first_allowed_endpoint() -> str:
         return url_for('weather')
     if _session_can_access('perspicuus'):
         return url_for('perspicuus')
+    if _session_can_access('holandes'):
+        return url_for('perspicuus_holandes_importar')
     if _session_can_access('angus'):
         return url_for('perspicuus_angus_importar')
     if _session_can_access('nelore'):
@@ -2975,7 +3001,7 @@ def inject_auth_flags():
     def can_access(env_name: str) -> bool:
         return is_admin or env_name in allowed
 
-    env_labels = [ENV_LABELS[e] for e in ('weather', 'perspicuus', 'angus', 'nelore', 'calves', 'bcs') if can_access(e)]
+    env_labels = [ENV_LABELS[e] for e in ('weather', 'perspicuus', 'holandes', 'angus', 'nelore', 'calves', 'bcs') if can_access(e)]
     return {
         'is_admin_user': is_admin,
         'is_master_admin_user': _session_is_master_admin(),
@@ -3418,6 +3444,31 @@ def init_db():
         meta_json      TEXT    NOT NULL DEFAULT '{}',
         error_text     TEXT
     );
+    CREATE TABLE IF NOT EXISTS perspicuus_holandes_records (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at           TEXT    NOT NULL,
+        farm_id              TEXT    NOT NULL,
+        lot_id               TEXT    NOT NULL DEFAULT '',
+        birth_date           TEXT    NOT NULL DEFAULT '',
+        sex                  TEXT    NOT NULL DEFAULT '',
+        inference_date       TEXT    NOT NULL,
+        animal_tag           TEXT    NOT NULL,
+        filename             TEXT    NOT NULL,
+        image_path           TEXT    NOT NULL,
+        thumb_path           TEXT    DEFAULT '',
+        bbox_path            TEXT    DEFAULT '',
+        posterior_filename   TEXT    NOT NULL DEFAULT '',
+        posterior_image_path TEXT    NOT NULL DEFAULT '',
+        posterior_thumb_path TEXT    DEFAULT '',
+        posterior_bbox_path  TEXT    DEFAULT '',
+        raw_score            REAL,
+        score_lot            REAL,
+        score_global         REAL,
+        score_1_9            REAL,
+        traits_json          TEXT    NOT NULL DEFAULT '{}',
+        meta_json            TEXT    NOT NULL DEFAULT '{}',
+        error_text           TEXT
+    );
     CREATE TABLE IF NOT EXISTS perspicuus_angus_calibration (
         id            INTEGER PRIMARY KEY CHECK (id = 1),
         raw_min       REAL    NOT NULL DEFAULT -4.0,
@@ -3430,6 +3481,17 @@ def init_db():
         updated_by    TEXT    NOT NULL DEFAULT 'system'
     );
     CREATE TABLE IF NOT EXISTS perspicuus_nelore_calibration (
+        id            INTEGER PRIMARY KEY CHECK (id = 1),
+        raw_min       REAL    NOT NULL DEFAULT -4.0,
+        raw_max       REAL    NOT NULL DEFAULT 4.0,
+        res_min       REAL    NOT NULL DEFAULT 1.0,
+        res_max       REAL    NOT NULL DEFAULT 6.0,
+        step          REAL    NOT NULL DEFAULT 0.5,
+        fixed_effect  TEXT    NOT NULL DEFAULT '',
+        updated_at    TEXT    NOT NULL,
+        updated_by    TEXT    NOT NULL DEFAULT 'system'
+    );
+    CREATE TABLE IF NOT EXISTS perspicuus_holandes_calibration (
         id            INTEGER PRIMARY KEY CHECK (id = 1),
         raw_min       REAL    NOT NULL DEFAULT -4.0,
         raw_max       REAL    NOT NULL DEFAULT 4.0,
@@ -3456,6 +3518,9 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_nelore_farm_date   ON perspicuus_nelore_records(farm_id, inference_date);
     CREATE INDEX IF NOT EXISTS idx_nelore_lot_date    ON perspicuus_nelore_records(lot_id, inference_date);
     CREATE INDEX IF NOT EXISTS idx_nelore_animal_date ON perspicuus_nelore_records(farm_id, animal_tag, inference_date);
+    CREATE INDEX IF NOT EXISTS idx_holandes_farm_date   ON perspicuus_holandes_records(farm_id, inference_date);
+    CREATE INDEX IF NOT EXISTS idx_holandes_lot_date    ON perspicuus_holandes_records(lot_id, inference_date);
+    CREATE INDEX IF NOT EXISTS idx_holandes_animal_date ON perspicuus_holandes_records(farm_id, animal_tag, inference_date);
     """)
     db.commit()
     try:
@@ -3543,7 +3608,7 @@ def init_db():
     except sqlite3.OperationalError as e:
         log.warning("Migração ecc calibration: %s", e)
     try:
-        for tname in ('perspicuus_angus_calibration', 'perspicuus_nelore_calibration'):
+        for tname in ('perspicuus_angus_calibration', 'perspicuus_nelore_calibration', 'perspicuus_holandes_calibration'):
             row = db.execute(f"SELECT id FROM {tname} WHERE id = 1").fetchone()
             if not row:
                 db.execute(
@@ -3557,7 +3622,7 @@ def init_db():
     except sqlite3.OperationalError as e:
         log.warning("Migração perspicuus calibration: %s", e)
     try:
-        for tname in ('perspicuus_angus_calibration', 'perspicuus_nelore_calibration'):
+        for tname in ('perspicuus_angus_calibration', 'perspicuus_nelore_calibration', 'perspicuus_holandes_calibration'):
             cur = db.execute(
                 f"UPDATE {tname} SET res_max = 6.0 WHERE id = 1 AND res_min = 1.0 AND res_max = 9.0 AND step = 0.5"
             )
@@ -3821,7 +3886,7 @@ def admin_users():
     return render_template(
         'admin_users.html',
         users=_user_rows_for_admin(),
-        env_order=['weather', 'perspicuus', 'angus', 'nelore', 'calves', 'bcs'],
+        env_order=['weather', 'perspicuus', 'holandes', 'angus', 'nelore', 'calves', 'bcs'],
         env_labels=ENV_LABELS,
     )
 
@@ -3911,6 +3976,7 @@ def calf_monitor():
 
 
 @app.route('/perspicuus')
+@app.route('/perspicuus-brete')
 @login_required
 def perspicuus():
     db = get_db()
@@ -6347,6 +6413,720 @@ def api_perspicuus_nelore_calibragem_apply():
     )
     cal = _perspicuus_get_calibration(db, 'nelore')
     info = _perspicuus_apply_calibration(db, 'nelore', cal, farm_id=farm, lot_id=lot)
+    db.commit()
+    return jsonify({
+        'status': 'ok',
+        'updated': info['updated'],
+        'groups': info['groups'],
+        'global_mean': info['global_mean'],
+        'raw_min_used': info.get('raw_min_used'),
+        'raw_max_used': info.get('raw_max_used'),
+        'farm_id_filter': farm or None,
+        'lot_id_filter': lot or None,
+        'calibration': cal,
+    })
+
+
+@app.route('/api/perspicuus-holandes/media/<farm>/<day>/<filename>')
+@login_required
+def serve_perspicuus_holandes_media(farm, day, filename):
+    base = os.path.abspath(os.path.join(HOLANDES_UPLOADS_DIR, ecc_safe_slug(farm), ecc_safe_slug(day)))
+    filepath = os.path.abspath(os.path.join(base, secure_filename(filename)))
+    if not filepath.startswith(base + os.sep) or not os.path.isfile(filepath):
+        abort(404)
+    return send_file(filepath)
+
+
+def _holandes_media_url(safe_farm: str, safe_day: str, filename: str) -> str:
+    return f"/api/perspicuus-holandes/media/{safe_farm}/{safe_day}/{filename}"
+
+
+def _holandes_parse_media_url(web_path: str) -> tuple[str, str, str] | None:
+    p = str(web_path or '').strip()
+    prefix = '/api/perspicuus-holandes/media/'
+    if not p.startswith(prefix):
+        return None
+    rest = p[len(prefix):].lstrip('/')
+    parts = rest.split('/', 2)
+    if len(parts) < 3:
+        return None
+    return parts[0], parts[1], parts[2]
+
+
+def _holandes_save_upload_file(fs, folder: str, safe_tag: str, view: str) -> tuple[bool, str, str]:
+    ext = os.path.splitext(fs.filename or '')[1].lower()
+    if ext not in HOLANDES_IMAGE_EXTS:
+        return False, '', f'Extensão inválida na imagem {view}: {ext or "?"}'
+    fname = secure_filename(fs.filename or f'{safe_tag}_{view}{ext}') or f'{safe_tag}_{view}_{int(datetime.utcnow().timestamp())}{ext}'
+    local_name = f"{safe_tag}_{view}_{int(datetime.utcnow().timestamp()*1000)}_{fname}"
+    dest = os.path.join(folder, local_name)
+    try:
+        fs.save(dest)
+    except OSError as e:
+        return False, '', f'Falha ao gravar imagem {view}: {e}'
+    return True, local_name, dest
+
+
+def _holandes_infer_view(
+    eng,
+    img_path: str,
+    view: str,
+    folder: str,
+    safe_farm: str,
+    safe_day: str,
+    local_name: str,
+) -> dict[str, Any]:
+    img = cv2.imread(img_path)
+    if img is None:
+        return {'traits': {}, 'raw_values': [], 'thumb_path': '', 'bbox_path': '', 'meta': {}, 'error': f'Falha ao abrir imagem {view}.'}
+    try:
+        out = eng.infer_bgr(img, view)
+        traits = out.get('traits') or {}
+        err = None
+    except Exception as e:  # noqa: BLE001
+        out = {}
+        traits = {}
+        err = str(e)
+
+    raw_values: list[float] = []
+    for v in (traits or {}).values():
+        try:
+            raw_values.append(float(v))
+        except (TypeError, ValueError):
+            continue
+
+    thumb_web = ''
+    bbox_web = ''
+    bbox = out.get('bbox') if isinstance(out, dict) else None
+    yconf = out.get('yolo_conf') if isinstance(out, dict) else None
+    if bbox:
+        thumb_name = f"thumb_{local_name}"
+        thumb_abs = os.path.join(folder, thumb_name)
+        if save_ecc_crop_thumbnail(img_path, bbox, thumb_abs, img=img):
+            thumb_web = _holandes_media_url(safe_farm, safe_day, thumb_name)
+        box_name = f"bbox_{local_name}"
+        box_abs = os.path.join(folder, box_name)
+        if save_ecc_bbox_overlay(img_path, bbox, box_abs, yolo_conf=yconf, img=img):
+            bbox_web = _holandes_media_url(safe_farm, safe_day, box_name)
+
+    return {
+        'traits': traits,
+        'raw_values': raw_values,
+        'thumb_path': thumb_web,
+        'bbox_path': bbox_web,
+        'meta': {'infer_ms': out.get('infer_ms'), 'bbox': out.get('bbox'), 'yolo_conf': out.get('yolo_conf')},
+        'error': err,
+    }
+
+
+def _holandes_save_pair(
+    db,
+    now_iso: str,
+    farm_id: str,
+    lot_id: str,
+    inference_date: str,
+    animal_tag: str,
+    fs_lateral,
+    fs_posterior,
+    birth_date: str = '',
+    sex: str = '',
+) -> tuple[bool, str]:
+    from perspicuus_inference import get_engine
+
+    if not fs_lateral or not fs_lateral.filename or not fs_posterior or not fs_posterior.filename:
+        return False, 'Informe imagem lateral e imagem posterior.'
+
+    eng = get_engine('holandes')
+    if not eng.is_ready() or not eng.onnx_path_for('lateral') or not eng.onnx_path_for('posterior'):
+        return False, 'Modelos Holandês não configurados (HOLANDES_YOLO_ONNX + lateral/posterior ONNX).'
+
+    safe_farm = ecc_safe_slug(farm_id, 'fazenda')
+    safe_day = ecc_safe_slug(inference_date.replace('-', ''), 'day')
+    safe_tag = ecc_safe_slug(animal_tag, 'animal')
+    folder = os.path.join(HOLANDES_UPLOADS_DIR, safe_farm, safe_day)
+    os.makedirs(folder, exist_ok=True)
+
+    ok_l, lateral_name, lateral_path = _holandes_save_upload_file(fs_lateral, folder, safe_tag, 'lateral')
+    if not ok_l:
+        return False, lateral_path
+    ok_p, posterior_name, posterior_path = _holandes_save_upload_file(fs_posterior, folder, safe_tag, 'posterior')
+    if not ok_p:
+        return False, posterior_path
+
+    lateral = _holandes_infer_view(eng, lateral_path, 'lateral', folder, safe_farm, safe_day, lateral_name)
+    posterior = _holandes_infer_view(eng, posterior_path, 'posterior', folder, safe_farm, safe_day, posterior_name)
+    raw_values = list(lateral.get('raw_values') or []) + list(posterior.get('raw_values') or [])
+    raw_score = round(sum(raw_values) / len(raw_values), 4) if raw_values else None
+
+    traits: dict[str, float] = {}
+    for view_name, view_out in (('lateral', lateral), ('posterior', posterior)):
+        for k, v in (view_out.get('traits') or {}).items():
+            try:
+                traits[f'{view_name}:{k}'] = float(v)
+            except (TypeError, ValueError):
+                continue
+
+    cal = _perspicuus_get_calibration(db, 'holandes')
+    cal = _perspicuus_cal_with_auto_bounds(db, 'holandes', cal, include_raw=raw_score)
+    cal_ver = _perspicuus_calibration_version('holandes', cal)
+    score_lot, score_global = _perspicuus_score_pair_for_record(
+        db, 'holandes', raw_score, farm_id, lot_id, cal, birth_date=birth_date, sex=sex
+    )
+    errors = [str(x.get('error')) for x in (lateral, posterior) if x.get('error')]
+    meta = {
+        'calibration_version': cal_ver,
+        'views': {
+            'lateral': lateral.get('meta') or {},
+            'posterior': posterior.get('meta') or {},
+        },
+    }
+    db.execute(
+        """
+        INSERT INTO perspicuus_holandes_records (
+            created_at, farm_id, lot_id, birth_date, sex, inference_date, animal_tag,
+            filename, image_path, thumb_path, bbox_path,
+            posterior_filename, posterior_image_path, posterior_thumb_path, posterior_bbox_path,
+            raw_score, score_lot, score_global, score_1_9, traits_json, meta_json, error_text
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            now_iso, farm_id, lot_id, birth_date, sex, inference_date, animal_tag,
+            fs_lateral.filename, _holandes_media_url(safe_farm, safe_day, lateral_name),
+            lateral.get('thumb_path') or '', lateral.get('bbox_path') or '',
+            fs_posterior.filename, _holandes_media_url(safe_farm, safe_day, posterior_name),
+            posterior.get('thumb_path') or '', posterior.get('bbox_path') or '',
+            raw_score, score_lot, score_global, score_global,
+            json.dumps(traits, ensure_ascii=False),
+            json.dumps(meta, ensure_ascii=False),
+            '; '.join(errors) if errors else None,
+        ),
+    )
+    return True, 'ok'
+
+
+def _holandes_dataset_where_params(
+    farm_filter: str = '',
+    lot_filter: str = '',
+    animal_filter: str = '',
+    q: str = '',
+) -> tuple[str, list[Any]]:
+    cond = ['1=1']
+    params: list[Any] = []
+    if farm_filter:
+        cond.append('farm_id = ?')
+        params.append(farm_filter)
+    if lot_filter:
+        cond.append('lot_id = ?')
+        params.append(lot_filter)
+    if animal_filter:
+        cond.append('animal_tag = ?')
+        params.append(animal_filter)
+    if q:
+        like = f'%{q}%'
+        cond.append('(farm_id LIKE ? OR lot_id LIKE ? OR animal_tag LIKE ? OR filename LIKE ? OR posterior_filename LIKE ?)')
+        params.extend([like, like, like, like, like])
+    return ' AND '.join(cond), params
+
+
+def _holandes_load_rows(
+    db,
+    farm_filter: str = '',
+    lot_filter: str = '',
+    animal_filter: str = '',
+    q: str = '',
+    limit: int = 3000,
+):
+    where, params = _holandes_dataset_where_params(farm_filter, lot_filter, animal_filter, q)
+    return db.execute(
+        f"SELECT * FROM perspicuus_holandes_records WHERE {where} ORDER BY inference_date DESC, id DESC LIMIT ?",
+        params + [limit],
+    ).fetchall()
+
+
+def _holandes_base_lists(db):
+    farms = [r[0] for r in db.execute("SELECT DISTINCT farm_id FROM perspicuus_holandes_records ORDER BY farm_id").fetchall()]
+    lots = [r[0] for r in db.execute("SELECT DISTINCT lot_id FROM perspicuus_holandes_records WHERE COALESCE(lot_id,'') <> '' ORDER BY lot_id").fetchall()]
+    animals = [r[0] for r in db.execute("SELECT DISTINCT animal_tag FROM perspicuus_holandes_records ORDER BY animal_tag").fetchall()]
+    stats = {
+        'total_records': db.execute("SELECT COUNT(*) FROM perspicuus_holandes_records").fetchone()[0],
+        'farms': db.execute("SELECT COUNT(DISTINCT farm_id) FROM perspicuus_holandes_records").fetchone()[0],
+        'lots': db.execute("SELECT COUNT(DISTINCT lot_id) FROM perspicuus_holandes_records WHERE COALESCE(lot_id,'') <> ''").fetchone()[0],
+        'animals': db.execute("SELECT COUNT(DISTINCT farm_id || '::' || animal_tag) FROM perspicuus_holandes_records").fetchone()[0],
+        'with_score': db.execute("SELECT COUNT(*) FROM perspicuus_holandes_records WHERE COALESCE(score_global, score_1_9) IS NOT NULL").fetchone()[0],
+    }
+    return farms, lots, animals, stats
+
+
+def _holandes_reinfer_record_by_id(db, rid: int) -> dict[str, Any]:
+    row = db.execute("SELECT * FROM perspicuus_holandes_records WHERE id = ?", (rid,)).fetchone()
+    if not row:
+        return {'ok': False, 'id': rid, 'error': 'not_found'}
+
+    lateral_parsed = _holandes_parse_media_url(row['image_path'] or '')
+    posterior_parsed = _holandes_parse_media_url(row['posterior_image_path'] or '')
+    if not lateral_parsed or not posterior_parsed:
+        db.execute(
+            "UPDATE perspicuus_holandes_records SET raw_score = NULL, score_lot = NULL, score_global = NULL, score_1_9 = NULL, traits_json = '{}', meta_json = '{}', error_text = ? WHERE id = ?",
+            ('image_path inválido', rid),
+        )
+        return {'ok': False, 'id': rid, 'error': 'bad_image_path'}
+    lf, ld, ln = lateral_parsed
+    pf, pd, pn = posterior_parsed
+    lateral_path = os.path.join(HOLANDES_UPLOADS_DIR, lf, ld, secure_filename(ln))
+    posterior_path = os.path.join(HOLANDES_UPLOADS_DIR, pf, pd, secure_filename(pn))
+    if not os.path.isfile(lateral_path) or not os.path.isfile(posterior_path):
+        db.execute(
+            "UPDATE perspicuus_holandes_records SET raw_score = NULL, score_lot = NULL, score_global = NULL, score_1_9 = NULL, traits_json = '{}', meta_json = '{}', error_text = ? WHERE id = ?",
+            ('imagem lateral ou posterior não encontrada no disco', rid),
+        )
+        return {'ok': False, 'id': rid, 'error': 'missing_image'}
+
+    from perspicuus_inference import get_engine
+    eng = get_engine('holandes')
+    if not eng.is_ready() or not eng.onnx_path_for('lateral') or not eng.onnx_path_for('posterior'):
+        return {'ok': False, 'id': rid, 'error': 'engine_not_ready'}
+
+    lateral = _holandes_infer_view(eng, lateral_path, 'lateral', os.path.dirname(lateral_path), lf, ld, secure_filename(ln))
+    posterior = _holandes_infer_view(eng, posterior_path, 'posterior', os.path.dirname(posterior_path), pf, pd, secure_filename(pn))
+    raw_values = list(lateral.get('raw_values') or []) + list(posterior.get('raw_values') or [])
+    raw_score = round(sum(raw_values) / len(raw_values), 4) if raw_values else None
+    traits: dict[str, float] = {}
+    for view_name, view_out in (('lateral', lateral), ('posterior', posterior)):
+        for k, v in (view_out.get('traits') or {}).items():
+            try:
+                traits[f'{view_name}:{k}'] = float(v)
+            except (TypeError, ValueError):
+                continue
+
+    cal = _perspicuus_get_calibration(db, 'holandes')
+    cal = _perspicuus_cal_with_auto_bounds(db, 'holandes', cal, include_raw=raw_score)
+    cal_ver = _perspicuus_calibration_version('holandes', cal)
+    score_lot, score_global = _perspicuus_score_pair_for_record(
+        db, 'holandes', raw_score, str(row['farm_id'] or ''), str(row['lot_id'] or ''), cal,
+        birth_date=str(row['birth_date'] or ''), sex=str(row['sex'] or '')
+    )
+    errors = [str(x.get('error')) for x in (lateral, posterior) if x.get('error')]
+    db.execute(
+        """
+        UPDATE perspicuus_holandes_records
+        SET raw_score = ?, score_lot = ?, score_global = ?, score_1_9 = ?,
+            thumb_path = ?, bbox_path = ?, posterior_thumb_path = ?, posterior_bbox_path = ?,
+            traits_json = ?, meta_json = ?, error_text = ?
+        WHERE id = ?
+        """,
+        (
+            raw_score, score_lot, score_global, score_global,
+            lateral.get('thumb_path') or '', lateral.get('bbox_path') or '',
+            posterior.get('thumb_path') or '', posterior.get('bbox_path') or '',
+            json.dumps(traits, ensure_ascii=False),
+            json.dumps({'calibration_version': cal_ver, 'views': {'lateral': lateral.get('meta') or {}, 'posterior': posterior.get('meta') or {}}}, ensure_ascii=False),
+            '; '.join(errors) if errors else None,
+            rid,
+        ),
+    )
+    return {'ok': not errors, 'id': rid, 'error': '; '.join(errors) if errors else None}
+
+
+@app.route('/perspicuus-holandes/importar', methods=['GET', 'POST'])
+@login_required
+def perspicuus_holandes_importar():
+    db = get_db()
+    now_iso = datetime.utcnow().isoformat() + 'Z'
+    if request.method == 'POST':
+        farm_id = str(request.form.get('farm_id', '')).strip()
+        lot_id = str(request.form.get('lot_id', '')).strip()
+        date_iso = ecc_parse_iso_day(request.form.get('inference_date', ''))
+        animal_tag = str(request.form.get('animal_tag', '')).strip()
+        birth_date = str(request.form.get('birth_date', '')).strip()
+        sex = str(request.form.get('sex', '')).strip().lower()
+        fs_lateral = request.files.get('image_lateral')
+        fs_posterior = request.files.get('image_posterior')
+        if not farm_id or not date_iso or not animal_tag or not fs_lateral or not fs_lateral.filename or not fs_posterior or not fs_posterior.filename:
+            flash('Informe fazenda, data, brinco, imagem lateral e imagem posterior.', 'error')
+            return redirect(url_for('perspicuus_holandes_importar'))
+        ok, msg = _holandes_save_pair(
+            db, now_iso, farm_id, lot_id, date_iso, animal_tag, fs_lateral, fs_posterior,
+            birth_date=birth_date, sex=sex,
+        )
+        if ok:
+            db.commit(); flash('Imagens lateral e posterior inferidas e guardadas.', 'success')
+        else:
+            db.rollback(); flash(msg, 'error')
+        return redirect(url_for('perspicuus_holandes_importar'))
+
+    farm_filter = str(request.args.get('farm', '')).strip()
+    lot_filter = str(request.args.get('lot', '')).strip()
+    animal_filter = str(request.args.get('animal', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    records = _holandes_load_rows(db, farm_filter, lot_filter, animal_filter, q, limit=500)
+    farms, lots, animals, stats = _holandes_base_lists(db)
+    return render_template(
+        'perspicuus_holandes_importar.html',
+        records=records[:120],
+        farms=farms,
+        lots=lots,
+        animals=animals,
+        farm_filter=farm_filter,
+        lot_filter=lot_filter,
+        animal_filter=animal_filter,
+        q_filter=q,
+        stats=stats,
+        today_iso=datetime.now(TZ_BR).date().isoformat(),
+    )
+
+
+@app.route('/api/perspicuus-holandes/importar-lote-item', methods=['POST'])
+@login_required
+def api_perspicuus_holandes_importar_lote_item():
+    db = get_db()
+    now_iso = datetime.utcnow().isoformat() + 'Z'
+    farm_id = str(request.form.get('farm_id', '')).strip()
+    lot_id = str(request.form.get('lot_id', '')).strip()
+    date_iso = ecc_parse_iso_day(request.form.get('inference_date', ''))
+    birth_date = str(request.form.get('birth_date', '')).strip()
+    sex = str(request.form.get('sex', '')).strip().lower()
+    animal_tag = str(request.form.get('animal_tag', '')).strip()
+    fs_lateral = request.files.get('image_lateral')
+    fs_posterior = request.files.get('image_posterior')
+    if not animal_tag and fs_lateral and fs_lateral.filename:
+        animal_tag = os.path.splitext(os.path.basename(fs_lateral.filename))[0].strip()
+    if not farm_id or not date_iso:
+        return jsonify({'ok': False, 'error': 'Informe fazenda e data.', 'animal_tag': animal_tag}), 400
+    if not animal_tag:
+        return jsonify({'ok': False, 'error': 'Brinco ausente: use nomes pareados por brinco.', 'animal_tag': ''}), 400
+    ok, msg = _holandes_save_pair(
+        db, now_iso, farm_id, lot_id, date_iso, animal_tag, fs_lateral, fs_posterior,
+        birth_date=birth_date, sex=sex,
+    )
+    if ok:
+        db.commit()
+        return jsonify({'ok': True, 'error': None, 'animal_tag': animal_tag})
+    db.rollback()
+    return jsonify({'ok': False, 'error': msg, 'animal_tag': animal_tag}), 400
+
+
+@app.route('/perspicuus-holandes/analise-individual')
+@login_required
+def perspicuus_holandes_analise_individual():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    lot_filter = str(request.args.get('lot', '')).strip()
+    animal_filter = str(request.args.get('animal', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    records = _holandes_load_rows(db, farm_filter, lot_filter, animal_filter, q, limit=3000)
+    farms, lots, animals, stats = _holandes_base_lists(db)
+    selected_farm = farm_filter or (farms[0] if farms else '')
+    selected_animal = animal_filter
+    if selected_farm and not selected_animal:
+        rr = db.execute(
+            """
+            SELECT animal_tag, MAX(inference_date) AS d
+            FROM perspicuus_holandes_records
+            WHERE farm_id = ? AND (? = '' OR lot_id = ?)
+            GROUP BY animal_tag
+            ORDER BY d DESC
+            LIMIT 1
+            """,
+            (selected_farm, lot_filter, lot_filter),
+        ).fetchone()
+        selected_animal = rr[0] if rr else ''
+    points = []
+    images = []
+    if selected_farm and selected_animal:
+        pr = db.execute(
+            """
+            SELECT id, inference_date, raw_score, score_lot, COALESCE(score_global, score_1_9) AS score_global
+            FROM perspicuus_holandes_records
+            WHERE farm_id = ? AND animal_tag = ? AND (? = '' OR lot_id = ?) AND COALESCE(score_global, score_lot, score_1_9) IS NOT NULL
+            ORDER BY inference_date ASC, id ASC
+            """,
+            (selected_farm, selected_animal, lot_filter, lot_filter),
+        ).fetchall()
+        points = [dict(x) for x in pr]
+        im = db.execute(
+            """
+            SELECT id, inference_date, farm_id, lot_id, birth_date, sex, filename, image_path, thumb_path, bbox_path,
+                   posterior_filename, posterior_image_path, posterior_thumb_path, posterior_bbox_path,
+                   raw_score, COALESCE(score_global, score_1_9) AS score_1_9,
+                   score_lot, score_global, traits_json, error_text
+            FROM perspicuus_holandes_records
+            WHERE farm_id = ? AND animal_tag = ? AND (? = '' OR lot_id = ?)
+            ORDER BY inference_date DESC, id DESC
+            """,
+            (selected_farm, selected_animal, lot_filter, lot_filter),
+        ).fetchall()
+        images = []
+        for x in im:
+            d = dict(x)
+            d['traits_items'] = _perspicuus_traits_items_for_display(
+                db,
+                'holandes',
+                str(d.get('farm_id') or ''),
+                str(d.get('lot_id') or ''),
+                d.get('traits_json'),
+            )
+            images.append(d)
+    ind_dashboard = None
+    if selected_farm and selected_animal and images:
+        feat = dict(images[0])
+        lot_eff = str(feat.get('lot_id') or lot_filter or '')
+        ind_dashboard = _perspicuus_build_individual_dashboard(
+            brand='Holandês',
+            subtitle='Avaliação combinando as poses lateral e posterior; traits separados por pose.',
+            featured=feat,
+            traits_items=list(feat.get('traits_items') or []),
+            db=db,
+            breed='holandes',
+            farm_id=str(selected_farm),
+            lot_id=lot_eff,
+            animal_label=str(selected_animal),
+            birth_date=str(feat.get('birth_date') or ''),
+            sex=str(feat.get('sex') or ''),
+            lot_label_display=str(feat.get('lot_id') or lot_filter or '').strip() or '(sem lote)',
+        )
+    return render_template(
+        'perspicuus_holandes_analise_individual.html',
+        records=records[:120],
+        farms=farms,
+        lots=lots,
+        animals=animals,
+        farm_filter=farm_filter,
+        lot_filter=lot_filter,
+        animal_filter=animal_filter,
+        q_filter=q,
+        selected_farm=selected_farm,
+        selected_animal=selected_animal,
+        points=points,
+        images=images,
+        stats=stats,
+        ind_dashboard=ind_dashboard,
+        hist_rows=images if images else [],
+    )
+
+
+@app.route('/perspicuus-holandes/analise-populacao')
+@login_required
+def perspicuus_holandes_analise_populacao():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    lot_filter = str(request.args.get('lot', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    rows = _holandes_load_rows(db, farm_filter, lot_filter, '', q, limit=12000)
+    farms, lots, _, stats = _holandes_base_lists(db)
+    deep = _perspicuus_population_analysis(rows, 'holandes')
+    return render_template(
+        'perspicuus_analise_populacao.html',
+        breed_key='holandes',
+        breed_title='Holandês',
+        breed_emoji='🐄',
+        farms=farms,
+        lots=lots,
+        farm_filter=farm_filter,
+        lot_filter=lot_filter,
+        q_filter=q,
+        stats=stats,
+        pop_ui=deep.get('ui') or {},
+        cards=deep['cards'],
+        dist_lot=deep['dist_lot'],
+        dist_global=deep['dist_global'],
+        pop_series=deep['pop_series'],
+        ranked=deep['ranked'],
+        trait_summary=deep['trait_summary'],
+        top_traits=deep['top_traits'],
+        trait_series=deep['trait_series'],
+        trait_dist=deep['trait_dist'],
+        effect_overall=deep['effect_overall'],
+        effect_traits=deep['effect_traits'],
+        boxplot_by_effect=deep['boxplot_by_effect'],
+    )
+
+
+@app.route('/perspicuus-holandes/analise-lotes')
+@login_required
+def perspicuus_holandes_analise_lotes():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    lot_filter = str(request.args.get('lot', '') or '').strip()
+    farms, _, _, stats = _holandes_base_lists(db)
+    dashboard = _perspicuus_farm_lote_dashboard(db, 'holandes', farm_filter, lot_focus=lot_filter)
+    return render_template(
+        'perspicuus_analise_lotes.html',
+        breed_key='holandes',
+        breed_title='Holandês',
+        breed_emoji='🐄',
+        farms=farms,
+        farm_filter=farm_filter,
+        lot_filter=lot_filter,
+        stats=stats,
+        dashboard=dashboard,
+    )
+
+
+@app.route('/perspicuus-holandes/modelos', methods=['GET', 'POST'])
+@admin_required
+def perspicuus_holandes_modelos():
+    from perspicuus_inference import (
+        get_models_dir,
+        load_registry,
+        save_registry,
+        reset_engine,
+        resolve_model_path,
+        model_path_source,
+        ROLE_TO_ENV,
+        get_engine,
+    )
+    roles = ['holandes_yolo', 'holandes_lateral', 'holandes_posterior', 'holandes_lateral_meta', 'holandes_posterior_meta']
+    role_labels = {
+        'holandes_yolo': 'YOLO Holandês (detecção / crop)',
+        'holandes_lateral': 'Perspicuus Holandês — lateral',
+        'holandes_posterior': 'Perspicuus Holandês — posterior',
+        'holandes_lateral_meta': 'Metadata Holandês — lateral',
+        'holandes_posterior_meta': 'Metadata Holandês — posterior',
+    }
+    if request.method == 'POST':
+        action = request.form.get('action', 'upload')
+        role = request.form.get('role', '').strip()
+        if role not in roles:
+            flash('Função inválida.', 'error')
+            return redirect(url_for('perspicuus_holandes_modelos'))
+        if action == 'clear':
+            _clear_perspicuus_model_slot(role)
+            reset_engine('holandes')
+            flash('Slot limpo com sucesso.', 'success')
+            return redirect(url_for('perspicuus_holandes_modelos'))
+        file = request.files.get('file')
+        if not file or not file.filename:
+            flash('Selecione um ficheiro.', 'error')
+            return redirect(url_for('perspicuus_holandes_modelos'))
+        ext = os.path.splitext(file.filename)[1].lower()
+        allow = PERSPICUUS_MODEL_ROLE_EXT.get(role, set())
+        if ext not in allow:
+            flash('Extensão inválida.', 'error')
+            return redirect(url_for('perspicuus_holandes_modelos'))
+        fname = secure_filename(file.filename)
+        if not fname:
+            flash('Nome inválido.', 'error')
+            return redirect(url_for('perspicuus_holandes_modelos'))
+        models_dir = get_models_dir()
+        dest = os.path.join(models_dir, fname)
+        file.save(dest)
+        save_registry({role: fname})
+        reset_engine('holandes')
+        flash(f'Modelo Holandês guardado: {fname}', 'success')
+        return redirect(url_for('perspicuus_holandes_modelos'))
+    reg = load_registry()
+    slots = []
+    for role in roles:
+        p = resolve_model_path(role)
+        src = model_path_source(role)
+        sz = os.path.getsize(p) if p and os.path.isfile(p) else None
+        slots.append({
+            'role': role,
+            'env_var': ROLE_TO_ENV[role],
+            'source': src,
+            'path': p,
+            'size': sz,
+            'registry_name': reg.get(role),
+        })
+    return render_template(
+        'perspicuus_holandes_modelos.html',
+        slots=slots,
+        max_mb=MAX_MODEL_UPLOAD_BYTES // (1024 * 1024),
+        ml_models_dir=ML_MODELS_DIR,
+        inference_engine_ready=get_engine('holandes').is_ready() and bool(get_engine('holandes').onnx_path_for('lateral')) and bool(get_engine('holandes').onnx_path_for('posterior')),
+        role_ext=PERSPICUUS_MODEL_ROLE_EXT,
+        role_labels=role_labels,
+    )
+
+
+@app.route('/perspicuus-holandes/dataset')
+@login_required
+def perspicuus_holandes_dataset():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    lot_filter = str(request.args.get('lot', '')).strip()
+    animal_filter = str(request.args.get('animal', '')).strip()
+    q = str(request.args.get('q', '')).strip()
+    rows = _holandes_load_rows(db, farm_filter, lot_filter, animal_filter, q, limit=1200)
+    farms, lots, animals, stats = _holandes_base_lists(db)
+    return render_template(
+        'perspicuus_holandes_dataset.html',
+        records=rows,
+        farms=farms,
+        lots=lots,
+        animals=animals,
+        farm_filter=farm_filter,
+        lot_filter=lot_filter,
+        animal_filter=animal_filter,
+        q_filter=q,
+        stats=stats,
+    )
+
+
+@app.route('/perspicuus-holandes/calibragem')
+@login_required
+def perspicuus_holandes_calibragem():
+    db = get_db()
+    farm_filter = str(request.args.get('farm', '')).strip()
+    lot_filter = str(request.args.get('lot', '')).strip()
+    cal = _perspicuus_get_calibration(db, 'holandes')
+    raw_bounds = _perspicuus_raw_bounds(db, 'holandes')
+    farms, lots, animals, stats = _holandes_base_lists(db)
+    return render_template(
+        'perspicuus_nelore_calibragem.html',
+        calibration=cal,
+        farms=farms,
+        lots=lots,
+        farm_filter=farm_filter,
+        lot_filter=lot_filter,
+        stats=stats,
+        raw_bounds=raw_bounds,
+        fixed_effects=PERSPICUUS_FIXED_EFFECTS['holandes'],
+        fixed_effect_labels=PERSPICUUS_FIXED_EFFECT_LABELS,
+        brand_title='Holandês',
+        brand_emoji='🐄',
+        apply_endpoint='api_perspicuus_holandes_calibragem_apply',
+    )
+
+
+@app.route('/api/perspicuus-holandes/calibragem/apply', methods=['POST'])
+@login_required
+def api_perspicuus_holandes_calibragem_apply():
+    data = request.get_json(silent=True) or {}
+    err, parsed = _validate_perspicuus_cal_payload(data, 'holandes')
+    if err:
+        return jsonify({'error': err}), 400
+    farm = str(data.get('farm_id') or '').strip()
+    lot = str(data.get('lot_id') or '').strip()
+    db = get_db()
+    now_iso = datetime.utcnow().isoformat() + 'Z'
+    bounds = _perspicuus_raw_bounds(db, 'holandes')
+    if not bounds:
+        return jsonify({'error': 'Não há raw_score suficiente para calibrar.'}), 400
+    db.execute(
+        """
+        INSERT INTO perspicuus_holandes_calibration
+            (id, raw_min, raw_max, res_min, res_max, step, fixed_effect, updated_at, updated_by)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            raw_min = excluded.raw_min,
+            raw_max = excluded.raw_max,
+            res_min = excluded.res_min,
+            res_max = excluded.res_max,
+            step = excluded.step,
+            fixed_effect = excluded.fixed_effect,
+            updated_at = excluded.updated_at,
+            updated_by = excluded.updated_by
+        """,
+        (
+            bounds[0], bounds[1], parsed['res_min'], parsed['res_max'],
+            parsed['step'], parsed['fixed_effect'], now_iso,
+            str(session.get('username') or 'unknown'),
+        ),
+    )
+    cal = _perspicuus_get_calibration(db, 'holandes')
+    info = _perspicuus_apply_calibration(db, 'holandes', cal, farm_id=farm, lot_id=lot)
     db.commit()
     return jsonify({
         'status': 'ok',
