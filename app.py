@@ -3518,9 +3518,6 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_nelore_farm_date   ON perspicuus_nelore_records(farm_id, inference_date);
     CREATE INDEX IF NOT EXISTS idx_nelore_lot_date    ON perspicuus_nelore_records(lot_id, inference_date);
     CREATE INDEX IF NOT EXISTS idx_nelore_animal_date ON perspicuus_nelore_records(farm_id, animal_tag, inference_date);
-    CREATE INDEX IF NOT EXISTS idx_holandes_farm_date   ON perspicuus_holandes_records(farm_id, inference_date);
-    CREATE INDEX IF NOT EXISTS idx_holandes_lot_date    ON perspicuus_holandes_records(lot_id, inference_date);
-    CREATE INDEX IF NOT EXISTS idx_holandes_animal_date ON perspicuus_holandes_records(farm_id, animal_tag, inference_date);
     """)
     db.commit()
     try:
@@ -3594,6 +3591,42 @@ def init_db():
         db.commit()
     except sqlite3.OperationalError as e:
         log.warning("Migração angus extras: %s", e)
+    try:
+        hol_cols = {row[1] for row in db.execute("PRAGMA table_info(perspicuus_holandes_records)")}
+        holandes_add_cols = {
+            "created_at": "TEXT NOT NULL DEFAULT ''",
+            "farm_id": "TEXT NOT NULL DEFAULT ''",
+            "lot_id": "TEXT NOT NULL DEFAULT ''",
+            "birth_date": "TEXT NOT NULL DEFAULT ''",
+            "sex": "TEXT NOT NULL DEFAULT ''",
+            "inference_date": "TEXT NOT NULL DEFAULT ''",
+            "animal_tag": "TEXT NOT NULL DEFAULT ''",
+            "filename": "TEXT NOT NULL DEFAULT ''",
+            "image_path": "TEXT NOT NULL DEFAULT ''",
+            "thumb_path": "TEXT DEFAULT ''",
+            "bbox_path": "TEXT DEFAULT ''",
+            "posterior_filename": "TEXT NOT NULL DEFAULT ''",
+            "posterior_image_path": "TEXT NOT NULL DEFAULT ''",
+            "posterior_thumb_path": "TEXT DEFAULT ''",
+            "posterior_bbox_path": "TEXT DEFAULT ''",
+            "raw_score": "REAL",
+            "score_lot": "REAL",
+            "score_global": "REAL",
+            "score_1_9": "REAL",
+            "traits_json": "TEXT NOT NULL DEFAULT '{}'",
+            "meta_json": "TEXT NOT NULL DEFAULT '{}'",
+            "error_text": "TEXT",
+        }
+        for col, ddl in holandes_add_cols.items():
+            if hol_cols and col not in hol_cols:
+                db.execute(f"ALTER TABLE perspicuus_holandes_records ADD COLUMN {col} {ddl}")
+        db.execute("UPDATE perspicuus_holandes_records SET score_1_9 = score_global WHERE score_global IS NOT NULL")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_holandes_farm_date ON perspicuus_holandes_records(farm_id, inference_date)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_holandes_lot_date ON perspicuus_holandes_records(lot_id, inference_date)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_holandes_animal_date ON perspicuus_holandes_records(farm_id, animal_tag, inference_date)")
+        db.commit()
+    except sqlite3.OperationalError as e:
+        log.warning("Migração holandes extras: %s", e)
     try:
         row = db.execute("SELECT id FROM ecc_bcs_calibration WHERE id = 1").fetchone()
         if not row:
