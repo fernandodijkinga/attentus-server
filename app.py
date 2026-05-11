@@ -3641,6 +3641,25 @@ def init_db():
     except sqlite3.OperationalError as e:
         log.warning("Migração ecc calibration: %s", e)
     try:
+        cal_add_cols = {
+            "raw_min": "REAL NOT NULL DEFAULT -4.0",
+            "raw_max": "REAL NOT NULL DEFAULT 4.0",
+            "res_min": "REAL NOT NULL DEFAULT 1.0",
+            "res_max": "REAL NOT NULL DEFAULT 6.0",
+            "step": "REAL NOT NULL DEFAULT 0.5",
+            "fixed_effect": "TEXT NOT NULL DEFAULT ''",
+            "updated_at": "TEXT NOT NULL DEFAULT ''",
+            "updated_by": "TEXT NOT NULL DEFAULT 'system'",
+        }
+        for tname in ('perspicuus_angus_calibration', 'perspicuus_nelore_calibration', 'perspicuus_holandes_calibration'):
+            cols = {row[1] for row in db.execute(f"PRAGMA table_info({tname})")}
+            for col, ddl in cal_add_cols.items():
+                if cols and col not in cols:
+                    db.execute(f"ALTER TABLE {tname} ADD COLUMN {col} {ddl}")
+        db.commit()
+    except sqlite3.OperationalError as e:
+        log.warning("Migração perspicuus calibration columns: %s", e)
+    try:
         for tname in ('perspicuus_angus_calibration', 'perspicuus_nelore_calibration', 'perspicuus_holandes_calibration'):
             row = db.execute(f"SELECT id FROM {tname} WHERE id = 1").fetchone()
             if not row:
