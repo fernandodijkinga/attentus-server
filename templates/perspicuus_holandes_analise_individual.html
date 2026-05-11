@@ -1,50 +1,258 @@
 {% extends "base.html" %}
-{% from "_perspicuus_layout.html" import persp_styles, persp_individual_styles %}
+{% from "_perspicuus_layout.html" import persp_styles %}
 {% block title %}Perspicuus Holandês — análise individual{% endblock %}
 {% block head %}
 {{ persp_styles() }}
-{{ persp_individual_styles() }}
 <style>
+.hol-page{max-width:1400px;margin:0 auto;color:#173a64}
+.hol-filter-card{margin-bottom:12px}
+.hol-dashboard{background:#f8fbff;border:1px solid #dbe6f2;border-radius:14px;box-shadow:var(--shadow-sm);overflow:hidden}
+.hol-top{display:grid;grid-template-columns:minmax(280px,1fr) 290px 220px 180px;gap:0;border-bottom:1px solid #dbe6f2;background:#fff}
+.hol-brand{padding:14px 18px;display:flex;gap:12px;align-items:center}
+.hol-logo{width:42px;height:42px;border-radius:10px;background:#0d5fd3;color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800}
+.hol-title{font-size:22px;font-weight:900;letter-spacing:.3px;text-transform:uppercase;color:#173a64;line-height:1}
+.hol-sub{font-size:13px;font-weight:800;color:#0d5fd3;margin-top:5px;text-transform:uppercase}
+.hol-top-cell{padding:12px 16px;border-left:1px solid #dbe6f2;display:flex;gap:10px;align-items:center}
+.hol-top-ico{font-size:22px;color:#0d5fd3}
+.hol-top-lbl{font-family:var(--mono);font-size:10px;font-weight:900;color:#0d5fd3;text-transform:uppercase}
+.hol-top-val{font-size:12px;font-weight:800;color:#173a64;line-height:1.25}
+.hol-body{display:grid;grid-template-columns:320px minmax(0,1fr);gap:0}
+.hol-left{border-right:1px solid #dbe6f2;background:#fff}
+.hol-photo-card{padding:8px;border-bottom:1px solid #dbe6f2}
+.hol-photo-label{display:inline-flex;background:#0d6be7;color:#fff;font-size:10px;font-weight:900;text-transform:uppercase;padding:4px 8px;border-radius:4px;margin-bottom:6px}
+.hol-photo{height:178px;border:1px solid #e2eaf4;border-radius:8px;background:#f3f7fc;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.hol-photo.posterior{height:162px}
+.hol-photo img{width:100%;height:100%;object-fit:contain;cursor:zoom-in;background:#fff}
+.hol-empty-photo{font-family:var(--mono);font-size:12px;color:#7c90a8}
+.hol-info{padding:10px 14px;border-bottom:1px solid #dbe6f2}
+.hol-info-head{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #e3edf7;padding-bottom:8px;margin-bottom:8px}
+.hol-info-k{font-family:var(--mono);font-size:10px;text-transform:uppercase;color:#0d5fd3;font-weight:900}
+.hol-info-v{font-size:16px;font-weight:900;color:#173a64}
+.hol-info-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px 12px}
+.hol-info-row{font-size:11px;line-height:1.2}
+.hol-info-row b{display:block;font-family:var(--mono);font-size:9px;color:#0d5fd3;text-transform:uppercase}
+.hol-summary{padding:12px 14px;text-align:center}
+.hol-summary-title{font-family:var(--mono);font-size:10px;font-weight:900;color:#0d5fd3;text-transform:uppercase;margin-bottom:6px}
+.hol-summary-score{font-size:36px;line-height:1;font-weight:900;color:#0d5fd3}
+.hol-summary-sub{font-family:var(--mono);font-size:10px;color:#49627f;margin-top:3px}
+.hol-rank{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.hol-rank-card{border:1px solid #dbe6f2;border-radius:9px;background:#f8fbff;padding:8px}
+.hol-rank-card .n{font-size:18px;font-weight:900;color:#173a64}
+.hol-rank-card .t{font-family:var(--mono);font-size:9px;color:#0d5fd3;text-transform:uppercase;font-weight:900}
+.hol-class{margin-top:10px;background:#0d5fd3;color:#fff;border-radius:999px;padding:5px 12px;font-size:11px;font-weight:900;text-transform:uppercase}
+.hol-main{background:#fff;min-width:0}
+.hol-trait-table{width:100%;border-collapse:collapse;font-size:12px}
+.hol-trait-table th{padding:10px 10px;text-align:left;background:#f5f8fc;border-bottom:1px solid #dbe6f2;color:#0d3f7c;font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.2px}
+.hol-trait-table td{padding:8px 10px;border-bottom:1px solid #e6edf5;vertical-align:middle;color:#1b3657}
+.hol-trait-table tr:hover td{background:#f8fbff}
+.hol-trait-name{font-weight:800}
+.hol-pose-pill{display:inline-flex;margin-right:6px;padding:2px 6px;border-radius:5px;background:#e9f1ff;color:#0d5fd3;font-family:var(--mono);font-size:9px;font-weight:900;text-transform:uppercase}
+.hol-num{font-family:var(--mono);font-weight:800;text-align:center;white-space:nowrap}
+.hol-score-badge{display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border-radius:7px;background:#0d6be7;color:#fff;font-weight:900;font-family:var(--mono);box-shadow:0 1px 2px rgba(13,95,211,.25)}
+.hol-score-badge.mid{background:#7fa8dc}
+.hol-score-badge.low{background:#f08c2e}
+.hol-viz{min-width:190px}
+.hol-scale{display:grid;grid-template-columns:repeat(5,1fr);font-family:var(--mono);font-size:8px;color:#7c90a8;margin-bottom:3px;text-align:center}
+.hol-bar{height:8px;border-radius:999px;background:#edf2f8;border:1px solid #dce6f2;position:relative;overflow:hidden}
+.hol-fill{height:100%;width:0;background:#0d6be7;border-radius:999px}
+.hol-section-row td{background:#f8fbff!important;color:#0d5fd3;font-family:var(--mono);font-size:10px;font-weight:900;text-transform:uppercase;padding-top:10px;padding-bottom:6px}
+.hol-legend{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px 16px;background:#fbfdff}
+.hol-legend-box{border:1px solid #dbe6f2;border-radius:10px;padding:10px;font-size:11px;color:#49627f;line-height:1.45}
+.hol-legend-title{font-family:var(--mono);font-size:10px;text-transform:uppercase;color:#0d5fd3;font-weight:900;margin-bottom:6px}
+.hol-recent{margin-top:16px}
 .pose-thumbs{display:flex;gap:6px;align-items:center}
 .pose-thumbs img{width:62px;height:46px;object-fit:cover;border:1px solid var(--border);border-radius:6px;cursor:zoom-in}
+@media (max-width:1150px){.hol-top{grid-template-columns:1fr 1fr}.hol-body{grid-template-columns:1fr}.hol-left{border-right:0;border-bottom:1px solid #dbe6f2;display:grid;grid-template-columns:1fr 1fr}.hol-info,.hol-summary{grid-column:1/-1}.hol-legend{grid-template-columns:1fr}}
+@media (max-width:700px){.hol-top,.hol-left{grid-template-columns:1fr}.hol-trait-table{font-size:11px}.hol-viz{min-width:130px}}
 </style>
 {% endblock %}
 {% block content %}
-<div class="card mb-12">
-  <form method="get" class="filters-row">
-    <div class="field"><label>Fazenda</label><select name="farm"><option value="">Todas</option>{% for f in farms %}<option value="{{ f }}" {% if farm_filter==f %}selected{% endif %}>{{ f }}</option>{% endfor %}</select></div>
-    <div class="field"><label>Lote</label><select name="lot"><option value="">Todos</option>{% for l in lots %}<option value="{{ l }}" {% if lot_filter==l %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
-    <div class="field"><label>Animal</label><select name="animal"><option value="">Todos</option>{% for a in animals %}<option value="{{ a }}" {% if animal_filter==a %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></div>
-    <div class="field"><label>Busca</label><input name="q" value="{{ q_filter }}" placeholder="fazenda, lote ou brinco"></div>
-    <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
-  </form>
-</div>
+{% set featured = images[0] if images else none %}
+{% set trait_items = ind_dashboard.traits_items if ind_dashboard else [] %}
+{% set global_score = ind_dashboard.score_global if ind_dashboard else none %}
+{% set lot_score = featured.score_lot if featured and featured.score_lot is not none else none %}
+{% set global_score_num = global_score|float if global_score is not none else none %}
+{% set global_pct = ((global_score_num - 1) / 8 * 100) if global_score_num is not none else none %}
+{% set global_pct = 0 if global_pct is not none and global_pct < 0 else (100 if global_pct is not none and global_pct > 100 else global_pct) %}
 
-{% if ind_dashboard %}
-{% include '_perspicuus_individual_dashboard.html' %}
-{% else %}
-<div class="card mb-16">
-  <div class="empty-state"><div class="icon">🐄</div>Selecione fazenda, lote (opcional) e animal com inferência para ver o painel.</div>
-</div>
-{% endif %}
+<div class="hol-page">
+  <div class="card hol-filter-card">
+    <form method="get" class="filters-row">
+      <div class="field"><label>Fazenda</label><select name="farm"><option value="">Todas</option>{% for f in farms %}<option value="{{ f }}" {% if farm_filter==f %}selected{% endif %}>{{ f }}</option>{% endfor %}</select></div>
+      <div class="field"><label>Lote</label><select name="lot"><option value="">Todos</option>{% for l in lots %}<option value="{{ l }}" {% if lot_filter==l %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
+      <div class="field"><label>Animal</label><select name="animal"><option value="">Todos</option>{% for a in animals %}<option value="{{ a }}" {% if animal_filter==a %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></div>
+      <div class="field"><label>Busca</label><input name="q" value="{{ q_filter }}" placeholder="fazenda, lote ou brinco"></div>
+      <button class="btn btn-accent btn-sm" type="submit">Aplicar</button>
+    </form>
+  </div>
 
-<div class="card">
-  <div class="card-title">Registos recentes</div>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Data</th><th>Fazenda</th><th>Lote</th><th>Brinco</th><th>Raw</th><th>Escore lote</th><th>Escore global</th><th>Imagens</th><th>Estado</th><th></th></tr></thead>
-    <tbody>{% for r in records %}<tr>
-      <td class="mono">{{ r.inference_date }}</td><td>{{ r.farm_id }}</td><td>{{ r.lot_id or '—' }}</td><td class="mono">{{ r.animal_tag }}</td>
-      <td class="mono">{{ '%.4f'|format(r.raw_score) if r.raw_score is not none else '—' }}</td>
-      <td class="mono">{{ '%g'|format(r.score_lot) if r.score_lot is not none else '—' }}</td>
-      <td class="mono">{{ '%g'|format(r.score_global) if r.score_global is not none else (('%g'|format(r.score_1_9)) if r.score_1_9 is not none else '—') }}</td>
-      <td><div class="pose-thumbs">
-        {% if r.thumb_path or r.image_path %}<img title="lateral" src="{{ r.thumb_path or r.image_path }}" onclick="window.open('{{ r.bbox_path or r.image_path }}')">{% endif %}
-        {% if r.posterior_thumb_path or r.posterior_image_path %}<img title="posterior" src="{{ r.posterior_thumb_path or r.posterior_image_path }}" onclick="window.open('{{ r.posterior_bbox_path or r.posterior_image_path }}')">{% endif %}
-        {% if not (r.thumb_path or r.image_path or r.posterior_thumb_path or r.posterior_image_path) %}—{% endif %}
-      </div></td>
-      <td class="mono">{{ r.error_text or 'ok' }}</td>
-      <td><a class="btn btn-ghost btn-sm" href="{{ url_for('perspicuus_holandes_analise_individual', farm=r.farm_id, lot=r.lot_id, animal=r.animal_tag) }}">Abrir</a></td>
-    </tr>{% else %}<tr><td colspan="10"><div class="empty-state"><div class="icon">📉</div>Sem dados.</div></td></tr>{% endfor %}</tbody>
-  </table></div>
+  {% if ind_dashboard and featured %}
+  <div class="hol-dashboard">
+    <div class="hol-top">
+      <div class="hol-brand">
+        <div class="hol-logo">🐄</div>
+        <div>
+          <div class="hol-title">Prova individual - raça holandesa</div>
+          <div class="hol-sub">Dashboard de avaliação</div>
+        </div>
+      </div>
+      <div class="hol-top-cell">
+        <div class="hol-top-ico">▣</div>
+        <div><div class="hol-top-lbl">Data da prova</div><div class="hol-top-val">{{ featured.inference_date or '—' }}</div></div>
+      </div>
+      <div class="hol-top-cell">
+        <div class="hol-top-ico">⌖</div>
+        <div><div class="hol-top-lbl">Local</div><div class="hol-top-val">{{ featured.farm_id or '—' }}{% if featured.lot_id %}<br>{{ featured.lot_id }}{% endif %}</div></div>
+      </div>
+      <div class="hol-top-cell">
+        <div class="hol-top-ico">◉</div>
+        <div><div class="hol-top-lbl">Juiz</div><div class="hol-top-val">{{ session.username or 'Sistema' }}</div></div>
+      </div>
+    </div>
+
+    <div class="hol-body">
+      <aside class="hol-left">
+        <div class="hol-photo-card">
+          <span class="hol-photo-label">Vista lateral</span>
+          <div class="hol-photo">
+            {% if featured.image_path %}
+            <img src="{{ featured.bbox_path or featured.image_path }}" onclick="window.open('{{ featured.bbox_path or featured.image_path }}','_blank')" alt="vista lateral">
+            {% else %}
+            <div class="hol-empty-photo">Sem imagem lateral</div>
+            {% endif %}
+          </div>
+        </div>
+        <div class="hol-photo-card">
+          <span class="hol-photo-label">Vista posterior</span>
+          <div class="hol-photo posterior">
+            {% if featured.posterior_image_path %}
+            <img src="{{ featured.posterior_bbox_path or featured.posterior_image_path }}" onclick="window.open('{{ featured.posterior_bbox_path or featured.posterior_image_path }}','_blank')" alt="vista posterior">
+            {% else %}
+            <div class="hol-empty-photo">Sem imagem posterior</div>
+            {% endif %}
+          </div>
+        </div>
+        <div class="hol-info">
+          <div class="hol-info-head">
+            <div><div class="hol-info-k">Nº de catálogo</div><div class="hol-info-v">{{ featured.animal_tag or selected_animal or '—' }}</div></div>
+            <div><div class="hol-info-k">Nome</div><div class="hol-info-v">{{ featured.animal_tag or selected_animal or '—' }}</div></div>
+          </div>
+          <div class="hol-info-grid">
+            <div class="hol-info-row"><b>Registro</b>{{ featured.id }}</div>
+            <div class="hol-info-row"><b>Nascimento</b>{{ featured.birth_date or '—' }}</div>
+            <div class="hol-info-row"><b>Pai</b>—</div>
+            <div class="hol-info-row"><b>Mãe</b>—</div>
+            <div class="hol-info-row"><b>Proprietário</b>{{ featured.farm_id or '—' }}</div>
+            <div class="hol-info-row"><b>Lote</b>{{ featured.lot_id or '—' }}</div>
+          </div>
+        </div>
+        <div class="hol-summary">
+          <div class="hol-summary-title">Resumo geral</div>
+          <div class="hol-summary-score">{{ '%.1f'|format(global_score_num) if global_score_num is not none else '—' }}</div>
+          <div class="hol-summary-sub">Escore global médio<br>(de 1 a 9)</div>
+          <div class="hol-rank">
+            <div class="hol-rank-card"><div class="n">{{ ind_dashboard.index_100 if ind_dashboard.index_100 is not none else '—' }}</div><div class="t">Índice</div></div>
+            <div class="hol-rank-card"><div class="n">{{ (ind_dashboard.pct_lot ~ '°') if ind_dashboard.pct_lot is not none else '—' }}</div><div class="t">Colocação no lote</div></div>
+          </div>
+          <div class="hol-class">
+            {% if global_score_num is none %}Sem classificação
+            {% elif global_score_num >= 8 %}Excelente
+            {% elif global_score_num >= 6 %}Muito bom
+            {% elif global_score_num >= 5 %}Médio
+            {% elif global_score_num >= 3 %}Baixo
+            {% else %}Muito baixo{% endif %}
+          </div>
+        </div>
+      </aside>
+
+      <main class="hol-main">
+        <table class="hol-trait-table">
+          <thead>
+            <tr>
+              <th>Traits (características)</th>
+              <th>Raw score<br><span style="font-weight:600">(desvio)</span></th>
+              <th>Score por lote<br><span style="font-weight:600">(média = 5)</span></th>
+              <th>Score global<br><span style="font-weight:600">(1 a 9)</span></th>
+              <th>Visualização (score global)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% set ns = namespace(last_pose='') %}
+            {% for tname, tval, t_lot9 in trait_items %}
+            {% set pose = 'Lateral' if tname.startswith('lateral:') else ('Posterior' if tname.startswith('posterior:') else 'Outros itens avaliados') %}
+            {% set clean_name = tname|replace('lateral:', '')|replace('posterior:', '') %}
+            {% if pose != ns.last_pose %}
+            <tr class="hol-section-row"><td colspan="5">{{ pose }}</td></tr>
+            {% set ns.last_pose = pose %}
+            {% endif %}
+            {% set global_trait = tval|perspicuus_rescaled %}
+            {% set lot_trait = t_lot9 if t_lot9 is not none else global_trait %}
+            {% set global_trait_num = global_trait|float if global_trait is not none else none %}
+            {% set lot_trait_num = lot_trait|float if lot_trait is not none else none %}
+            {% set trait_pct = ((global_trait_num - 1) / 8 * 100) if global_trait_num is not none else none %}
+            {% set trait_pct = 0 if trait_pct is not none and trait_pct < 0 else (100 if trait_pct is not none and trait_pct > 100 else trait_pct) %}
+            <tr>
+              <td><span class="hol-pose-pill">{{ pose[:3] }}</span><span class="hol-trait-name">{{ clean_name }}</span></td>
+              <td class="hol-num">{{ '%+.2f'|format(tval|float) }}</td>
+              <td class="hol-num">{{ '%.1f'|format(lot_trait_num) if lot_trait_num is not none else '—' }}</td>
+              <td class="hol-num">
+                {% if global_trait_num is not none %}
+                <span class="hol-score-badge {% if global_trait_num < 5 %}low{% elif global_trait_num < 6 %}mid{% endif %}">{{ global_trait_num|round(0, 'common')|int }}</span>
+                {% else %}—{% endif %}
+              </td>
+              <td class="hol-viz">
+                <div class="hol-scale"><span>1</span><span>3</span><span>5</span><span>7</span><span>9</span></div>
+                <div class="hol-bar">{% if trait_pct is not none %}<div class="hol-fill" style="width:{{ trait_pct }}%"></div>{% endif %}</div>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5"><div class="empty-state"><div class="icon">📉</div>Sem traits nesta inferência.</div></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div class="hol-legend">
+          <div class="hol-legend-box">
+            <div class="hol-legend-title">Legenda - score global (1 a 9)</div>
+            <span class="hol-score-badge low" style="min-width:26px;height:18px;font-size:10px">1-2</span> Muito baixo
+            <span class="hol-score-badge low" style="min-width:26px;height:18px;font-size:10px;margin-left:8px">3-4</span> Baixo
+            <span class="hol-score-badge mid" style="min-width:26px;height:18px;font-size:10px;margin-left:8px">5</span> Médio
+            <span class="hol-score-badge" style="min-width:26px;height:18px;font-size:10px;margin-left:8px">6-7</span> Bom
+            <span class="hol-score-badge" style="min-width:26px;height:18px;font-size:10px;margin-left:8px;background:#063f97">8-9</span> Excelente
+          </div>
+          <div class="hol-legend-box">
+            <div class="hol-legend-title">Notas</div>
+            <b>Raw score:</b> diferença do animal em relação à referência do modelo.<br>
+            <b>Score por lote:</b> comparação dentro do lote, com média aproximada em 5.<br>
+            <b>Score global:</b> avaliação final na escala 1 a 9.
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+  {% else %}
+  <div class="card mb-16">
+    <div class="empty-state"><div class="icon">🐄</div>Selecione fazenda, lote (opcional) e animal com inferência para ver o painel.</div>
+  </div>
+  {% endif %}
+
+  <div class="card hol-recent">
+    <div class="card-title">Registos recentes</div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Data</th><th>Fazenda</th><th>Lote</th><th>Brinco</th><th>Raw</th><th>Escore lote</th><th>Escore global</th><th>Imagens</th><th>Estado</th><th></th></tr></thead>
+      <tbody>{% for r in records %}<tr>
+        <td class="mono">{{ r.inference_date }}</td><td>{{ r.farm_id }}</td><td>{{ r.lot_id or '—' }}</td><td class="mono">{{ r.animal_tag }}</td>
+        <td class="mono">{{ '%.4f'|format(r.raw_score) if r.raw_score is not none else '—' }}</td>
+        <td class="mono">{{ '%g'|format(r.score_lot) if r.score_lot is not none else '—' }}</td>
+        <td class="mono">{{ '%g'|format(r.score_global) if r.score_global is not none else (('%g'|format(r.score_1_9)) if r.score_1_9 is not none else '—') }}</td>
+        <td><div class="pose-thumbs">
+          {% if r.thumb_path or r.image_path %}<img title="lateral" src="{{ r.thumb_path or r.image_path }}" onclick="window.open('{{ r.bbox_path or r.image_path }}')">{% endif %}
+          {% if r.posterior_thumb_path or r.posterior_image_path %}<img title="posterior" src="{{ r.posterior_thumb_path or r.posterior_image_path }}" onclick="window.open('{{ r.posterior_bbox_path or r.posterior_image_path }}')">{% endif %}
+          {% if not (r.thumb_path or r.image_path or r.posterior_thumb_path or r.posterior_image_path) %}—{% endif %}
+        </div></td>
+        <td class="mono">{{ r.error_text or 'ok' }}</td>
+        <td><a class="btn btn-ghost btn-sm" href="{{ url_for('perspicuus_holandes_analise_individual', farm=r.farm_id, lot=r.lot_id, animal=r.animal_tag) }}">Abrir</a></td>
+      </tr>{% else %}<tr><td colspan="10"><div class="empty-state"><div class="icon">📉</div>Sem dados.</div></td></tr>{% endfor %}</tbody>
+    </table></div>
+  </div>
 </div>
 {% endblock %}
