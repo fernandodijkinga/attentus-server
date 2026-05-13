@@ -26,6 +26,124 @@ BB_VIDEO_EXTS = (".mp4", ".mov", ".webm", ".mkv")
 BB_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 
 
+def _bb_best_box_index(r: Any) -> int:
+    """Índice da deteção com maior confiança da caixa; empate: maior área (segmentação/pose)."""
+    boxes = getattr(r, "boxes", None)
+    if boxes is None:
+        return 0
+    try:
+        n = len(boxes)
+    except TypeError:
+        return 0
+    if n <= 1:
+        return 0
+    try:
+        conf_t = boxes.conf
+        c = conf_t.cpu().numpy() if hasattr(conf_t, "cpu") else np.asarray(conf_t, dtype=np.float64)
+        bxy = boxes.xyxy.cpu().numpy() if hasattr(boxes.xyxy, "cpu") else np.asarray(boxes.xyxy, dtype=np.float64)
+        best_i = 0
+        best_key = (-1.0, -1.0)
+        for i in range(min(n, len(c), bxy.shape[0])):
+            w = max(0.0, float(bxy[i, 2]) - float(bxy[i, 0]))
+            h = max(0.0, float(bxy[i, 3]) - float(bxy[i, 1]))
+            key = (float(c[i]), w * h)
+            if key > best_key:
+                best_key = key
+                best_i = i
+        return best_i
+    except Exception:
+        return 0
+
+
+def _bb_best_segmentation_mask_index(r: Any) -> int:
+    """Índice da máscara a manter (alinhada a `boxes` se contagens coincidirem; senão maior área)."""
+    masks = getattr(r, "masks", None)
+    if masks is None or not getattr(masks, "xy", None):
+        return _bb_best_box_index(r)
+    try:
+        n_m = len(masks.xy)
+    except TypeError:
+        return 0
+    if n_m <= 1:
+        return 0
+    boxes = getattr(r, "boxes", None)
+    if boxes is not None:
+        try:
+            if len(boxes) == n_m:
+                return _bb_best_box_index(r)
+        except TypeError:
+            pass
+    areas: List[float] = []
+    for poly in masks.xy:
+        if poly is None or len(poly) < 3:
+            areas.append(0.0)
+            continue
+        pts = np.asarray(poly, dtype=np.float32).reshape(-1, 2)
+        areas.append(float(cv2.contourArea(pts)))
+    return int(np.argmax(np.asarray(areas, dtype=np.float64))) if areas else 0
+
+
+def _bb_best_pose_person_index(r: Any) -> int:
+    """Índice da pessoa/animal com maior confiança média nos keypoints (fallback: conf da caixa)."""
+    k = getattr(r, "keypoints", None)
+    if k is None or not getattr(k, "xy", None):
+        return 0
+    try:
+        xy = k.xy.cpu().numpy() if hasattr(k.xy, "cpu") else np.asarray(k.xy, dtype=np.float32)
+    except Exception:
+        return 0
+    n = int(xy.shape[0])
+    if n <= 1:
+        return 0
+    sc = np.zeros(n, dtype=np.float64)
+    kc = getattr(k, "conf", None)
+    if kc is not None:
+        try:
+            arr = kc.cpu().numpy() if hasattr(kc, "cpu") else np.asarray(kc, dtype=np.float64)
+            if arr.ndim == 2 and arr.shape[0] == n:
+                sc = np.mean(arr, axis=1)
+            elif arr.ndim == 1 and len(arr) == n:
+                sc = arr.astype(np.float64)
+        except Exception:
+            pass
+    if float(np.max(sc)) <= 0.0:
+        boxes = getattr(r, "boxes", None)
+        if boxes is not None:
+            try:
+                nb = len(boxes)
+                if nb >= n:
+                    conf_t = boxes.conf
+                    bc = conf_t.cpu().numpy() if hasattr(conf_t, "cpu") else np.asarray(conf_t, dtype=np.float64)
+                    for i in range(n):
+                        sc[i] = max(sc[i], float(bc[i]))
+            except Exception:
+                pass
+    bi = int(np.argmax(sc))
+    return bi
+
+
+def _bb_seg_multi_instance(r: Any) -> bool:
+    masks = getattr(r, "masks", None)
+    n_m = len(masks.xy) if masks is not None and getattr(masks, "xy", None) else 0
+    boxes = getattr(r, "boxes", None)
+    try:
+        n_b = len(boxes) if boxes is not None else 0
+    except TypeError:
+        n_b = 0
+    return max(n_m, n_b) > 1
+
+
+def _bb_pose_multi_instance(r: Any) -> bool:
+    k = getattr(r, "keypoints", None)
+    if k is None or not getattr(k, "xy", None):
+        return False
+    try:
+        xy = k.xy.cpu().numpy() if hasattr(k.xy, "cpu") else np.asarray(k.xy, dtype=np.float32)
+        return int(xy.shape[0]) > 1
+    except Exception:
+        return False
+
+
 def _view_from_class_name(name: str) -> Optional[str]:
     n = (name or "").strip().lower()
     if not n:
@@ -363,25 +481,32 @@ def _tensor_to_numpy_u8_rgb(arr: Any) -> Optional[np.ndarray]:
 
 
 def _bb_segmentation_overlay_numpy(frame_bgr: np.ndarray, r: Any) -> np.ndarray:
-    """Fallback sem Results.plot() — polígonos masks.xy e/ou caixas (BGR)."""
+    """Fallback sem Results.plot() — uma máscara + uma caixa (melhor confiança / área)."""
     out = frame_bgr.copy()
     masks = getattr(r, "masks", None)
     if masks is not None and getattr(masks, "xy", None) is not None:
+        try:
+            n_m = len(masks.xy)
+        except TypeError:
+            n_m = 0
+        bi = _bb_best_segmentation_mask_index(r) if n_m > 1 else 0
         overlay = out.copy()
-        colors = ((40, 200, 80), (200, 120, 40), (120, 80, 200), (200, 200, 60))
-        for i, poly in enumerate(masks.xy):
-            if poly is None or len(poly) < 3:
-                continue
-            pts = np.asarray(poly, dtype=np.float32).reshape(-1, 2)
-            pts_i = np.round(pts).astype(np.int32).reshape(-1, 1, 2)
-            col = colors[i % len(colors)]
-            cv2.fillPoly(overlay, [pts_i], col, lineType=cv2.LINE_AA)
+        col = (40, 200, 80)
+        if n_m > 0 and 0 <= bi < n_m:
+            poly = masks.xy[bi]
+            if poly is not None and len(poly) >= 3:
+                pts = np.asarray(poly, dtype=np.float32).reshape(-1, 2)
+                pts_i = np.round(pts).astype(np.int32).reshape(-1, 1, 2)
+                cv2.fillPoly(overlay, [pts_i], col, lineType=cv2.LINE_AA)
         cv2.addWeighted(overlay, 0.42, out, 0.58, 0, dst=out)
     boxes = getattr(r, "boxes", None)
     if boxes is not None and getattr(boxes, "xyxy", None) is not None:
         try:
             bxy = boxes.xyxy.cpu().numpy() if hasattr(boxes.xyxy, "cpu") else np.asarray(boxes.xyxy)
-            for row in bxy:
+            n_b = int(bxy.shape[0])
+            bi = _bb_best_box_index(r) if n_b > 1 else 0
+            if n_b > 0 and 0 <= bi < n_b:
+                row = bxy[bi]
                 x1, y1, x2, y2 = [int(round(float(v))) for v in row[:4]]
                 cv2.rectangle(out, (x1, y1), (x2, y2), (0, 200, 255), 2, cv2.LINE_AA)
         except Exception:
@@ -390,7 +515,7 @@ def _bb_segmentation_overlay_numpy(frame_bgr: np.ndarray, r: Any) -> np.ndarray:
 
 
 def _bb_pose_overlay_numpy(frame_bgr: np.ndarray, r: Any) -> np.ndarray:
-    """Fallback sem Results.plot() — keypoints como círculos (BGR)."""
+    """Fallback sem Results.plot() — keypoints de um único indivíduo (BGR)."""
     out = frame_bgr.copy()
     k = getattr(r, "keypoints", None)
     if k is None or getattr(k, "xy", None) is None:
@@ -400,7 +525,10 @@ def _bb_pose_overlay_numpy(frame_bgr: np.ndarray, r: Any) -> np.ndarray:
         pts = xy.cpu().numpy() if hasattr(xy, "cpu") else np.asarray(xy, dtype=np.float32)
     except Exception:
         return out
-    for inst in pts:
+    n_p = int(pts.shape[0])
+    bi = _bb_best_pose_person_index(r) if n_p > 1 else 0
+    if 0 <= bi < n_p:
+        inst = pts[bi]
         for j in range(inst.shape[0]):
             x, y = float(inst[j, 0]), float(inst[j, 1])
             if x < 0.5 or y < 0.5:
@@ -410,7 +538,7 @@ def _bb_pose_overlay_numpy(frame_bgr: np.ndarray, r: Any) -> np.ndarray:
 
 
 def _bb_pose_draw_keypoint_indices(img: np.ndarray, r: Any) -> np.ndarray:
-    """Escreve o índice de cada keypoint no plot (referência para cálculos na UI)."""
+    """Escreve o índice de cada keypoint no plot (um indivíduo)."""
     k = getattr(r, "keypoints", None)
     if k is None or getattr(k, "xy", None) is None:
         return img
@@ -424,18 +552,20 @@ def _bb_pose_draw_keypoint_indices(img: np.ndarray, r: Any) -> np.ndarray:
     font = cv2.FONT_HERSHEY_SIMPLEX
     scale = float(max(0.38, min(0.75, w / 1000.0)))
     thick = max(1, int(round(scale * 2)))
-    multi = pts.shape[0] > 1
-    for i in range(pts.shape[0]):
-        for j in range(pts.shape[1]):
-            x, y = float(pts[i, j, 0]), float(pts[i, j, 1])
-            if x < 0.5 or y < 0.5:
-                continue
-            xi, yi = int(round(x)), int(round(y))
-            label = ("%d:%d" % (i, j)) if multi else str(j)
-            tx = min(w - 4, max(4, xi + 5))
-            ty = max(16, yi - 5)
-            cv2.putText(out, label, (tx, ty), font, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
-            cv2.putText(out, label, (tx, ty), font, scale, (0, 255, 255), thick, cv2.LINE_AA)
+    n_p = int(pts.shape[0])
+    bi = _bb_best_pose_person_index(r) if n_p > 1 else 0
+    if not (0 <= bi < n_p):
+        return out
+    for j in range(pts.shape[1]):
+        x, y = float(pts[bi, j, 0]), float(pts[bi, j, 1])
+        if x < 0.5 or y < 0.5:
+            continue
+        xi, yi = int(round(x)), int(round(y))
+        label = str(j)
+        tx = min(w - 4, max(4, xi + 5))
+        ty = max(16, yi - 5)
+        cv2.putText(out, label, (tx, ty), font, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
+        cv2.putText(out, label, (tx, ty), font, scale, (0, 255, 255), thick, cv2.LINE_AA)
     return out
 
 
@@ -445,11 +575,14 @@ def bb_render_segmentation_plot_png(model_path: str, frame_bgr: np.ndarray) -> b
     m = YOLO(model_path)
     r = _bb_yolo_predict_one_result(m, frame_bgr)
     arr_u8: Optional[np.ndarray] = None
-    try:
-        plotted = r.plot()
-        arr_u8 = _tensor_to_numpy_u8_rgb(plotted)
-    except Exception as ex:  # noqa: BLE001 — ex.: OrderedDict sem .float() dentro do Ultralytics
-        log.warning("[BlackBarn] seg r.plot(): %s", ex)
+    if _bb_seg_multi_instance(r):
+        arr_u8 = _bb_segmentation_overlay_numpy(frame_bgr, r)
+    else:
+        try:
+            plotted = r.plot()
+            arr_u8 = _tensor_to_numpy_u8_rgb(plotted)
+        except Exception as ex:  # noqa: BLE001 — ex.: OrderedDict sem .float() dentro do Ultralytics
+            log.warning("[BlackBarn] seg r.plot(): %s", ex)
     if arr_u8 is None or arr_u8.size == 0:
         arr_u8 = _bb_segmentation_overlay_numpy(frame_bgr, r)
     ok, buf = cv2.imencode(".png", arr_u8)
@@ -462,11 +595,14 @@ def bb_render_pose_plot_png(model_path: str, frame_bgr: np.ndarray) -> bytes:
     m = YOLO(model_path)
     r = _bb_yolo_predict_one_result(m, frame_bgr)
     arr_u8: Optional[np.ndarray] = None
-    try:
-        plotted = r.plot()
-        arr_u8 = _tensor_to_numpy_u8_rgb(plotted)
-    except Exception as ex:  # noqa: BLE001
-        log.warning("[BlackBarn] pose r.plot(): %s", ex)
+    if _bb_pose_multi_instance(r):
+        arr_u8 = _bb_pose_overlay_numpy(frame_bgr, r)
+    else:
+        try:
+            plotted = r.plot()
+            arr_u8 = _tensor_to_numpy_u8_rgb(plotted)
+        except Exception as ex:  # noqa: BLE001
+            log.warning("[BlackBarn] pose r.plot(): %s", ex)
     if arr_u8 is None or arr_u8.size == 0:
         arr_u8 = _bb_pose_overlay_numpy(frame_bgr, r)
     arr_u8 = _bb_pose_draw_keypoint_indices(arr_u8, r)
@@ -598,34 +734,42 @@ def _bb_segmentation_instances_from_result(frame_bgr: np.ndarray, r: Any) -> Dic
     inst: List[Dict[str, Any]] = []
     masks = getattr(r, "masks", None)
     if masks is not None and getattr(masks, "xy", None) is not None:
-        for _i, poly in enumerate(masks.xy):
-            if poly is None or len(poly) < 3:
-                continue
-            pts = np.asarray(poly, dtype=np.float64).reshape(-1, 2)
-            x1, y1 = float(pts[:, 0].min()), float(pts[:, 1].min())
-            x2, y2 = float(pts[:, 0].max()), float(pts[:, 1].max())
-            cx, cy = float(pts[:, 0].mean()), float(pts[:, 1].mean())
-            area = float(cv2.contourArea(pts.astype(np.float32)))
-            inst.append(
-                {
-                    "id": len(inst),
-                    "bbox_xyxy": [x1, y1, x2, y2],
-                    "centroid": [cx, cy],
-                    "area_px": max(0.0, area),
-                    "width": max(0.0, x2 - x1),
-                    "height": max(0.0, y2 - y1),
-                }
-            )
+        try:
+            n_m = len(masks.xy)
+        except TypeError:
+            n_m = 0
+        bi = _bb_best_segmentation_mask_index(r) if n_m > 1 else 0
+        if n_m > 0 and 0 <= bi < n_m:
+            poly = masks.xy[bi]
+            if poly is not None and len(poly) >= 3:
+                pts = np.asarray(poly, dtype=np.float64).reshape(-1, 2)
+                x1, y1 = float(pts[:, 0].min()), float(pts[:, 1].min())
+                x2, y2 = float(pts[:, 0].max()), float(pts[:, 1].max())
+                cx, cy = float(pts[:, 0].mean()), float(pts[:, 1].mean())
+                area = float(cv2.contourArea(pts.astype(np.float32)))
+                inst.append(
+                    {
+                        "id": 0,
+                        "bbox_xyxy": [x1, y1, x2, y2],
+                        "centroid": [cx, cy],
+                        "area_px": max(0.0, area),
+                        "width": max(0.0, x2 - x1),
+                        "height": max(0.0, y2 - y1),
+                    }
+                )
     if not inst:
         boxes = getattr(r, "boxes", None)
         if boxes is not None and getattr(boxes, "xyxy", None) is not None:
             try:
                 bxy = boxes.xyxy.cpu().numpy() if hasattr(boxes.xyxy, "cpu") else np.asarray(boxes.xyxy)
-                for i, row in enumerate(bxy):
+                n_b = int(bxy.shape[0])
+                bi = _bb_best_box_index(r) if n_b > 1 else 0
+                if n_b > 0 and 0 <= bi < n_b:
+                    row = bxy[bi]
                     x1, y1, x2, y2 = [float(v) for v in row[:4]]
                     inst.append(
                         {
-                            "id": i,
+                            "id": 0,
                             "bbox_xyxy": [x1, y1, x2, y2],
                             "centroid": [(x1 + x2) / 2.0, (y1 + y2) / 2.0],
                             "area_px": max(0.0, (x2 - x1) * (y2 - y1)),
@@ -682,18 +826,20 @@ def _bb_pose_keypoints_from_result(model: Any, frame_bgr: np.ndarray, r: Any) ->
     nk = int(xy.shape[1])
     names = bb_resolve_pose_keypoint_names(model, nk)
     instances: List[Dict[str, Any]] = []
-    for i in range(xy.shape[0]):
+    n_p = int(xy.shape[0])
+    bi = _bb_best_pose_person_index(r) if n_p > 1 else 0
+    if 0 <= bi < n_p:
         kps: List[Dict[str, Any]] = []
         for j in range(nk):
-            vx, vy = float(xy[i, j, 0]), float(xy[i, j, 1])
+            vx, vy = float(xy[bi, j, 0]), float(xy[bi, j, 1])
             cj = None
             if conf is not None:
-                if conf.ndim == 2 and i < conf.shape[0] and j < conf.shape[1]:
-                    cj = float(conf[i, j])
+                if conf.ndim == 2 and bi < conf.shape[0] and j < conf.shape[1]:
+                    cj = float(conf[bi, j])
                 elif conf.ndim == 1 and j < conf.shape[0]:
                     cj = float(conf[j])
             kps.append({"i": j, "name": names[j], "x": vx, "y": vy, "conf": cj})
-        instances.append({"id": i, "keypoints": kps})
+        instances.append({"id": 0, "keypoints": kps})
     return {
         "ok": True,
         "width": w,
