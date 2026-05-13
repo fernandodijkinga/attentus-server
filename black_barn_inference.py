@@ -592,6 +592,62 @@ def bb_resolve_pose_keypoint_names(model: Any, n_kpts: int) -> List[str]:
     return [f"kp{i}" for i in range(nk)]
 
 
+def _bb_segmentation_instances_from_result(frame_bgr: np.ndarray, r: Any) -> Dict[str, Any]:
+    h, w = int(frame_bgr.shape[0]), int(frame_bgr.shape[1])
+    diag = float((w * w + h * h) ** 0.5) or 1.0
+    inst: List[Dict[str, Any]] = []
+    masks = getattr(r, "masks", None)
+    if masks is not None and getattr(masks, "xy", None) is not None:
+        for _i, poly in enumerate(masks.xy):
+            if poly is None or len(poly) < 3:
+                continue
+            pts = np.asarray(poly, dtype=np.float64).reshape(-1, 2)
+            x1, y1 = float(pts[:, 0].min()), float(pts[:, 1].min())
+            x2, y2 = float(pts[:, 0].max()), float(pts[:, 1].max())
+            cx, cy = float(pts[:, 0].mean()), float(pts[:, 1].mean())
+            area = float(cv2.contourArea(pts.astype(np.float32)))
+            inst.append(
+                {
+                    "id": len(inst),
+                    "bbox_xyxy": [x1, y1, x2, y2],
+                    "centroid": [cx, cy],
+                    "area_px": max(0.0, area),
+                    "width": max(0.0, x2 - x1),
+                    "height": max(0.0, y2 - y1),
+                }
+            )
+    if not inst:
+        boxes = getattr(r, "boxes", None)
+        if boxes is not None and getattr(boxes, "xyxy", None) is not None:
+            try:
+                bxy = boxes.xyxy.cpu().numpy() if hasattr(boxes.xyxy, "cpu") else np.asarray(boxes.xyxy)
+                for i, row in enumerate(bxy):
+                    x1, y1, x2, y2 = [float(v) for v in row[:4]]
+                    inst.append(
+                        {
+                            "id": i,
+                            "bbox_xyxy": [x1, y1, x2, y2],
+                            "centroid": [(x1 + x2) / 2.0, (y1 + y2) / 2.0],
+                            "area_px": max(0.0, (x2 - x1) * (y2 - y1)),
+                            "width": max(0.0, x2 - x1),
+                            "height": max(0.0, y2 - y1),
+                        }
+                    )
+            except Exception:
+                pass
+    return {"ok": True, "width": w, "height": h, "diag": diag, "n_instances": len(inst), "instances": inst}
+
+
+def bb_segmentation_instances_json_with_model(m: Any, frame_bgr: np.ndarray) -> Dict[str, Any]:
+    """Mesmo que `bb_segmentation_instances_json`, mas reutiliza instância YOLO já carregada."""
+    try:
+        r = _bb_yolo_predict_one_result(m, frame_bgr)
+        return _bb_segmentation_instances_from_result(frame_bgr, r)
+    except Exception as e:  # noqa: BLE001
+        log.exception("[BlackBarn] seg geometry (modelo reutilizado)")
+        return {"ok": False, "error": str(e)[:200]}
+
+
 def bb_segmentation_instances_json(model_path: str, frame_bgr: np.ndarray) -> Dict[str, Any]:
     """Geometria por instância de segmentação (polígonos / bbox) para UI e traits."""
     try:
@@ -600,54 +656,62 @@ def bb_segmentation_instances_json(model_path: str, frame_bgr: np.ndarray) -> Di
         return {"ok": False, "error": "ultralytics_nao_instalado"}
     if not model_path or not os.path.isfile(model_path):
         return {"ok": False, "error": "modelo_seg_em_falta"}
-    h, w = int(frame_bgr.shape[0]), int(frame_bgr.shape[1])
-    diag = float((w * w + h * h) ** 0.5) or 1.0
     try:
         m = YOLO(model_path)
         r = _bb_yolo_predict_one_result(m, frame_bgr)
-        inst: List[Dict[str, Any]] = []
-        masks = getattr(r, "masks", None)
-        if masks is not None and getattr(masks, "xy", None) is not None:
-            for i, poly in enumerate(masks.xy):
-                if poly is None or len(poly) < 3:
-                    continue
-                pts = np.asarray(poly, dtype=np.float64).reshape(-1, 2)
-                x1, y1 = float(pts[:, 0].min()), float(pts[:, 1].min())
-                x2, y2 = float(pts[:, 0].max()), float(pts[:, 1].max())
-                cx, cy = float(pts[:, 0].mean()), float(pts[:, 1].mean())
-                area = float(cv2.contourArea(pts.astype(np.float32)))
-                inst.append(
-                    {
-                        "id": len(inst),
-                        "bbox_xyxy": [x1, y1, x2, y2],
-                        "centroid": [cx, cy],
-                        "area_px": max(0.0, area),
-                        "width": max(0.0, x2 - x1),
-                        "height": max(0.0, y2 - y1),
-                    }
-                )
-        if not inst:
-            boxes = getattr(r, "boxes", None)
-            if boxes is not None and getattr(boxes, "xyxy", None) is not None:
-                try:
-                    bxy = boxes.xyxy.cpu().numpy() if hasattr(boxes.xyxy, "cpu") else np.asarray(boxes.xyxy)
-                    for i, row in enumerate(bxy):
-                        x1, y1, x2, y2 = [float(v) for v in row[:4]]
-                        inst.append(
-                            {
-                                "id": i,
-                                "bbox_xyxy": [x1, y1, x2, y2],
-                                "centroid": [(x1 + x2) / 2.0, (y1 + y2) / 2.0],
-                                "area_px": max(0.0, (x2 - x1) * (y2 - y1)),
-                                "width": max(0.0, x2 - x1),
-                                "height": max(0.0, y2 - y1),
-                            }
-                        )
-                except Exception:
-                    pass
-        return {"ok": True, "width": w, "height": h, "diag": diag, "n_instances": len(inst), "instances": inst}
+        return _bb_segmentation_instances_from_result(frame_bgr, r)
     except Exception as e:  # noqa: BLE001
         log.exception("[BlackBarn] seg geometry")
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def _bb_pose_keypoints_from_result(model: Any, frame_bgr: np.ndarray, r: Any) -> Dict[str, Any]:
+    h, w = int(frame_bgr.shape[0]), int(frame_bgr.shape[1])
+    diag = float((w * w + h * h) ** 0.5) or 1.0
+    k = getattr(r, "keypoints", None)
+    if k is None or getattr(k, "xy", None) is None:
+        return {"ok": True, "width": w, "height": h, "diag": diag, "n_instances": 0, "keypoint_names": [], "instances": []}
+    xy = k.xy.cpu().numpy() if hasattr(k.xy, "cpu") else np.asarray(k.xy, dtype=np.float32)
+    conf = None
+    if getattr(k, "conf", None) is not None:
+        try:
+            kc = k.conf
+            conf = kc.cpu().numpy() if hasattr(kc, "cpu") else np.asarray(kc, dtype=np.float32)
+        except Exception:
+            conf = None
+    nk = int(xy.shape[1])
+    names = bb_resolve_pose_keypoint_names(model, nk)
+    instances: List[Dict[str, Any]] = []
+    for i in range(xy.shape[0]):
+        kps: List[Dict[str, Any]] = []
+        for j in range(nk):
+            vx, vy = float(xy[i, j, 0]), float(xy[i, j, 1])
+            cj = None
+            if conf is not None:
+                if conf.ndim == 2 and i < conf.shape[0] and j < conf.shape[1]:
+                    cj = float(conf[i, j])
+                elif conf.ndim == 1 and j < conf.shape[0]:
+                    cj = float(conf[j])
+            kps.append({"i": j, "name": names[j], "x": vx, "y": vy, "conf": cj})
+        instances.append({"id": i, "keypoints": kps})
+    return {
+        "ok": True,
+        "width": w,
+        "height": h,
+        "diag": diag,
+        "n_instances": len(instances),
+        "keypoint_names": names,
+        "instances": instances,
+    }
+
+
+def bb_pose_keypoints_json_with_model(m: Any, frame_bgr: np.ndarray) -> Dict[str, Any]:
+    """Mesmo que `bb_pose_keypoints_json`, mas reutiliza instância YOLO já carregada."""
+    try:
+        r = _bb_yolo_predict_one_result(m, frame_bgr)
+        return _bb_pose_keypoints_from_result(m, frame_bgr, r)
+    except Exception as e:  # noqa: BLE001
+        log.exception("[BlackBarn] pose geometry (modelo reutilizado)")
         return {"ok": False, "error": str(e)[:200]}
 
 
@@ -659,49 +723,132 @@ def bb_pose_keypoints_json(model_path: str, frame_bgr: np.ndarray) -> Dict[str, 
         return {"ok": False, "error": "ultralytics_nao_instalado"}
     if not model_path or not os.path.isfile(model_path):
         return {"ok": False, "error": "modelo_pose_em_falta"}
-    h, w = int(frame_bgr.shape[0]), int(frame_bgr.shape[1])
-    diag = float((w * w + h * h) ** 0.5) or 1.0
     try:
         m = YOLO(model_path)
         r = _bb_yolo_predict_one_result(m, frame_bgr)
-        k = getattr(r, "keypoints", None)
-        if k is None or getattr(k, "xy", None) is None:
-            return {"ok": True, "width": w, "height": h, "diag": diag, "n_instances": 0, "keypoint_names": [], "instances": []}
-        xy = k.xy.cpu().numpy() if hasattr(k.xy, "cpu") else np.asarray(k.xy, dtype=np.float32)
-        conf = None
-        if getattr(k, "conf", None) is not None:
-            try:
-                kc = k.conf
-                conf = kc.cpu().numpy() if hasattr(kc, "cpu") else np.asarray(kc, dtype=np.float32)
-            except Exception:
-                conf = None
-        nk = int(xy.shape[1])
-        names = bb_resolve_pose_keypoint_names(m, nk)
-        instances: List[Dict[str, Any]] = []
-        for i in range(xy.shape[0]):
-            kps: List[Dict[str, Any]] = []
-            for j in range(nk):
-                vx, vy = float(xy[i, j, 0]), float(xy[i, j, 1])
-                cj = None
-                if conf is not None:
-                    if conf.ndim == 2 and i < conf.shape[0] and j < conf.shape[1]:
-                        cj = float(conf[i, j])
-                    elif conf.ndim == 1 and j < conf.shape[0]:
-                        cj = float(conf[j])
-                kps.append({"i": j, "name": names[j], "x": vx, "y": vy, "conf": cj})
-            instances.append({"id": i, "keypoints": kps})
-        return {
-            "ok": True,
-            "width": w,
-            "height": h,
-            "diag": diag,
-            "n_instances": len(instances),
-            "keypoint_names": names,
-            "instances": instances,
-        }
+        return _bb_pose_keypoints_from_result(m, frame_bgr, r)
     except Exception as e:  # noqa: BLE001
         log.exception("[BlackBarn] pose geometry")
         return {"ok": False, "error": str(e)[:200]}
+
+
+def bb_trait_value_from_seg_geom(data: Dict[str, Any], cfg: Dict[str, Any]) -> Optional[float]:
+    """Calcula valor de trait de segmentação a partir do JSON de geometria (alinhado à UI)."""
+    import math
+
+    if not data or not data.get("ok"):
+        return None
+    metric = str(cfg.get("metric") or "")
+    raw_ids = cfg.get("mask_indices") or cfg.get("mask_ids") or []
+    try:
+        ids_int = sorted(int(x) for x in raw_ids)
+    except (TypeError, ValueError):
+        return None
+    inst_list = data.get("instances") or []
+    W = float(data.get("width") or 1) or 1.0
+    H = float(data.get("height") or 1) or 1.0
+    D = float(data.get("diag") or 1) or 1.0
+
+    def by_id(iid: int) -> Optional[Dict[str, Any]]:
+        for ins in inst_list:
+            if int(ins.get("id", -999999)) == int(iid):
+                return ins if isinstance(ins, dict) else None
+        return None
+
+    if metric == "mask_centroid_distance_norm_diag":
+        if len(ids_int) < 2:
+            return None
+        a, b = by_id(ids_int[0]), by_id(ids_int[1])
+        if not a or not b:
+            return None
+        try:
+            ax, ay = float(a["centroid"][0]), float(a["centroid"][1])
+            bx, by = float(b["centroid"][0]), float(b["centroid"][1])
+        except (KeyError, TypeError, ValueError, IndexError):
+            return None
+        return float(math.hypot(ax - bx, ay - by) / D)
+    if metric == "mask_area_ratio":
+        if len(ids_int) < 2:
+            return None
+        a, b = by_id(ids_int[0]), by_id(ids_int[1])
+        if not a or not b:
+            return None
+        denom = float(b.get("area_px") or 0)
+        if denom <= 0:
+            return None
+        return float(a.get("area_px") or 0) / denom
+    if metric == "mask_width_norm_w":
+        if len(ids_int) < 1:
+            return None
+        a = by_id(ids_int[0])
+        if not a:
+            return None
+        return float(a.get("width") or 0) / W
+    if metric == "mask_height_norm_h":
+        if len(ids_int) < 1:
+            return None
+        a = by_id(ids_int[0])
+        if not a:
+            return None
+        return float(a.get("height") or 0) / H
+    return None
+
+
+def bb_trait_value_from_kp_geom(data: Dict[str, Any], cfg: Dict[str, Any]) -> Optional[float]:
+    """Calcula valor de trait de pose a partir do JSON de keypoints (instância 0 por defeito na UI)."""
+    import math
+
+    if not data or not data.get("ok"):
+        return None
+    metric = str(cfg.get("metric") or "")
+    raw_ids = cfg.get("kp_indices") or []
+    try:
+        ids_int = sorted(int(x) for x in raw_ids)
+    except (TypeError, ValueError):
+        return None
+    inst_idx = int(cfg.get("instance", 0) or 0)
+    instances = data.get("instances") or []
+    if inst_idx < 0 or inst_idx >= len(instances):
+        return None
+    inst0 = instances[inst_idx]
+    if not isinstance(inst0, dict):
+        return None
+    D = float(data.get("diag") or 1) or 1.0
+
+    def pt(ki: int) -> Optional[Tuple[float, float]]:
+        for kp in inst0.get("keypoints") or []:
+            if not isinstance(kp, dict):
+                continue
+            if int(kp.get("i", -1)) == int(ki):
+                try:
+                    return float(kp["x"]), float(kp["y"])
+                except (KeyError, TypeError, ValueError):
+                    return None
+        return None
+
+    if metric == "kp_distance_norm_diag":
+        if len(ids_int) < 2:
+            return None
+        a, b = pt(ids_int[0]), pt(ids_int[1])
+        if not a or not b:
+            return None
+        return float(math.hypot(a[0] - b[0], a[1] - b[1]) / D)
+    if metric == "kp_angle_norm_pi":
+        if len(ids_int) < 3:
+            return None
+        i0, i1, i2 = ids_int[0], ids_int[1], ids_int[2]
+        p0, p1, p2 = pt(i0), pt(i1), pt(i2)
+        if not p0 or not p1 or not p2:
+            return None
+        ax, ay = p0[0] - p1[0], p0[1] - p1[1]
+        bx, by = p2[0] - p1[0], p2[1] - p1[1]
+        na = math.hypot(ax, ay)
+        nb = math.hypot(bx, by)
+        if na <= 0 or nb <= 0:
+            return None
+        c = max(-1.0, min(1.0, (ax * bx + ay * by) / (na * nb)))
+        return float(math.acos(c) / math.pi)
+    return None
 
 
 def run_ultralytics_segmentation(
