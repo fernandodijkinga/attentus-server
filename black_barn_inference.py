@@ -409,6 +409,36 @@ def _bb_pose_overlay_numpy(frame_bgr: np.ndarray, r: Any) -> np.ndarray:
     return out
 
 
+def _bb_pose_draw_keypoint_indices(img: np.ndarray, r: Any) -> np.ndarray:
+    """Escreve o índice de cada keypoint no plot (referência para cálculos na UI)."""
+    k = getattr(r, "keypoints", None)
+    if k is None or getattr(k, "xy", None) is None:
+        return img
+    try:
+        xy = k.xy
+        pts = xy.cpu().numpy() if hasattr(xy, "cpu") else np.asarray(xy, dtype=np.float32)
+    except Exception:
+        return img
+    out = np.ascontiguousarray(img)
+    h, w = out.shape[:2]
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = float(max(0.38, min(0.75, w / 1000.0)))
+    thick = max(1, int(round(scale * 2)))
+    multi = pts.shape[0] > 1
+    for i in range(pts.shape[0]):
+        for j in range(pts.shape[1]):
+            x, y = float(pts[i, j, 0]), float(pts[i, j, 1])
+            if x < 0.5 or y < 0.5:
+                continue
+            xi, yi = int(round(x)), int(round(y))
+            label = ("%d:%d" % (i, j)) if multi else str(j)
+            tx = min(w - 4, max(4, xi + 5))
+            ty = max(16, yi - 5)
+            cv2.putText(out, label, (tx, ty), font, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
+            cv2.putText(out, label, (tx, ty), font, scale, (0, 255, 255), thick, cv2.LINE_AA)
+    return out
+
+
 def bb_render_segmentation_plot_png(model_path: str, frame_bgr: np.ndarray) -> bytes:
     from ultralytics import YOLO  # type: ignore
 
@@ -439,30 +469,127 @@ def bb_render_pose_plot_png(model_path: str, frame_bgr: np.ndarray) -> bytes:
         log.warning("[BlackBarn] pose r.plot(): %s", ex)
     if arr_u8 is None or arr_u8.size == 0:
         arr_u8 = _bb_pose_overlay_numpy(frame_bgr, r)
+    arr_u8 = _bb_pose_draw_keypoint_indices(arr_u8, r)
     ok, buf = cv2.imencode(".png", arr_u8)
     return bytes(buf) if ok else bb_png_message_bytes("pose: PNG falhou")
 
 
-# Nomes COCO (17) — fallback quando o modelo não expõe nomes de keypoints
-_KP_COCO17 = (
+def _bb_read_yaml_dict_from_ultralytics_model(m: Any) -> Optional[Dict[str, Any]]:
+    """Tenta obter o dict `yaml` embutido no modelo Ultralytics (Pose / Detection)."""
+    inner = getattr(m, "model", None)
+    if inner is not None:
+        y = getattr(inner, "yaml", None)
+        if isinstance(y, dict):
+            return y
+    y = getattr(m, "yaml", None)
+    if isinstance(y, dict):
+        return y
+    return None
+
+
+def _bb_kpt_names_list_from_yaml_dict(y: Dict[str, Any]) -> Optional[List[str]]:
+    """Extrai lista de nomes de keypoints do campo `kpt_names` (formato Ultralytics datasets)."""
+    kn = y.get("kpt_names")
+    if kn is None:
+        return None
+    if isinstance(kn, dict):
+        lst = kn.get(0)
+        if lst is None:
+            lst = kn.get("0")
+        if lst is None and kn:
+            lst = kn.get(next(iter(kn.keys())))
+        if isinstance(lst, (list, tuple)):
+            return [str(x).strip() for x in lst if str(x).strip()]
+        return None
+    if isinstance(kn, (list, tuple)):
+        return [str(x).strip() for x in kn if str(x).strip()]
+    return None
+
+
+def _bb_load_yaml_file_dict(path: str) -> Optional[Dict[str, Any]]:
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        import yaml  # type: ignore
+
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            data = yaml.safe_load(f)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _bb_resolve_kpt_names_from_train_data_paths(model: Any) -> Optional[List[str]]:
+    """Lê `data=*.yaml` de overrides ou checkpoint (treino) para obter `kpt_names`."""
+    candidates: List[str] = []
+    ov = getattr(model, "overrides", None)
+    if isinstance(ov, dict) and isinstance(ov.get("data"), str):
+        candidates.append(ov["data"])
+    ck = getattr(model, "ckpt", None)
+    if isinstance(ck, dict):
+        ta = ck.get("train_args") or {}
+        if isinstance(ta, dict) and isinstance(ta.get("data"), str):
+            candidates.append(ta["data"])
+    for p in candidates:
+        yd = _bb_load_yaml_file_dict(p)
+        if yd is None and not os.path.isabs(p):
+            yd = _bb_load_yaml_file_dict(os.path.join(os.getcwd(), p))
+        if not yd:
+            continue
+        names = _bb_kpt_names_list_from_yaml_dict(yd)
+        if names:
+            return names
+    return None
+
+
+# Ordem COCO-pose oficial (apenas fallback se o .pt não trouxer `kpt_names` e nk==17)
+_KP_COCO_DEFAULT17: Tuple[str, ...] = (
     "nose",
-    "leye",
-    "reye",
-    "lear",
-    "rear",
-    "lsho",
-    "rsho",
-    "lelb",
-    "relb",
-    "lwri",
-    "rwri",
-    "lhip",
-    "rhip",
-    "lkne",
-    "rkne",
-    "lank",
-    "rank",
+    "left_eye",
+    "right_eye",
+    "left_ear",
+    "right_ear",
+    "left_shoulder",
+    "right_shoulder",
+    "left_elbow",
+    "right_elbow",
+    "left_wrist",
+    "right_wrist",
+    "left_hip",
+    "right_hip",
+    "left_knee",
+    "right_knee",
+    "left_ankle",
+    "right_ankle",
 )
+
+
+def bb_resolve_pose_keypoint_names(model: Any, n_kpts: int) -> List[str]:
+    """
+    Identifica nomes de keypoints a partir do metadata do modelo Ultralytics:
+    `model.yaml` → `kpt_names`, ou ficheiro `data` do treino; senão `kp{j}` ou COCO17 genérico.
+    """
+    nk = max(0, int(n_kpts))
+    raw: Optional[List[str]] = None
+    y = _bb_read_yaml_dict_from_ultralytics_model(model)
+    if isinstance(y, dict):
+        raw = _bb_kpt_names_list_from_yaml_dict(y)
+        if raw is None and isinstance(y.get("data"), str):
+            dp = y["data"]
+            yd = _bb_load_yaml_file_dict(dp)
+            if yd is None and not os.path.isabs(dp):
+                yd = _bb_load_yaml_file_dict(os.path.join(os.getcwd(), dp))
+            if isinstance(yd, dict):
+                raw = _bb_kpt_names_list_from_yaml_dict(yd)
+    if raw is None:
+        raw = _bb_resolve_kpt_names_from_train_data_paths(model)
+    if raw and len(raw) >= nk:
+        return list(raw[:nk])
+    if raw and len(raw) > 0:
+        return list(raw) + [f"kp{i}" for i in range(len(raw), nk)]
+    if nk == len(_KP_COCO_DEFAULT17):
+        return list(_KP_COCO_DEFAULT17)
+    return [f"kp{i}" for i in range(nk)]
 
 
 def bb_segmentation_instances_json(model_path: str, frame_bgr: np.ndarray) -> Dict[str, Any]:
@@ -549,12 +676,7 @@ def bb_pose_keypoints_json(model_path: str, frame_bgr: np.ndarray) -> Dict[str, 
             except Exception:
                 conf = None
         nk = int(xy.shape[1])
-        names: List[str] = []
-        for j in range(nk):
-            if j < len(_KP_COCO17):
-                names.append(_KP_COCO17[j])
-            else:
-                names.append(f"kp{j}")
+        names = bb_resolve_pose_keypoint_names(m, nk)
         instances: List[Dict[str, Any]] = []
         for i in range(xy.shape[0]):
             kps: List[Dict[str, Any]] = []
