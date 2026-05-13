@@ -7,6 +7,7 @@
 @media(max-width:960px){.corr-wrap{grid-template-columns:1fr}}
 #cscatter{max-height:72vh}
 .statline{font-family:var(--mono);font-size:12px;margin-top:8px;color:var(--text2)}
+.corr-chart-wrap{position:relative;width:100%;min-height:380px}
 </style>
 {% endblock %}
 {% block content %}
@@ -40,7 +41,9 @@
     <div id="stats" class="statline"></div>
   </div>
   <div class="card">
-    <canvas id="cscatter"></canvas>
+    <div class="corr-chart-wrap">
+      <canvas id="cscatter"></canvas>
+    </div>
   </div>
 </div>
 {% endblock %}
@@ -49,36 +52,69 @@
 (function(){
   const url = {{ url_for('api_black_barn_correlation_points') | tojson }};
   const opts = document.querySelectorAll('#ax option');
-  if (opts.length > 1) document.getElementById('ay').selectedIndex = 1;
+  const selAy = document.getElementById('ay');
+  const selAx = document.getElementById('ax');
+  if (opts.length > 1 && selAy) selAy.selectedIndex = 1;
   let chart;
   async function plot(){
-    const ax = document.getElementById('ax');
-    if (!ax.options.length) return;
-    const x = document.getElementById('ax').value;
-    const y = document.getElementById('ay').value;
-    const res = await fetch(url + '?x=' + encodeURIComponent(x) + '&y=' + encodeURIComponent(y));
-    const j = await res.json();
-    const pts = j.points || [];
-    document.getElementById('stats').textContent =
-      'n=' + (j.n||0) + ' · Pearson=' + (j.pearson ?? '—') + ' · Spearman=' + (j.spearman ?? '—') + ' · Kendall=' + (j.kendall ?? '—');
-    const data = pts.map(p => ({x:p[0], y:p[1]}));
-    const ctx = document.getElementById('cscatter').getContext('2d');
-    if (chart) chart.destroy();
-    chart = new Chart(ctx, {
-      type: 'scatter',
-      data: { datasets: [{ label: x + ' vs ' + y, data, backgroundColor: 'rgba(26,111,212,0.55)', pointRadius: 5 }] },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-          x: { title: { display: true, text: j.label_x || x } },
-          y: { title: { display: true, text: j.label_y || y } }
-        }
+    const statsEl = document.getElementById('stats');
+    const ax = selAx;
+    if (!ax || !ax.options.length) {
+      if (statsEl) statsEl.textContent = 'Nenhum trait disponível. Grave traits em segmentação / keypoints primeiro.';
+      return;
+    }
+    const x = ax.value;
+    const y = selAy ? selAy.value : '';
+    if (!y || x === y) {
+      if (statsEl) statsEl.textContent = 'Escolha dois traits diferentes (eixo X ≠ Y).';
+      return;
+    }
+    if (statsEl) statsEl.textContent = 'A carregar…';
+    try {
+      if (typeof Chart === 'undefined') {
+        if (statsEl) statsEl.textContent = 'Chart.js não carregou (rede / CDN). Verifique a ligação à Internet.';
+        return;
       }
-    });
+      const res = await fetch(url + '?x=' + encodeURIComponent(x) + '&y=' + encodeURIComponent(y), { credentials: 'same-origin' });
+      const j = await res.json().catch(function () { return { _parse_error: true }; });
+      if (!res.ok || j._parse_error) {
+        if (statsEl) statsEl.textContent = 'Erro API: ' + (j.error || res.status + ' ' + res.statusText);
+        return;
+      }
+      const pts = j.points || [];
+      if (statsEl) {
+        statsEl.textContent =
+          'n=' + (j.n != null ? j.n : pts.length) +
+          ' · Pearson=' + (j.pearson != null && j.pearson === j.pearson ? j.pearson : '—') +
+          ' · Spearman=' + (j.spearman != null && j.spearman === j.spearman ? j.spearman : '—') +
+          ' · Kendall=' + (j.kendall != null && j.kendall === j.kendall ? j.kendall : '—');
+      }
+      const data = pts.map(function (p) { return { x: p[0], y: p[1] }; });
+      const canvas = document.getElementById('cscatter');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: 'scatter',
+        data: { datasets: [{ label: x + ' vs ' + y, data: data, backgroundColor: 'rgba(26,111,212,0.55)', pointRadius: 5 }] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: true } },
+          scales: {
+            x: { title: { display: true, text: j.label_x || x } },
+            y: { title: { display: true, text: j.label_y || y } }
+          }
+        }
+      });
+    } catch (err) {
+      console.error(err);
+      if (statsEl) statsEl.textContent = 'Erro ao desenhar: ' + (err && err.message ? err.message : String(err));
+    }
   }
-  document.getElementById('btnPlot').addEventListener('click', plot);
-  if (document.getElementById('ax').options.length) plot();
+  const btn = document.getElementById('btnPlot');
+  if (btn) btn.addEventListener('click', function(){ plot().catch(function(e){ console.error(e); }); });
+  if (selAx && selAx.options.length) plot().catch(function(e){ console.error(e); });
 })();
 </script>
 {% endblock %}

@@ -862,11 +862,28 @@ def register_black_barn(app) -> None:
         xk = request.args.get("x", "").strip()
         yk = request.args.get("y", "").strip()
         if not xk or not yk or xk == yk:
-            return jsonify({"error": "parâmetros_x_y"}), 400
+            return jsonify({
+                "error": "parâmetros_x_y",
+                "n": 0,
+                "points": [],
+                "pearson": None,
+                "spearman": None,
+                "kendall": None,
+            }), 400
         db = main.get_db()
         pts, nx, ny = _paired_trait_points(db, xk, yk)
+        label_x = _bb_correlation_axis_label(db, xk)
+        label_y = _bb_correlation_axis_label(db, yk)
         if len(pts) < 2:
-            return jsonify({"n": len(pts), "points": pts, "pearson": None, "spearman": None, "kendall": None})
+            return jsonify({
+                "n": len(pts),
+                "points": pts,
+                "pearson": None,
+                "spearman": None,
+                "kendall": None,
+                "label_x": label_x,
+                "label_y": label_y,
+            })
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
         pear = _pearson(xs, ys)
@@ -877,8 +894,8 @@ def register_black_barn(app) -> None:
             "pearson": pear,
             "spearman": spr,
             "kendall": ken,
-            "label_x": nx,
-            "label_y": ny,
+            "label_x": label_x,
+            "label_y": label_y,
         })
 
     @app.route("/api/genmate-black-barn/trait-defs", methods=["GET", "POST"])
@@ -1195,10 +1212,28 @@ def _collect_trait_keys(db) -> list[dict[str, Any]]:
     return [{"id": k, "label": v} for k, v in sorted(keys.items(), key=lambda x: x[0].lower())]
 
 
+def _bb_correlation_axis_label(db, key: str) -> str:
+    """Rótulo legível para eixos do scatter (Perspicuus ou trait custom na BD)."""
+    if key.startswith("persp:"):
+        return key.replace("persp:", "Perspicuus · ", 1)
+    if key.startswith("custom:"):
+        tk = key.split(":", 1)[1]
+        row = db.execute(
+            "SELECT label FROM black_barn_trait_defs WHERE trait_key = ? LIMIT 1",
+            (tk,),
+        ).fetchone()
+        if row and row["label"]:
+            return str(row["label"])
+        return tk
+    return key
+
+
 def _paired_trait_points(db, xk: str, yk: str) -> tuple[list[list[float]], str, str]:
     """Extrai pares (x,y) por registo onde ambas as medidas existem."""
+    # Incluir todos os registos recentes: traits custom gravados na BD existem mesmo que
+    # `status` ainda não seja `done`; valores por frame usam `frame_index` não nulo.
     rows = db.execute(
-        "SELECT id, result_json FROM black_barn_records WHERE status = 'done' ORDER BY id DESC LIMIT 500"
+        "SELECT id, result_json FROM black_barn_records ORDER BY id DESC LIMIT 500"
     ).fetchall()
     pts: list[list[float]] = []
 
@@ -1248,13 +1283,17 @@ def _trait_value_from_db(db, record_id: int, key: str) -> float | None:
         return None
     tname = key.split(":", 1)[1]
     row = db.execute(
-        "SELECT value FROM black_barn_trait_values WHERE record_id = ? AND trait_key = ? AND frame_index IS NULL LIMIT 1",
+        """
+        SELECT AVG(value) AS v FROM black_barn_trait_values
+        WHERE record_id = ? AND trait_key = ?
+        """,
         (record_id, tname),
     ).fetchone()
-    if not row:
+    if not row or row["v"] is None:
         return None
     try:
-        return float(row["value"])
+        v = float(row["v"])
+        return v if v == v else None
     except (TypeError, ValueError):
         return None
 
