@@ -2957,6 +2957,8 @@ def _environment_for_request() -> str | None:
         'black_barn_correlacoes', 'serve_black_barn_media',
         'api_black_barn_correlation_points', 'api_black_barn_trait_defs',
         'api_black_barn_trait_value',
+        'api_black_barn_reprocess_all_start', 'api_black_barn_reprocess_all_status',
+        'api_black_barn_preview_segmentation', 'api_black_barn_preview_pose',
     }
     if ep in weather_eps:
         return 'weather'

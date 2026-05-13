@@ -6,13 +6,17 @@
 @media(max-width:1024px){.bb-grid{grid-template-columns:1fr}}
 .bb-panel{border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--surf)}
 .mono{font-family:var(--mono);font-size:11px}
+tr.bb-row-select{cursor:pointer}
+tr.bb-row-select:hover{background:var(--surf-2, rgba(0,0,0,.04))}
+tr.bb-row-active{outline:2px solid var(--accent);outline-offset:-2px}
+#bb-kp-img{min-height:120px;background:var(--surf-2, rgba(0,0,0,.06))}
 </style>
 {% endblock %}
 {% block content %}
 <div class="page-header">
   <div>
     <div class="page-title">⬛ <span>Black Barn</span> <span style="color:var(--accent)">keypoints</span></div>
-    <div class="page-sub">Pose Ultralytics (classes <strong>cow</strong> e <strong>UC</strong>) · correlacionar keypoints como traits</div>
+    <div class="page-sub">Pose Ultralytics (<span class="mono">bb_pose</span>) · correlacionar keypoints como traits</div>
   </div>
   <a class="btn btn-ghost btn-sm" href="{{ url_for('black_barn_importar') }}">← Importar</a>
 </div>
@@ -21,26 +25,46 @@
     <div class="card-title">Animais / mídia</div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>ID</th><th>Brinco</th><th>Tipo</th><th>Estado</th><th>Preview</th></tr></thead>
+        <thead><tr><th>ID</th><th>Brinco</th><th>Tipo</th><th>Estado</th><th>Frames</th><th>Preview</th></tr></thead>
         <tbody>
         {% for r in records %}
-        <tr>
+        <tr class="bb-row-select" data-bb-rid="{{ r.id }}" data-bb-frames="{{ r.preview_frame_count|default(0) }}" data-bb-kind="{{ r.kind }}">
           <td class="mono">{{ r.id }}</td>
           <td class="mono">{{ r.animal_tag }}</td>
           <td>{{ r.kind }}</td>
           <td>{{ r.status }}</td>
+          <td class="mono">{{ r.preview_frame_count|default(0) }}</td>
           <td>
             {% set u = r.public_single or r.public_lateral %}
             {% if u %}<img src="{{ u }}" alt="" style="max-width:120px;max-height:72px;border-radius:6px">{% else %}—{% endif %}
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="5"><div class="empty-state">Sem registos.</div></td></tr>
+        <tr><td colspan="6"><div class="empty-state">Sem registos.</div></td></tr>
         {% endfor %}
         </tbody>
       </table>
     </div>
-    <p class="page-sub" style="margin-top:12px">Editor de pares de keypoints, ângulos e distâncias normalizadas por instância — a gravar via API de traits.</p>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+      <div class="card-title">Keypoints inferidos</div>
+      <p class="page-sub" style="margin-bottom:8px">Seleccione um registo. O modelo <span class="mono">bb_pose</span> deve estar configurado em Modelos.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:10px">
+        <label class="mono" style="display:flex;align-items:center;gap:8px">Frame
+          <input type="range" id="bb-kp-frame" min="0" max="0" value="0" disabled style="width:min(280px,100%)">
+          <span id="bb-kp-frame-lbl">0</span>
+        </label>
+        <label id="bb-kp-clip-wrap" class="mono" style="display:none;align-items:center;gap:6px">Clip
+          <select id="bb-kp-clip">
+            <option value="auto">auto</option>
+            <option value="single">single</option>
+            <option value="lateral">lateral</option>
+            <option value="posterior">posterior</option>
+          </select>
+        </label>
+      </div>
+      <img id="bb-kp-img" src="" alt="Pose inferida" style="max-width:100%;border-radius:8px;border:1px solid var(--border);display:block">
+    </div>
+    <p class="page-sub" style="margin-top:12px">Editor de pares de keypoints e distâncias normalizadas — a gravar via API de traits.</p>
   </div>
   <div class="bb-panel">
     <div class="card-title">Traits de pose definidos</div>
@@ -54,7 +78,61 @@
   </div>
 </div>
 <div class="card" style="margin-top:16px">
-  <div class="card-title">Visão macro (placeholder)</div>
+  <div class="card-title">Visão macro</div>
   <p class="page-sub">Rankings e estatísticas por trait de keypoints após persistência de medições.</p>
 </div>
+<script>
+(function () {
+  var BASE = {{ pose_preview_base | tojson }};
+  var selRid = null;
+  var nFrames = 0;
+  var kind = '';
+  var img = document.getElementById('bb-kp-img');
+  var rng = document.getElementById('bb-kp-frame');
+  var lbl = document.getElementById('bb-kp-frame-lbl');
+  var clipWrap = document.getElementById('bb-kp-clip-wrap');
+  var clipSel = document.getElementById('bb-kp-clip');
+
+  function setActiveRow(tr) {
+    document.querySelectorAll('tr.bb-row-active').forEach(function (x) { x.classList.remove('bb-row-active'); });
+    if (tr) tr.classList.add('bb-row-active');
+  }
+
+  function refreshImg() {
+    if (!selRid || !BASE) {
+      img.removeAttribute('src');
+      return;
+    }
+    var f = parseInt(rng.value, 10) || 0;
+    var clip = (clipSel && clipWrap.style.display !== 'none') ? clipSel.value : 'auto';
+    img.src = BASE + selRid + '?frame=' + f + '&clip=' + encodeURIComponent(clip) + '&t=' + Date.now();
+  }
+
+  function selectRow(tr) {
+    if (!tr || !tr.dataset.bbRid) return;
+    selRid = tr.dataset.bbRid;
+    nFrames = Math.max(0, parseInt(tr.dataset.bbFrames || '0', 10) || 0);
+    kind = tr.dataset.bbKind || '';
+    setActiveRow(tr);
+    var maxIdx = Math.max(0, nFrames - 1);
+    rng.max = String(maxIdx);
+    rng.disabled = maxIdx < 1 && nFrames <= 1;
+    if (parseInt(rng.value, 10) > maxIdx) rng.value = '0';
+    lbl.textContent = rng.value;
+    var dual = kind === 'video_dual';
+    clipWrap.style.display = dual ? 'flex' : 'none';
+    refreshImg();
+  }
+
+  document.querySelectorAll('tr.bb-row-select').forEach(function (tr) {
+    tr.addEventListener('click', function () { selectRow(tr); });
+  });
+  rng.addEventListener('input', function () { lbl.textContent = rng.value; refreshImg(); });
+  rng.addEventListener('change', refreshImg);
+  if (clipSel) clipSel.addEventListener('change', refreshImg);
+
+  var first = document.querySelector('tr.bb-row-select');
+  if (first) selectRow(first);
+})();
+</script>
 {% endblock %}

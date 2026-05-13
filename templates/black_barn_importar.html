@@ -5,6 +5,11 @@
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 @media(max-width:900px){.row2{grid-template-columns:1fr}}
 .hint{font-size:12px;color:var(--text2);line-height:1.5;margin-top:6px}
+.bb-reproc{margin-top:12px;border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--surf2);display:none}
+.bb-reproc.visible{display:block}
+.bb-reproc .bar{width:100%;height:8px;border-radius:999px;background:var(--surf3);border:1px solid var(--border);overflow:hidden;margin:8px 0}
+.bb-reproc .fill{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .2s ease}
+.bb-reproc .meta{display:flex;justify-content:space-between;gap:10px;font-family:var(--mono);font-size:11px;color:var(--text2)}
 </style>
 {% endblock %}
 {% block content %}
@@ -14,6 +19,9 @@
     <div class="page-sub">Holstein · imagem ou vídeo (único ou par lateral+posterior) · brinco e lote</div>
   </div>
   <a class="btn btn-ghost btn-sm" href="{{ url_for('black_barn_dataset') }}">Dataset</a>
+  <button type="button" class="btn btn-ghost btn-sm" id="bb-reproc-header-btn" title="Reexecutar YOLO, segmentação, pose e Perspicuus em todos os registos">
+    ↻ Reprocessar todos
+  </button>
 </div>
 {% with messages = get_flashed_messages(with_categories=true) %}
 {% if messages %}{% for category, message in messages %}
@@ -21,9 +29,25 @@
 {% endfor %}{% endif %}
 {% endwith %}
 
+<div id="bb-reproc-progress" class="bb-reproc" aria-live="polite">
+  <div class="meta">
+    <span id="bb-reproc-status">Aguardando…</span>
+    <span id="bb-reproc-count">0 / 0</span>
+  </div>
+  <div class="bar"><div id="bb-reproc-fill" class="fill"></div></div>
+  <div id="bb-reproc-result" class="meta"><span>—</span></div>
+  <p class="hint" style="margin-top:8px;margin-bottom:0">Pipeline: o mesmo YOLO <span class="mono">bb_yolo</span> (ONNX) faz crop e classe lateral/posterior como no Perspicuus; slot <span class="mono">bb_identification</span> só se quiser outro ficheiro (.pt/ONNX) para votar vista · <strong>Perspicuus</strong> · segmentação · pose. Limite: <span class="mono">BB_REPROCESS_MAX</span> (5000). Opcional: filtrar por fazenda.</p>
+  <div class="row2" style="margin-top:10px;max-width:420px">
+    <div class="field"><label>Fazenda (vazio = todas)</label><input id="bb-reproc-farm" placeholder="slug fazenda"></div>
+    <div class="field" style="display:flex;align-items:flex-end">
+      <button type="button" class="btn btn-sm" id="bb-reproc-btn">Iniciar reprocessamento</button>
+    </div>
+  </div>
+</div>
+
 <div class="card">
   <div class="card-title">Novo registo (um ficheiro por vez)</div>
-  <p class="hint">Vídeo único: o YOLO de identificação (modelo <span class="mono">bb_identification</span>) pode votar a vista pelas classes (ex.: nomes com «lateral» ou «posterior»). Em alternativa, escolha a vista abaixo.</p>
+  <p class="hint">Vídeo único: voto automático de vista usa <span class="mono">bb_identification</span> se existir; senão o mesmo ONNX <span class="mono">bb_yolo</span> (classes / ids como no Perspicuus). Ou escolha a vista fixa abaixo.</p>
   <form method="post" enctype="multipart/form-data">
     <div class="row2">
       <div class="field"><label>Fazenda (slug)</label><input name="farm_id" value="default" placeholder="default"></div>
@@ -98,5 +122,87 @@
   sel.addEventListener('change', sync);
   sync();
 })();
+
+const BB_REPROC_START_URL = "{{ url_for('api_black_barn_reprocess_all_start') }}";
+const BB_REPROC_STATUS_BASE = "{{ url_for('api_black_barn_reprocess_all_status', job_id='__JOB__') }}";
+function bbReprocStatusUrl(jobId) {
+  return BB_REPROC_STATUS_BASE.replace('__JOB__', encodeURIComponent(jobId || ''));
+}
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+async function bbPollReproc(jobId) {
+  const wrap = document.getElementById('bb-reproc-progress');
+  const fill = document.getElementById('bb-reproc-fill');
+  const count = document.getElementById('bb-reproc-count');
+  const status = document.getElementById('bb-reproc-status');
+  const result = document.getElementById('bb-reproc-result');
+  wrap?.classList.add('visible');
+  for (;;) {
+    const r = await fetch(bbReprocStatusUrl(jobId), { credentials: 'same-origin' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    const total = Number(j.total || 0);
+    const processed = Number(j.processed || 0);
+    const pct = Number(j.progress_pct || 0);
+    if (fill) fill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+    if (count) count.textContent = `${processed} / ${total}`;
+    if (status) status.textContent = j.current_step || 'A processar…';
+    if (result) {
+      const errInfo = Number(j.errors || 0) > 0 ? ` · erros ${j.errors}` : '';
+      result.innerHTML = `<span>OK ${j.ok || 0}${errInfo}</span>`;
+    }
+    if (j.status === 'done' || j.status === 'failed') return j;
+    await sleep(900);
+  }
+}
+async function bbReprocessAll() {
+  const farm = (document.getElementById('bb-reproc-farm')?.value || '').trim();
+  const scope = farm ? `fazenda «${farm}»` : 'todas as fazendas';
+  if (!confirm(`Reprocessar todos os registos Black Barn (${scope})?\\n\\nSerá reaplicado: YOLO + segmentação + pose + Perspicuus.`)) return;
+  const wrap = document.getElementById('bb-reproc-progress');
+  const fill = document.getElementById('bb-reproc-fill');
+  const count = document.getElementById('bb-reproc-count');
+  const status = document.getElementById('bb-reproc-status');
+  const result = document.getElementById('bb-reproc-result');
+  const btn = document.getElementById('bb-reproc-btn');
+  const hbtn = document.getElementById('bb-reproc-header-btn');
+  wrap?.classList.add('visible');
+  if (fill) fill.style.width = '0%';
+  if (count) count.textContent = '0 / 0';
+  if (status) status.textContent = 'A iniciar…';
+  if (result) result.innerHTML = '<span>—</span>';
+  [btn, hbtn].forEach((b) => { if (b) b.disabled = true; });
+  try {
+    const startResp = await fetch(BB_REPROC_START_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ farm_id: farm }),
+    });
+    const start = await startResp.json().catch(() => ({}));
+    if (!startResp.ok) {
+      if (status) status.textContent = 'Falha ao iniciar';
+      toast(start.error || ('HTTP ' + startResp.status), false);
+      return;
+    }
+    if (!start.job_id) {
+      toast(start.error || 'job_id ausente', false);
+      return;
+    }
+    if (count) count.textContent = `0 / ${Number(start.total || 0)}`;
+    const done = await bbPollReproc(start.job_id);
+    if (done.status === 'failed') {
+      toast(`Reprocessamento falhou: ${done.current_step || 'erro'}`, false);
+      return;
+    }
+    toast(`Black Barn: ${done.ok || 0} OK · ${done.errors || 0} erros · ${done.total || 0} registo(s).`);
+    setTimeout(() => { window.location.reload(); }, 900);
+  } catch (e) {
+    toast('Falha de comunicação com o servidor.', false);
+  } finally {
+    [btn, hbtn].forEach((b) => { if (b) b.disabled = false; });
+  }
+}
+document.getElementById('bb-reproc-btn')?.addEventListener('click', bbReprocessAll);
+document.getElementById('bb-reproc-header-btn')?.addEventListener('click', bbReprocessAll);
 </script>
 {% endblock %}

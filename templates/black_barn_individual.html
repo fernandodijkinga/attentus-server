@@ -2,11 +2,15 @@
 {% block title %}Black Barn — indivíduo #{{ record.id }}{% endblock %}
 {% block head %}
 <style>
-.bb4{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:220px 220px;gap:10px;max-width:1100px}
+.bb4{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:minmax(220px,38vh) minmax(220px,38vh);gap:10px;max-width:1100px}
 .bb4 .cell{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#000;position:relative}
 .bb4 .cell.light{background:var(--surf2);color:var(--text);padding:10px;overflow:auto;font-family:var(--mono);font-size:11px}
 .bb4 video,.bb4 img{width:100%;height:100%;object-fit:contain}
 .bb4 .overlay{position:absolute;top:6px;left:6px;background:rgba(0,0,0,.55);color:#fff;padding:6px 8px;border-radius:6px;font-size:11px;max-width:92%}
+.bb4 .overlay.muted{font-size:10px;opacity:.95}
+details.bb-json-tech{margin-top:14px;max-width:1100px}
+details.bb-json-tech summary{cursor:pointer;font-weight:600;padding:8px 0;color:var(--text2)}
+details.bb-json-tech pre{margin:0;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:48vh;overflow:auto}
 </style>
 {% endblock %}
 {% block content %}
@@ -20,28 +24,42 @@
 {% set p = record.result_parsed %}
 {% set pub = record.public_single or record.public_lateral %}
 {% set persp = p.get('perspicuus') if p else None %}
+{% set pv_q = '?frame=0&clip=auto&cb=' ~ (record.status|string) ~ '-' ~ (record.id|string) %}
+{% set seg_src = url_for('api_black_barn_preview_segmentation', rid=record.id) ~ pv_q %}
+{% set pose_src = url_for('api_black_barn_preview_pose', rid=record.id) ~ pv_q %}
 <div class="bb4">
   <div class="cell">
     {% if pub %}
       {% if pub.endswith(('.mp4','.mov','.webm','.mkv')) %}
       <video src="{{ pub }}" controls muted loop playsinline></video>
       {% else %}
-      <img src="{{ pub }}" alt="">
+      <img src="{{ pub }}" alt="Mídia">
       {% endif %}
+      <div class="overlay muted">YOLO + Perspicuus</div>
       {% if persp is mapping and persp.get('traits') %}
-      <div class="overlay">{% for k,v in persp.traits.items() %}<div>{{ k }}: {{ '%.3f'|format(v) }}</div>{% endfor %}</div>
+      <div class="overlay" style="top:auto;bottom:6px;left:6px;right:6px;max-height:55%;overflow:auto">
+        {% for k,v in persp.traits.items() %}<div>{{ k }}: {{ '%.3f'|format(v) }}</div>{% endfor %}
+      </div>
+      {% elif persp is mapping and persp.get('frames') %}
+      <div class="overlay" style="top:auto;bottom:6px;left:6px;right:6px;max-height:55%;overflow:auto">
+        <div>{{ persp.frames|length }} frames · vista {{ record.inferred_view or (p or {}).get('inferred_view_used') or '—' }}</div>
+        {% set fr0 = persp.frames[0] if persp.frames else none %}
+        {% if fr0 is mapping and fr0.get('traits') %}
+          {% for k,v in fr0.traits.items() %}<div>{{ k }}: {{ '%.3f'|format(v) }}</div>{% endfor %}
+        {% endif %}
+      </div>
       {% endif %}
     {% else %}
     <div class="light">Sem mídia primária.</div>
     {% endif %}
   </div>
-  <div class="cell light">
-    <strong>Segmentação</strong>
-    <pre style="white-space:pre-wrap;margin-top:6px">{{ ((p or {}).get('segmentation') or {}) | tojson(indent=2) }}</pre>
+  <div class="cell">
+    <img src="{{ seg_src }}" alt="Segmentação inferida (máscaras)" loading="lazy">
+    <div class="overlay">Segmentação <span style="font-size:10px;opacity:.88">(bb_seg · frame 0)</span></div>
   </div>
-  <div class="cell light">
-    <strong>Pose</strong>
-    <pre style="white-space:pre-wrap;margin-top:6px">{{ ((p or {}).get('pose') or {}) | tojson(indent=2) }}</pre>
+  <div class="cell">
+    <img src="{{ pose_src }}" alt="Pose inferida (keypoints)" loading="lazy">
+    <div class="overlay">Pose <span style="font-size:10px;opacity:.88">(bb_pose · frame 0)</span></div>
   </div>
   <div class="cell light">
     <strong>Resumo / traits gravados</strong>
@@ -51,4 +69,8 @@
     {% endfor %}
   </div>
 </div>
+<details class="card bb-json-tech" style="padding:12px 14px">
+  <summary>JSON técnico (segmentação / pose)</summary>
+  <pre>{{ {'segmentation': (p or {}).get('segmentation'), 'pose': (p or {}).get('pose') } | tojson(indent=2) }}</pre>
+</details>
 {% endblock %}

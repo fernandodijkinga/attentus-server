@@ -9,15 +9,144 @@ import json
 import logging
 import math
 import os
+import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Dict, List
 
-from flask import abort, flash, jsonify, redirect, render_template, request, send_from_directory, url_for
+from flask import abort, flash, jsonify, redirect, render_template, request, send_from_directory, url_for, Response
 from werkzeug.utils import secure_filename
 
 log = logging.getLogger(__name__)
+
+BB_REPROCESS_JOBS: Dict[str, Dict[str, Any]] = {}
+BB_REPROCESS_LOCK = threading.Lock()
+
+
+def _bb_init_reprocess_job(*, farm_id: str, total: int, started_by: str) -> str:
+    job_id = uuid.uuid4().hex
+    with BB_REPROCESS_LOCK:
+        BB_REPROCESS_JOBS[job_id] = {
+            "job_id": job_id,
+            "farm_id_filter": farm_id or None,
+            "status": "running",
+            "started_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "finished_at": None,
+            "started_by": started_by,
+            "total": int(total),
+            "processed": 0,
+            "ok": 0,
+            "errors": 0,
+            "current_record_id": None,
+            "current_step": "A preparar reprocessamento Black Barn",
+            "sample_errors": [],
+        }
+    return job_id
+
+
+def _bb_update_reprocess_job(job_id: str, **fields: Any) -> None:
+    with BB_REPROCESS_LOCK:
+        job = BB_REPROCESS_JOBS.get(job_id)
+        if not job:
+            return
+        job.update(fields)
+
+
+def _bb_run_reprocess_job(job_id: str, ids: List[int], db_path: str, uploads_dir: str) -> None:
+    from black_barn_inference import process_record_on_disk
+    from perspicuus_inference import reset_engine
+
+    reset_engine("black_barn")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    ok_n = 0
+    err_n = 0
+    total = len(ids)
+    try:
+        for i, rid in enumerate(ids, start=1):
+            _bb_update_reprocess_job(
+                job_id,
+                processed=i - 1,
+                current_record_id=int(rid),
+                current_step=f"YOLO + segmentação + pose + Perspicuus · {i}/{total}",
+            )
+            try:
+                conn.execute(
+                    "UPDATE black_barn_records SET status = ?, error_text = NULL WHERE id = ?",
+                    ("processing", int(rid)),
+                )
+                conn.commit()
+            except sqlite3.Error:
+                log.warning("[BlackBarn] não foi possível marcar processing id=%s", rid)
+            try:
+                process_record_on_disk(int(rid), db_path, uploads_dir)
+            except Exception as ex:  # noqa: BLE001
+                log.exception("[BlackBarn] reprocess id=%s", rid)
+                err_n += 1
+                try:
+                    conn.execute(
+                        "UPDATE black_barn_records SET status = ?, error_text = ? WHERE id = ?",
+                        ("error", str(ex), int(rid)),
+                    )
+                    conn.commit()
+                except sqlite3.Error:
+                    pass
+                with BB_REPROCESS_LOCK:
+                    job = BB_REPROCESS_JOBS.get(job_id)
+                    if job and len(job.get("sample_errors") or []) < 25:
+                        se = list(job.get("sample_errors") or [])
+                        se.append({"id": int(rid), "error": str(ex)})
+                        job["sample_errors"] = se
+                _bb_update_reprocess_job(job_id, processed=i, ok=ok_n, errors=err_n)
+                continue
+            row = conn.execute(
+                "SELECT status, error_text FROM black_barn_records WHERE id = ?",
+                (int(rid),),
+            ).fetchone()
+            if row and str(row["status"] or "") == "done":
+                ok_n += 1
+            else:
+                err_n += 1
+                with BB_REPROCESS_LOCK:
+                    job = BB_REPROCESS_JOBS.get(job_id)
+                    if job and len(job.get("sample_errors") or []) < 25:
+                        se = list(job.get("sample_errors") or [])
+                        se.append({
+                            "id": int(rid),
+                            "error": str(row["error_text"] or row["status"] or "erro"),
+                        })
+                        job["sample_errors"] = se
+            _bb_update_reprocess_job(job_id, processed=i, ok=ok_n, errors=err_n)
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        _bb_update_reprocess_job(
+            job_id,
+            status="done",
+            finished_at=now,
+            current_step="Concluído",
+            current_record_id=None,
+            processed=total,
+            ok=ok_n,
+            errors=err_n,
+        )
+    except Exception as e:
+        log.exception("[BlackBarn] job reprocess falhou job=%s", job_id)
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        with BB_REPROCESS_LOCK:
+            j = BB_REPROCESS_JOBS.get(job_id) or {}
+            proc = int(j.get("processed") or 0)
+        _bb_update_reprocess_job(
+            job_id,
+            status="failed",
+            finished_at=now,
+            current_step=f"Falhou: {e}",
+            current_record_id=None,
+            processed=min(total, proc),
+            ok=ok_n,
+            errors=err_n,
+        )
+    finally:
+        conn.close()
 
 
 def register_black_barn(app) -> None:
@@ -175,8 +304,8 @@ def register_black_barn(app) -> None:
             "bb_lateral", "bb_posterior", "bb_lateral_meta", "bb_posterior_meta",
         ]
         role_labels = {
-            "bb_yolo": "YOLO deteção / crop (ONNX) — Perspicuus",
-            "bb_identification": "YOLO identificação de vista (.pt Ultralytics ou ONNX)",
+            "bb_yolo": "YOLO vista + crop (ONNX) — igual Perspicuus: bbox e classe lateral/posterior",
+            "bb_identification": "Opcional: .pt ou ONNX só para votar vista (se vazio, usa o ficheiro de bb_yolo)",
             "bb_seg": "YOLO segmentação (.pt Ultralytics)",
             "bb_pose": "YOLO pose — classes cow / UC (.pt Ultralytics)",
             "bb_lateral": "Perspicuus lateral (ONNX)",
@@ -244,6 +373,8 @@ def register_black_barn(app) -> None:
     @app.route("/genmate-black-barn/segmentacao")
     @main.login_required
     def black_barn_segmentacao():
+        from black_barn_inference import bb_preview_frame_count_for_record
+
         db = main.get_db()
         rows = db.execute(
             "SELECT id, farm_id, lot_id, animal_tag, kind, status, public_single, public_lateral, public_posterior FROM black_barn_records ORDER BY id DESC LIMIT 200"
@@ -251,15 +382,25 @@ def register_black_barn(app) -> None:
         defs = db.execute(
             "SELECT id, trait_key, label, source, config_json FROM black_barn_trait_defs WHERE source = 'seg' ORDER BY id DESC LIMIT 80"
         ).fetchall()
+        recs: list[dict[str, Any]] = []
+        for x in rows:
+            d = dict(x)
+            d["preview_frame_count"] = bb_preview_frame_count_for_record(d, main.UPLOADS_DIR, "auto")
+            recs.append(d)
+        _seg_u = url_for("api_black_barn_preview_segmentation", rid=0)
+        seg_preview_base = _seg_u.rsplit("/", 1)[0] + "/"
         return render_template(
             "black_barn_segmentacao.html",
-            records=[dict(x) for x in rows],
+            records=recs,
             trait_defs=[dict(x) for x in defs],
+            seg_preview_base=seg_preview_base,
         )
 
     @app.route("/genmate-black-barn/keypoints")
     @main.login_required
     def black_barn_keypoints():
+        from black_barn_inference import bb_preview_frame_count_for_record
+
         db = main.get_db()
         rows = db.execute(
             "SELECT id, farm_id, lot_id, animal_tag, kind, status, public_single, public_lateral, public_posterior FROM black_barn_records ORDER BY id DESC LIMIT 200"
@@ -267,10 +408,18 @@ def register_black_barn(app) -> None:
         defs = db.execute(
             "SELECT id, trait_key, label, source, config_json FROM black_barn_trait_defs WHERE source = 'kp' ORDER BY id DESC LIMIT 80"
         ).fetchall()
+        recs = []
+        for x in rows:
+            d = dict(x)
+            d["preview_frame_count"] = bb_preview_frame_count_for_record(d, main.UPLOADS_DIR, "auto")
+            recs.append(d)
+        _pose_u = url_for("api_black_barn_preview_pose", rid=0)
+        pose_preview_base = _pose_u.rsplit("/", 1)[0] + "/"
         return render_template(
             "black_barn_keypoints.html",
-            records=[dict(x) for x in rows],
+            records=recs,
             trait_defs=[dict(x) for x in defs],
+            pose_preview_base=pose_preview_base,
         )
 
     @app.route("/genmate-black-barn/individual/<int:rid>")
@@ -281,10 +430,7 @@ def register_black_barn(app) -> None:
         if not row:
             abort(404)
         r = dict(row)
-        try:
-            r["result_parsed"] = json.loads(r.get("result_json") or "{}")
-        except json.JSONDecodeError:
-            r["result_parsed"] = {}
+        r["result_parsed"] = _bb_parse_result_json(r.get("result_json"))
         traits = db.execute(
             "SELECT trait_key, value, frame_index FROM black_barn_trait_values WHERE record_id = ? ORDER BY trait_key",
             (rid,),
@@ -310,6 +456,72 @@ def register_black_barn(app) -> None:
         if not d.startswith(root + os.sep):
             abort(404)
         return send_from_directory(d, fn, as_attachment=False)
+
+    @app.route("/api/genmate-black-barn/preview/segmentation/<int:rid>", methods=["GET"])
+    @main.login_required
+    def api_black_barn_preview_segmentation(rid: int):
+        from perspicuus_inference import resolve_model_path
+
+        from black_barn_inference import (
+            bb_load_frame_bgr_for_record,
+            bb_png_message_bytes,
+            bb_render_segmentation_plot_png,
+        )
+
+        frame = int(request.args.get("frame", 0) or 0)
+        clip = str(request.args.get("clip", "auto") or "auto").strip().lower()
+        if clip not in ("auto", "single", "lateral", "posterior"):
+            clip = "auto"
+        db = main.get_db()
+        row = db.execute("SELECT * FROM black_barn_records WHERE id = ?", (rid,)).fetchone()
+        if not row:
+            return Response(bb_png_message_bytes("registo não encontrado"), mimetype="image/png")
+        rec = dict(row)
+        img = bb_load_frame_bgr_for_record(rec, main.UPLOADS_DIR, frame, clip)
+        if img is None:
+            return Response(bb_png_message_bytes("sem mídia ou frame inválido"), mimetype="image/png")
+        seg = resolve_model_path("bb_seg")
+        if not seg or not os.path.isfile(seg):
+            return Response(bb_png_message_bytes("modelo bb_seg (.pt) não configurado"), mimetype="image/png")
+        try:
+            png = bb_render_segmentation_plot_png(seg, img)
+        except Exception as ex:  # noqa: BLE001
+            log.exception("[BlackBarn] preview segmentação id=%s", rid)
+            png = bb_png_message_bytes(str(ex)[:200])
+        return Response(png, mimetype="image/png")
+
+    @app.route("/api/genmate-black-barn/preview/pose/<int:rid>", methods=["GET"])
+    @main.login_required
+    def api_black_barn_preview_pose(rid: int):
+        from perspicuus_inference import resolve_model_path
+
+        from black_barn_inference import (
+            bb_load_frame_bgr_for_record,
+            bb_png_message_bytes,
+            bb_render_pose_plot_png,
+        )
+
+        frame = int(request.args.get("frame", 0) or 0)
+        clip = str(request.args.get("clip", "auto") or "auto").strip().lower()
+        if clip not in ("auto", "single", "lateral", "posterior"):
+            clip = "auto"
+        db = main.get_db()
+        row = db.execute("SELECT * FROM black_barn_records WHERE id = ?", (rid,)).fetchone()
+        if not row:
+            return Response(bb_png_message_bytes("registo não encontrado"), mimetype="image/png")
+        rec = dict(row)
+        img = bb_load_frame_bgr_for_record(rec, main.UPLOADS_DIR, frame, clip)
+        if img is None:
+            return Response(bb_png_message_bytes("sem mídia ou frame inválido"), mimetype="image/png")
+        pose = resolve_model_path("bb_pose")
+        if not pose or not os.path.isfile(pose):
+            return Response(bb_png_message_bytes("modelo bb_pose (.pt) não configurado"), mimetype="image/png")
+        try:
+            png = bb_render_pose_plot_png(pose, img)
+        except Exception as ex:  # noqa: BLE001
+            log.exception("[BlackBarn] preview pose id=%s", rid)
+            png = bb_png_message_bytes(str(ex)[:200])
+        return Response(png, mimetype="image/png")
 
     @app.route("/api/genmate-black-barn/correlations/points")
     @main.login_required
@@ -396,20 +608,97 @@ def register_black_barn(app) -> None:
         db.commit()
         return jsonify({"ok": True})
 
+    @app.route("/api/genmate-black-barn/reprocess-all/start", methods=["POST"])
+    @main.login_required
+    def api_black_barn_reprocess_all_start():
+        data = request.get_json(silent=True) or {}
+        farm = str(data.get("farm_id") or request.args.get("farm_id", "") or "").strip()
+        max_n = max(1, min(10000, int(os.environ.get("BB_REPROCESS_MAX", "5000"))))
+        conn = sqlite3.connect(main.DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cond, params = ["1=1"], []
+        if farm:
+            cond.append("farm_id = ?")
+            params.append(farm)
+        where = " AND ".join(cond)
+        ids = [
+            int(r["id"])
+            for r in conn.execute(
+                f"SELECT id FROM black_barn_records WHERE {where} ORDER BY id ASC LIMIT ?",
+                params + [max_n],
+            ).fetchall()
+        ]
+        conn.close()
+        job_id = _bb_init_reprocess_job(
+            farm_id=farm,
+            total=len(ids),
+            started_by=str(main.session.get("username") or "unknown"),
+        )
+        if not ids:
+            _bb_update_reprocess_job(
+                job_id,
+                status="done",
+                finished_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                current_step="Sem registos para reprocessar",
+                processed=0,
+                total=0,
+            )
+            return jsonify({"status": "done", "job_id": job_id, "total": 0})
+        threading.Thread(
+            target=_bb_run_reprocess_job,
+            args=(job_id, ids, main.DB_PATH, main.UPLOADS_DIR),
+            daemon=True,
+        ).start()
+        return jsonify({"status": "started", "job_id": job_id, "total": len(ids), "farm_id_filter": farm or None})
+
+    @app.route("/api/genmate-black-barn/reprocess-all/status/<job_id>", methods=["GET"])
+    @main.login_required
+    def api_black_barn_reprocess_all_status(job_id: str):
+        with BB_REPROCESS_LOCK:
+            job = dict(BB_REPROCESS_JOBS.get(job_id) or {})
+        if not job:
+            return jsonify({"error": "job_not_found"}), 404
+        total = int(job.get("total") or 0)
+        processed = int(job.get("processed") or 0)
+        pct = int(round((processed / total) * 100)) if total > 0 else 100
+        job["progress_pct"] = max(0, min(100, pct))
+        return jsonify(job)
+
 
 def _run_bb_worker(record_id: int, db_path: str, uploads_dir: str) -> None:
     from black_barn_inference import process_record_on_disk
 
     process_record_on_disk(record_id, db_path, uploads_dir)
+
+
+def _bb_parse_result_json(raw: Any) -> dict[str, Any]:
+    """Garante dict para `result_json`; evita 500 se o JSON for lista/número ou inválido."""
+    if raw is None:
+        return {}
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            raw = raw.decode("utf-8", errors="replace")
+        except Exception:
+            return {}
+    if not isinstance(raw, str):
+        return {}
+    s = raw.strip()
+    if not s:
+        return {}
+    try:
+        v = json.loads(s)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {}
+    return v if isinstance(v, dict) else {}
+
+
+def _collect_trait_keys(db) -> list[dict[str, Any]]:
     rows = db.execute(
         "SELECT id, result_json FROM black_barn_records WHERE status = 'done' ORDER BY id DESC LIMIT 500"
     ).fetchall()
     keys: dict[str, str] = {}
     for row in rows:
-        try:
-            rj = json.loads(row["result_json"] or "{}")
-        except json.JSONDecodeError:
-            continue
+        rj = _bb_parse_result_json(row["result_json"])
         p = rj.get("perspicuus")
         if isinstance(p, dict):
             traits = p.get("traits")
@@ -468,10 +757,7 @@ def _paired_trait_points(db, xk: str, yk: str) -> tuple[list[list[float]], str, 
 
     for row in rows:
         rid = row["id"]
-        try:
-            parsed = json.loads(row["result_json"] or "{}")
-        except json.JSONDecodeError:
-            continue
+        parsed = _bb_parse_result_json(row["result_json"])
         parsed = {**parsed, "_record_id": rid}
         xv = get_val(parsed, xk)
         yv = get_val(parsed, yk)

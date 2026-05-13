@@ -275,5 +275,5 @@ Os dados serão salvos em `./data/` (criado automaticamente).
 # ATUALIZAR GITHUB
 # cd /Users/fernandojeandijkinga/codigos/Render-Attentus/attentus-server
 # git add -A
-# git commit -m "Melhorias no sistema de onnx models"
+# git commit -m "Projeto Black Barn mk2"
 # git push origin main

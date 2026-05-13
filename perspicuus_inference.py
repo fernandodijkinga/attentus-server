@@ -1,6 +1,9 @@
 """
 Inferência Perspicuus MK1 (YOLO CowView + iudicium ONNX por vista).
 
+O YOLO CowView faz **deteção e crop** do animal; em modelos multi-classe, a classe da
+melhor deteção corresponde à vista (**lateral** ou **posterior**), antes do iudicium.
+
 Apenas vistas **lateral** e **posterior** — modelos distintos via variáveis de ambiente.
 Armazena todas as traits devolvidas pelo ONNX (nomes vindos de metadata.json).
 

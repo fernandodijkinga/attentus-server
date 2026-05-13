@@ -1,10 +1,12 @@
 """
 GenMate Black Barn — inferência Holstein (lateral / posterior, imagem ou vídeo).
 
-- Motor Perspicuus: `get_engine("black_barn")` (YOLO bb_yolo + ONNX lateral/posterior).
-- Vídeo único: vista por campo no formulário ou heurística por nomes de classe do modelo
-  de identificação (Ultralytics .pt / ONNX) quando configurado em `bb_identification`.
-- Segmentação e pose (.pt Ultralytics): carregamento lazy; resultados guardados em `result_json`.
+- Motor Perspicuus: `get_engine("black_barn")` — o mesmo YOLO ONNX (`bb_yolo`) que no
+  Perspicuus Brete/Holandês: deteção + crop e, em modelos multi-classe, a classe indica
+  «lateral» ou «posterior» (nomes ou ids 0/1 como no export CowView).
+- Voto automático de vista: usa `bb_identification` se existir; caso contrário reutiliza
+  o ficheiro de `bb_yolo` (mesma inferência, sem segundo modelo obrigatório).
+- Segmentação e pose (.pt Ultralytics): lazy; resultados em `result_json`.
 """
 
 from __future__ import annotations
@@ -19,6 +21,9 @@ import cv2
 import numpy as np
 
 log = logging.getLogger(__name__)
+
+BB_VIDEO_EXTS = (".mp4", ".mov", ".webm", ".mkv")
+BB_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 
 
 def _view_from_class_name(name: str) -> Optional[str]:
@@ -42,13 +47,27 @@ def _vote_views(views: List[str]) -> str:
     return "lateral"
 
 
+def bb_identification_model_path() -> Optional[str]:
+    """
+    Caminho para votar lateral/posterior: slot `bb_identification`, senão o mesmo
+    ONNX que `bb_yolo` (comportamento Perspicuus — um YOLO faz crop e identifica a vista).
+    """
+    from perspicuus_inference import resolve_model_path
+
+    for role in ("bb_identification", "bb_yolo"):
+        p = resolve_model_path(role)
+        if p and os.path.isfile(p):
+            return p
+    return None
+
+
 def infer_view_with_identification_model(
     frame_bgr: np.ndarray,
     model_path: Optional[str],
 ) -> Optional[str]:
     """
-    Usa modelo bb_identification (.pt YOLO ou ONNX export) na frame.
-    Devolve 'lateral'|'posterior' conforme a classe da melhor deteção, ou None.
+    Corre o YOLO de vista na frame (.pt Ultralytics ou ONNX, típico export CowView).
+    Devolve 'lateral'|'posterior' pela classe da melhor deteção (nomes ou id 0/1), ou None.
     """
     if not model_path or not os.path.isfile(model_path):
         return None
@@ -74,8 +93,6 @@ def infer_view_with_identification_model(
             return None
     if ext == ".onnx":
         try:
-            import onnxruntime as ort  # type: ignore
-
             from perspicuus_inference import _create_ort_session, postprocess_yolo, letterbox, YOLO_INPUT_SIZE
 
             sess = _create_ort_session(model_path)
@@ -128,6 +145,210 @@ def sample_video_frames(path: str, max_frames: int = 12) -> List[np.ndarray]:
     return frames
 
 
+def _ultralytics_predict_first(
+    m: Any,
+    frame_bgr: np.ndarray,
+) -> Any:
+    """
+    predict() com opções estáveis em CPU (evita caminhos retina / half que em algumas
+    versões disparam erros internos, ex. OrderedDict sem .float()).
+    """
+    import numpy as _np
+
+    if frame_bgr is None or frame_bgr.size == 0:
+        raise ValueError("frame vazio")
+    img = _np.ascontiguousarray(frame_bgr)
+    if img.dtype != _np.uint8:
+        img = _np.clip(img, 0, 255).astype(_np.uint8)
+    kw: Dict[str, Any] = {"verbose": False, "half": False, "retina_masks": False}
+    try:
+        import torch  # type: ignore
+
+        if not torch.cuda.is_available():
+            kw["device"] = "cpu"
+    except Exception:
+        pass
+    try:
+        return m.predict(img, **kw)[0]
+    except TypeError:
+        kw.pop("device", None)
+        try:
+            return m.predict(img, **kw)[0]
+        except TypeError:
+            return m.predict(img, verbose=False)[0]
+
+
+def bb_media_disk_path(web_path: str, uploads_root: str) -> Optional[str]:
+    """Converte URL `/api/black-barn/media/...` em caminho absoluto no disco."""
+    if not web_path or not str(web_path).startswith("/api/black-barn/media/"):
+        return None
+    rest = str(web_path)[len("/api/black-barn/media/") :].lstrip("/")
+    if "/" not in rest:
+        return None
+    a, b = rest.split("/", 1)
+    from werkzeug.utils import secure_filename
+
+    ef, fn = secure_filename(a), secure_filename(b)
+    fp = os.path.abspath(os.path.join(uploads_root, "black_barn", ef, fn))
+    base = os.path.abspath(os.path.join(uploads_root, "black_barn", ef))
+    if fp.startswith(base + os.sep) and os.path.isfile(fp):
+        return fp
+    return None
+
+
+def bb_pick_media_disk(record: Dict[str, Any], uploads_root: str, clip: str = "auto") -> Optional[str]:
+    clip = (clip or "auto").strip().lower()
+    keys: List[str]
+    if clip == "single":
+        keys = ["public_single"]
+    elif clip == "lateral":
+        keys = ["public_lateral", "public_single"]
+    elif clip == "posterior":
+        keys = ["public_posterior", "public_single"]
+    else:
+        keys = ["public_single", "public_lateral", "public_posterior"]
+    for k in keys:
+        disk = bb_media_disk_path(str(record.get(k) or ""), uploads_root)
+        if disk:
+            return disk
+    return None
+
+
+def bb_video_frame_count_disk(disk_path: str) -> int:
+    ext = os.path.splitext(disk_path)[1].lower()
+    if ext not in BB_VIDEO_EXTS:
+        return 0
+    cap = cv2.VideoCapture(disk_path)
+    if not cap.isOpened():
+        return 0
+    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    cap.release()
+    return max(0, n)
+
+
+def bb_preview_frame_count_for_record(record: Dict[str, Any], uploads_root: str, clip: str = "auto") -> int:
+    disk = bb_pick_media_disk(record, uploads_root, clip)
+    if not disk:
+        return 0
+    ext = os.path.splitext(disk)[1].lower()
+    if ext in BB_IMAGE_EXTS:
+        return 1
+    n = bb_video_frame_count_disk(disk)
+    return max(1, n) if n > 0 else 0
+
+
+def bb_load_frame_bgr_for_record(
+    record: Dict[str, Any],
+    uploads_root: str,
+    frame_index: int = 0,
+    clip: str = "auto",
+) -> Optional[np.ndarray]:
+    disk = bb_pick_media_disk(record, uploads_root, clip)
+    if not disk:
+        return None
+    ext = os.path.splitext(disk)[1].lower()
+    if ext in BB_IMAGE_EXTS:
+        return cv2.imread(disk)
+    if ext in BB_VIDEO_EXTS:
+        cap = cv2.VideoCapture(disk)
+        if not cap.isOpened():
+            return None
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        fi = max(0, min(int(frame_index), max(0, n - 1))) if n > 0 else 0
+        cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
+        ok, fr = cap.read()
+        cap.release()
+        return fr if ok else None
+    return None
+
+
+def _bb_yolo_predict_one_result(m: Any, frame_bgr: np.ndarray) -> Any:
+    """Primeiro `Results` Ultralytics (BGR/RGB + fallback lista)."""
+    r = None
+    errs: List[str] = []
+    for im in (
+        np.ascontiguousarray(frame_bgr),
+        np.ascontiguousarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)),
+    ):
+        if im.dtype != np.uint8:
+            im = np.clip(im, 0, 255).astype(np.uint8)
+        for use_list in (False, True):
+            try:
+                if use_list:
+                    r = m.predict(  # type: ignore[misc]
+                        [im], verbose=False, half=False, retina_masks=False
+                    )[0]
+                else:
+                    r = _ultralytics_predict_first(m, im)
+                break
+            except Exception as ex:  # noqa: BLE001
+                errs.append(str(ex))
+                r = None
+        if r is not None:
+            break
+    if r is None:
+        raise RuntimeError("; ".join(errs[-5:]) if errs else "predict falhou")
+    return r
+
+
+def bb_png_message_bytes(message: str) -> bytes:
+    msg = (message or "?")[:200]
+    w = max(420, min(1200, 12 * len(msg)))
+    img = np.full((140, w, 3), 235, np.uint8)
+    y = 50
+    for line in [msg[i : i + 70] for i in range(0, len(msg), 70)] or [msg]:
+        cv2.putText(img, line, (12, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (40, 40, 40), 1, cv2.LINE_AA)
+        y += 22
+    ok, buf = cv2.imencode(".png", img)
+    return bytes(buf) if ok else b""
+
+
+def bb_render_segmentation_plot_png(model_path: str, frame_bgr: np.ndarray) -> bytes:
+    from ultralytics import YOLO  # type: ignore
+
+    m = YOLO(model_path)
+    r = _bb_yolo_predict_one_result(m, frame_bgr)
+    plotted = r.plot()
+    if plotted is None:
+        return bb_png_message_bytes("segmentação: plot vazio")
+    arr = np.asarray(plotted)
+    if arr.dtype != np.uint8:
+        arr = np.clip(arr, 0, 255).astype(np.uint8)
+    ok, buf = cv2.imencode(".png", arr)
+    return bytes(buf) if ok else bb_png_message_bytes("segmentação: PNG falhou")
+
+
+def bb_render_pose_plot_png(model_path: str, frame_bgr: np.ndarray) -> bytes:
+    from ultralytics import YOLO  # type: ignore
+
+    m = YOLO(model_path)
+    r = _bb_yolo_predict_one_result(m, frame_bgr)
+    plotted = r.plot()
+    if plotted is None:
+        return bb_png_message_bytes("pose: plot vazio")
+    arr = np.asarray(plotted)
+    if arr.dtype != np.uint8:
+        arr = np.clip(arr, 0, 255).astype(np.uint8)
+    ok, buf = cv2.imencode(".png", arr)
+    return bytes(buf) if ok else bb_png_message_bytes("pose: PNG falhou")
+    """Tensor de máscaras [N,H,W] ou None (sem tocar em atributos que disparam bugs)."""
+    try:
+        import torch  # type: ignore
+    except ImportError:
+        return None
+    if masks_obj is None:
+        return None
+    for attr in ("masks", "data"):
+        raw = getattr(masks_obj, attr, None)
+        if isinstance(raw, torch.Tensor):
+            return raw
+        if isinstance(raw, dict):
+            for v in raw.values():
+                if isinstance(v, torch.Tensor):
+                    return v
+    return None
+
+
 def run_ultralytics_segmentation(
     frame_bgr: np.ndarray,
     model_path: Optional[str],
@@ -140,12 +361,38 @@ def run_ultralytics_segmentation(
         return {"ok": False, "error": "ultralytics_nao_instalado"}
     try:
         m = YOLO(model_path)
-        r = m.predict(frame_bgr, verbose=False)[0]
+        r = _bb_yolo_predict_one_result(m, frame_bgr)
+
         masks = getattr(r, "masks", None)
-        if masks is None or masks.data is None:
-            return {"ok": True, "n_masks": 0, "masks_shape": None}
-        data = masks.data.cpu().numpy() if hasattr(masks.data, "cpu") else np.asarray(masks.data)
-        return {"ok": True, "n_masks": int(data.shape[0]), "masks_shape": list(data.shape)}
+        shape_list: Optional[List[int]] = None
+        n_masks = 0
+
+        if masks is not None:
+            t = _mask_tensor_from_ultralytics(masks)
+            if t is not None:
+                try:
+                    if hasattr(t, "detach"):
+                        arr = t.detach().float().cpu().numpy()
+                    else:
+                        arr = np.asarray(t, dtype=np.float32)
+                    n_masks = int(arr.shape[0])
+                    shape_list = list(arr.shape)
+                except Exception:
+                    n_masks = 0
+            if n_masks == 0 and getattr(masks, "xy", None) is not None:
+                try:
+                    n_masks = len(masks.xy)
+                except TypeError:
+                    n_masks = 0
+        if n_masks == 0 and getattr(r, "boxes", None) is not None:
+            try:
+                n_boxes = len(r.boxes)
+                if n_boxes > 0 and masks is not None:
+                    n_masks = n_boxes
+            except TypeError:
+                pass
+
+        return {"ok": True, "n_masks": int(n_masks), "masks_shape": shape_list}
     except Exception as e:
         log.exception("[BlackBarn] segmentação")
         return {"ok": False, "error": str(e)}
@@ -163,7 +410,7 @@ def run_ultralytics_pose(
         return {"ok": False, "error": "ultralytics_nao_instalado"}
     try:
         m = YOLO(model_path)
-        r = m.predict(frame_bgr, verbose=False)[0]
+        r = _bb_yolo_predict_one_result(m, frame_bgr)
         k = getattr(r, "keypoints", None)
         if k is None or k.xy is None:
             return {"ok": True, "n_instances": 0}
@@ -178,7 +425,7 @@ def _resolve_paths() -> Tuple[Any, Any, Any, Any]:
     from perspicuus_inference import get_engine as get_eng, resolve_model_path
 
     return (
-        resolve_model_path("bb_identification"),
+        bb_identification_model_path(),
         resolve_model_path("bb_seg"),
         resolve_model_path("bb_pose"),
         get_eng,
