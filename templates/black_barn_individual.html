@@ -2,15 +2,20 @@
 {% block title %}Black Barn — indivíduo #{{ record.id }}{% endblock %}
 {% block head %}
 <style>
-.bb4{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:minmax(220px,38vh) minmax(220px,38vh);gap:10px;max-width:1100px}
+.bb4-wrap{max-width:1280px}
+.bb-controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:10px}
+.bb4{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:minmax(200px,36vh) minmax(200px,36vh);gap:10px}
+@media(min-width:1200px){
+  .bb4{grid-template-columns:repeat(4,minmax(0,1fr));grid-template-rows:minmax(220px,40vh)}
+}
 .bb4 .cell{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#000;position:relative}
 .bb4 .cell.light{background:var(--surf2);color:var(--text);padding:10px;overflow:auto;font-family:var(--mono);font-size:11px}
 .bb4 video,.bb4 img{width:100%;height:100%;object-fit:contain}
-.bb4 .overlay{position:absolute;top:6px;left:6px;background:rgba(0,0,0,.55);color:#fff;padding:6px 8px;border-radius:6px;font-size:11px;max-width:92%}
-.bb4 .overlay.muted{font-size:10px;opacity:.95}
-details.bb-json-tech{margin-top:14px;max-width:1100px}
+.bb4 .overlay{position:absolute;top:6px;left:6px;background:rgba(0,0,0,.6);color:#fff;padding:6px 8px;border-radius:6px;font-size:10px;max-width:94%}
+.bb4 .overlay.traitbox{top:auto;bottom:6px;left:6px;right:6px;max-height:52%;overflow:auto;font-size:10px}
+details.bb-json-tech{margin-top:14px;max-width:1280px}
 details.bb-json-tech summary{cursor:pointer;font-weight:600;padding:8px 0;color:var(--text2)}
-details.bb-json-tech pre{margin:0;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:48vh;overflow:auto}
+details.bb-json-tech pre{margin:0;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:40vh;overflow:auto}
 </style>
 {% endblock %}
 {% block content %}
@@ -21,56 +26,116 @@ details.bb-json-tech pre{margin:0;font-size:11px;white-space:pre-wrap;word-break
   </div>
   <a class="btn btn-ghost btn-sm" href="{{ url_for('black_barn_dataset') }}">← Dataset</a>
 </div>
+<div class="bb4-wrap">
+  <div class="bb-controls mono">
+    <label>Frame processado (segmentação / pose)
+      <input type="range" id="bb-ind-frame" min="0" max="0" value="0" style="width:min(320px,55vw)">
+      <span id="bb-ind-frame-lbl">0</span>
+    </label>
+  </div>
 {% set p = record.result_parsed %}
 {% set pub = record.public_single or record.public_lateral %}
 {% set persp = p.get('perspicuus') if p else None %}
-{% set pv_q = '?frame=0&clip=auto&cb=' ~ (record.status|string) ~ '-' ~ (record.id|string) %}
-{% set seg_src = url_for('api_black_barn_preview_segmentation', rid=record.id) ~ pv_q %}
-{% set pose_src = url_for('api_black_barn_preview_pose', rid=record.id) ~ pv_q %}
-<div class="bb4">
-  <div class="cell">
-    {% if pub %}
-      {% if pub.endswith(('.mp4','.mov','.webm','.mkv')) %}
-      <video src="{{ pub }}" controls muted loop playsinline></video>
-      {% else %}
-      <img src="{{ pub }}" alt="Mídia">
-      {% endif %}
-      <div class="overlay muted">YOLO + Perspicuus</div>
-      {% if persp is mapping and persp.get('traits') %}
-      <div class="overlay" style="top:auto;bottom:6px;left:6px;right:6px;max-height:55%;overflow:auto">
-        {% for k,v in persp.traits.items() %}<div>{{ k }}: {{ '%.3f'|format(v) }}</div>{% endfor %}
-      </div>
-      {% elif persp is mapping and persp.get('frames') %}
-      <div class="overlay" style="top:auto;bottom:6px;left:6px;right:6px;max-height:55%;overflow:auto">
-        <div>{{ persp.frames|length }} frames · vista {{ record.inferred_view or (p or {}).get('inferred_view_used') or '—' }}</div>
-        {% set fr0 = persp.frames[0] if persp.frames else none %}
-        {% if fr0 is mapping and fr0.get('traits') %}
-          {% for k,v in fr0.traits.items() %}<div>{{ k }}: {{ '%.3f'|format(v) }}</div>{% endfor %}
+  <div class="bb4">
+    <div class="cell">
+      {% if pub %}
+        {% if pub.endswith(('.mp4','.mov','.webm','.mkv')) %}
+        <video id="bb-ind-vid" src="{{ pub }}" controls muted playsinline></video>
+        {% else %}
+        <img src="{{ pub }}" alt="Mídia">
         {% endif %}
-      </div>
+        <div class="overlay">YOLO + Perspicuus</div>
+        {% if persp is mapping and persp.get('traits') %}
+        <div class="overlay traitbox">
+          {% for k,v in persp.traits.items() %}<div><strong>{{ k }}</strong> trait {{ '%.4f'|format(v) }}</div>{% endfor %}
+          {% if persp.get('scores_raw') %}<div style="margin-top:6px;opacity:.9">raw: {% for s in persp.scores_raw %}{{ '%.3f'|format(s) }}{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
+        </div>
+        {% elif persp is mapping and persp.get('frames') %}
+        {% set fr0 = persp.frames[0] if persp.frames else none %}
+        <div class="overlay traitbox">
+          <div>{{ persp.frames|length }} frames · vista {{ record.inferred_view or (p or {}).get('inferred_view_used') or '—' }}</div>
+          {% if fr0 is mapping %}
+            {% if fr0.get('traits') %}{% for k,v in fr0.traits.items() %}<div><strong>{{ k }}</strong> {{ '%.4f'|format(v) }}</div>{% endfor %}{% endif %}
+            {% if fr0.get('scores_raw') %}<div style="margin-top:6px">raw: {% for s in fr0.scores_raw %}{{ '%.3f'|format(s) }}{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
+            {% if fr0.get('yolo_conf') is not none %}<div>yolo_conf {{ '%.3f'|format(fr0.yolo_conf) }}</div>{% endif %}
+          {% endif %}
+        </div>
+        {% endif %}
+      {% else %}
+      <div class="light">Sem mídia primária.</div>
       {% endif %}
-    {% else %}
-    <div class="light">Sem mídia primária.</div>
-    {% endif %}
-  </div>
-  <div class="cell">
-    <img src="{{ seg_src }}" alt="Segmentação inferida (máscaras)" loading="lazy">
-    <div class="overlay">Segmentação <span style="font-size:10px;opacity:.88">(bb_seg · frame 0)</span></div>
-  </div>
-  <div class="cell">
-    <img src="{{ pose_src }}" alt="Pose inferida (keypoints)" loading="lazy">
-    <div class="overlay">Pose <span style="font-size:10px;opacity:.88">(bb_pose · frame 0)</span></div>
-  </div>
-  <div class="cell light">
-    <strong>Resumo / traits gravados</strong>
-    <div style="margin-top:6px">Estado: {{ record.status }} · Vista: {{ record.inferred_view or '—' }}</div>
-    {% for t in trait_rows %}
-    <div>{{ t.trait_key }}: {{ t.value }}{% if t.frame_index is not none %} (frame {{ t.frame_index }}){% endif %}</div>
-    {% endfor %}
+    </div>
+    <div class="cell">
+      <img id="bb-ind-seg" src="" alt="Segmentação" loading="lazy">
+      <div class="overlay">Segmentação processada</div>
+    </div>
+    <div class="cell">
+      <img id="bb-ind-pose" src="" alt="Pose" loading="lazy">
+      <div class="overlay">Keypoints processados</div>
+    </div>
+    <div class="cell light">
+      <strong>Estatísticas do modelo</strong>
+      <div style="margin-top:8px">Estado: {{ record.status }}</div>
+      <div>Vista inferida: {{ record.inferred_view or '—' }}</div>
+      {% if p %}
+      <div style="margin-top:8px"><strong>Perspicuus</strong></div>
+      {% if persp is mapping and persp.get('error') %}<div>erro: {{ persp.error }}</div>{% endif %}
+      {% if persp is mapping and persp.get('infer_ms') %}<div>infer_ms {{ persp.infer_ms }}</div>{% endif %}
+      {% set segp = p.get('segmentation') if p else none %}
+      {% if segp is mapping and segp.get('per_clip') %}
+      <div class="mono">{{ segp.per_clip|length }} clip(s) · 1º: n_masks {{ (segp.per_clip[0].n_masks) if segp.per_clip[0] is mapping else '—' }}</div>
+      {% elif segp is mapping %}
+      <div class="mono">n_masks {{ segp.get('n_masks', '—') }}</div>
+      {% else %}
+      <div class="mono">—</div>
+      {% endif %}
+      <div style="margin-top:8px"><strong>Pose</strong></div>
+      {% set posep = p.get('pose') if p else none %}
+      {% if posep is mapping and posep.get('per_clip') %}
+      <div class="mono">{{ posep.per_clip|length }} clip(s) · 1º: inst {{ (posep.per_clip[0].n_instances) if posep.per_clip[0] is mapping else '—' }}</div>
+      {% elif posep is mapping %}
+      <div class="mono">n_inst {{ posep.get('n_instances', '—') }}</div>
+      {% else %}
+      <div class="mono">—</div>
+      {% endif %}
+      {% endif %}
+      <div style="margin-top:10px"><strong>Traits gravados</strong></div>
+      {% for t in trait_rows %}
+      <div>{{ t.trait_key }}: {{ t.value }}{% if t.frame_index is not none %} (f{{ t.frame_index }}){% endif %}</div>
+      {% else %}<div>—</div>{% endfor %}
+    </div>
   </div>
 </div>
-<details class="card bb-json-tech" style="padding:12px 14px">
-  <summary>JSON técnico (segmentação / pose)</summary>
+<details class="card bb-json-tech" style="padding:12px 14px;margin-top:12px">
+  <summary>JSON técnico</summary>
   <pre>{{ {'segmentation': (p or {}).get('segmentation'), 'pose': (p or {}).get('pose') } | tojson(indent=2) }}</pre>
 </details>
+<script>
+(function(){
+  var segUrl = {{ seg_preview_url | tojson }};
+  var poseUrl = {{ pose_preview_url | tojson }};
+  var rng = document.getElementById('bb-ind-frame');
+  var lbl = document.getElementById('bb-ind-frame-lbl');
+  var segImg = document.getElementById('bb-ind-seg');
+  var poseImg = document.getElementById('bb-ind-pose');
+  var nf = {{ preview_frame_count|int }};
+  if (rng) {
+    var maxIdx = Math.max(0, nf - 1);
+    rng.max = String(maxIdx);
+    rng.disabled = maxIdx < 1;
+    function q(u, f) {
+      var sep = u.indexOf('?') >= 0 ? '&' : '?';
+      return u + sep + 'frame=' + f + '&clip=auto&cb={{ record.status }}-{{ record.id }}-' + f;
+    }
+    function sync() {
+      var f = parseInt(rng.value, 10) || 0;
+      lbl.textContent = String(f);
+      if (segImg && segUrl) segImg.src = q(segUrl, f);
+      if (poseImg && poseUrl) poseImg.src = q(poseUrl, f);
+    }
+    rng.addEventListener('input', sync);
+    sync();
+  }
+})();
+</script>
 {% endblock %}

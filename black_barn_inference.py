@@ -303,18 +303,126 @@ def bb_png_message_bytes(message: str) -> bytes:
     return bytes(buf) if ok else b""
 
 
+def _mask_tensor_from_ultralytics(masks_obj: Any) -> Any:
+    """Extrai tensor/array de máscaras; evita OrderedDict e estruturas aninhadas sem .float()."""
+    try:
+        import torch  # type: ignore
+    except ImportError:
+        torch = None  # type: ignore
+
+    if masks_obj is None:
+        return None
+
+    def _coalesce(x: Any) -> Any:
+        if x is None:
+            return None
+        if torch is not None and isinstance(x, torch.Tensor):
+            return x
+        if isinstance(x, np.ndarray):
+            return x
+        if isinstance(x, dict):
+            for v in x.values():
+                got = _coalesce(v)
+                if got is not None:
+                    return got
+        return None
+
+    for attr in ("data", "masks"):
+        raw = getattr(masks_obj, attr, None)
+        t = _coalesce(raw)
+        if t is not None:
+            return t
+    return None
+
+
+def _tensor_to_numpy_u8_rgb(arr: Any) -> Optional[np.ndarray]:
+    """Normaliza saída de Results.plot() para array uint8 3 canais (BGR, compatível cv2.imencode)."""
+    if arr is None:
+        return None
+    try:
+        x = np.asarray(arr)
+    except Exception:
+        return None
+    if x.size == 0:
+        return None
+    if x.dtype == object:
+        return None
+    if x.dtype != np.uint8:
+        mx = float(np.nanmax(x)) if x.size else 0.0
+        if mx <= 1.01:
+            x = (np.clip(x, 0, 1) * 255.0).astype(np.uint8)
+        else:
+            x = np.clip(x, 0, 255).astype(np.uint8)
+    if x.ndim == 2:
+        x = cv2.cvtColor(x, cv2.COLOR_GRAY2BGR)
+    elif x.ndim == 3 and x.shape[2] == 4:
+        x = x[:, :, :3]
+    elif x.ndim != 3 or x.shape[2] != 3:
+        return None
+    return x
+
+
+def _bb_segmentation_overlay_numpy(frame_bgr: np.ndarray, r: Any) -> np.ndarray:
+    """Fallback sem Results.plot() — polígonos masks.xy e/ou caixas (BGR)."""
+    out = frame_bgr.copy()
+    masks = getattr(r, "masks", None)
+    if masks is not None and getattr(masks, "xy", None) is not None:
+        overlay = out.copy()
+        colors = ((40, 200, 80), (200, 120, 40), (120, 80, 200), (200, 200, 60))
+        for i, poly in enumerate(masks.xy):
+            if poly is None or len(poly) < 3:
+                continue
+            pts = np.asarray(poly, dtype=np.float32).reshape(-1, 2)
+            pts_i = np.round(pts).astype(np.int32).reshape(-1, 1, 2)
+            col = colors[i % len(colors)]
+            cv2.fillPoly(overlay, [pts_i], col, lineType=cv2.LINE_AA)
+        cv2.addWeighted(overlay, 0.42, out, 0.58, 0, dst=out)
+    boxes = getattr(r, "boxes", None)
+    if boxes is not None and getattr(boxes, "xyxy", None) is not None:
+        try:
+            bxy = boxes.xyxy.cpu().numpy() if hasattr(boxes.xyxy, "cpu") else np.asarray(boxes.xyxy)
+            for row in bxy:
+                x1, y1, x2, y2 = [int(round(float(v))) for v in row[:4]]
+                cv2.rectangle(out, (x1, y1), (x2, y2), (0, 200, 255), 2, cv2.LINE_AA)
+        except Exception:
+            pass
+    return out
+
+
+def _bb_pose_overlay_numpy(frame_bgr: np.ndarray, r: Any) -> np.ndarray:
+    """Fallback sem Results.plot() — keypoints como círculos (BGR)."""
+    out = frame_bgr.copy()
+    k = getattr(r, "keypoints", None)
+    if k is None or getattr(k, "xy", None) is None:
+        return out
+    try:
+        xy = k.xy
+        pts = xy.cpu().numpy() if hasattr(xy, "cpu") else np.asarray(xy, dtype=np.float32)
+    except Exception:
+        return out
+    for inst in pts:
+        for j in range(inst.shape[0]):
+            x, y = float(inst[j, 0]), float(inst[j, 1])
+            if x < 0.5 or y < 0.5:
+                continue
+            cv2.circle(out, (int(round(x)), int(round(y))), 4, (0, 220, 255), -1, cv2.LINE_AA)
+    return out
+
+
 def bb_render_segmentation_plot_png(model_path: str, frame_bgr: np.ndarray) -> bytes:
     from ultralytics import YOLO  # type: ignore
 
     m = YOLO(model_path)
     r = _bb_yolo_predict_one_result(m, frame_bgr)
-    plotted = r.plot()
-    if plotted is None:
-        return bb_png_message_bytes("segmentação: plot vazio")
-    arr = np.asarray(plotted)
-    if arr.dtype != np.uint8:
-        arr = np.clip(arr, 0, 255).astype(np.uint8)
-    ok, buf = cv2.imencode(".png", arr)
+    arr_u8: Optional[np.ndarray] = None
+    try:
+        plotted = r.plot()
+        arr_u8 = _tensor_to_numpy_u8_rgb(plotted)
+    except Exception as ex:  # noqa: BLE001 — ex.: OrderedDict sem .float() dentro do Ultralytics
+        log.warning("[BlackBarn] seg r.plot(): %s", ex)
+    if arr_u8 is None or arr_u8.size == 0:
+        arr_u8 = _bb_segmentation_overlay_numpy(frame_bgr, r)
+    ok, buf = cv2.imencode(".png", arr_u8)
     return bytes(buf) if ok else bb_png_message_bytes("segmentação: PNG falhou")
 
 
@@ -323,30 +431,155 @@ def bb_render_pose_plot_png(model_path: str, frame_bgr: np.ndarray) -> bytes:
 
     m = YOLO(model_path)
     r = _bb_yolo_predict_one_result(m, frame_bgr)
-    plotted = r.plot()
-    if plotted is None:
-        return bb_png_message_bytes("pose: plot vazio")
-    arr = np.asarray(plotted)
-    if arr.dtype != np.uint8:
-        arr = np.clip(arr, 0, 255).astype(np.uint8)
-    ok, buf = cv2.imencode(".png", arr)
-    return bytes(buf) if ok else bb_png_message_bytes("pose: PNG falhou")
-    """Tensor de máscaras [N,H,W] ou None (sem tocar em atributos que disparam bugs)."""
+    arr_u8: Optional[np.ndarray] = None
     try:
-        import torch  # type: ignore
+        plotted = r.plot()
+        arr_u8 = _tensor_to_numpy_u8_rgb(plotted)
+    except Exception as ex:  # noqa: BLE001
+        log.warning("[BlackBarn] pose r.plot(): %s", ex)
+    if arr_u8 is None or arr_u8.size == 0:
+        arr_u8 = _bb_pose_overlay_numpy(frame_bgr, r)
+    ok, buf = cv2.imencode(".png", arr_u8)
+    return bytes(buf) if ok else bb_png_message_bytes("pose: PNG falhou")
+
+
+# Nomes COCO (17) — fallback quando o modelo não expõe nomes de keypoints
+_KP_COCO17 = (
+    "nose",
+    "leye",
+    "reye",
+    "lear",
+    "rear",
+    "lsho",
+    "rsho",
+    "lelb",
+    "relb",
+    "lwri",
+    "rwri",
+    "lhip",
+    "rhip",
+    "lkne",
+    "rkne",
+    "lank",
+    "rank",
+)
+
+
+def bb_segmentation_instances_json(model_path: str, frame_bgr: np.ndarray) -> Dict[str, Any]:
+    """Geometria por instância de segmentação (polígonos / bbox) para UI e traits."""
+    try:
+        from ultralytics import YOLO  # type: ignore
     except ImportError:
-        return None
-    if masks_obj is None:
-        return None
-    for attr in ("masks", "data"):
-        raw = getattr(masks_obj, attr, None)
-        if isinstance(raw, torch.Tensor):
-            return raw
-        if isinstance(raw, dict):
-            for v in raw.values():
-                if isinstance(v, torch.Tensor):
-                    return v
-    return None
+        return {"ok": False, "error": "ultralytics_nao_instalado"}
+    if not model_path or not os.path.isfile(model_path):
+        return {"ok": False, "error": "modelo_seg_em_falta"}
+    h, w = int(frame_bgr.shape[0]), int(frame_bgr.shape[1])
+    diag = float((w * w + h * h) ** 0.5) or 1.0
+    try:
+        m = YOLO(model_path)
+        r = _bb_yolo_predict_one_result(m, frame_bgr)
+        inst: List[Dict[str, Any]] = []
+        masks = getattr(r, "masks", None)
+        if masks is not None and getattr(masks, "xy", None) is not None:
+            for i, poly in enumerate(masks.xy):
+                if poly is None or len(poly) < 3:
+                    continue
+                pts = np.asarray(poly, dtype=np.float64).reshape(-1, 2)
+                x1, y1 = float(pts[:, 0].min()), float(pts[:, 1].min())
+                x2, y2 = float(pts[:, 0].max()), float(pts[:, 1].max())
+                cx, cy = float(pts[:, 0].mean()), float(pts[:, 1].mean())
+                area = float(cv2.contourArea(pts.astype(np.float32)))
+                inst.append(
+                    {
+                        "id": len(inst),
+                        "bbox_xyxy": [x1, y1, x2, y2],
+                        "centroid": [cx, cy],
+                        "area_px": max(0.0, area),
+                        "width": max(0.0, x2 - x1),
+                        "height": max(0.0, y2 - y1),
+                    }
+                )
+        if not inst:
+            boxes = getattr(r, "boxes", None)
+            if boxes is not None and getattr(boxes, "xyxy", None) is not None:
+                try:
+                    bxy = boxes.xyxy.cpu().numpy() if hasattr(boxes.xyxy, "cpu") else np.asarray(boxes.xyxy)
+                    for i, row in enumerate(bxy):
+                        x1, y1, x2, y2 = [float(v) for v in row[:4]]
+                        inst.append(
+                            {
+                                "id": i,
+                                "bbox_xyxy": [x1, y1, x2, y2],
+                                "centroid": [(x1 + x2) / 2.0, (y1 + y2) / 2.0],
+                                "area_px": max(0.0, (x2 - x1) * (y2 - y1)),
+                                "width": max(0.0, x2 - x1),
+                                "height": max(0.0, y2 - y1),
+                            }
+                        )
+                except Exception:
+                    pass
+        return {"ok": True, "width": w, "height": h, "diag": diag, "n_instances": len(inst), "instances": inst}
+    except Exception as e:  # noqa: BLE001
+        log.exception("[BlackBarn] seg geometry")
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def bb_pose_keypoints_json(model_path: str, frame_bgr: np.ndarray) -> Dict[str, Any]:
+    """Keypoints por instância (coordenadas + confiança) para UI e traits."""
+    try:
+        from ultralytics import YOLO  # type: ignore
+    except ImportError:
+        return {"ok": False, "error": "ultralytics_nao_instalado"}
+    if not model_path or not os.path.isfile(model_path):
+        return {"ok": False, "error": "modelo_pose_em_falta"}
+    h, w = int(frame_bgr.shape[0]), int(frame_bgr.shape[1])
+    diag = float((w * w + h * h) ** 0.5) or 1.0
+    try:
+        m = YOLO(model_path)
+        r = _bb_yolo_predict_one_result(m, frame_bgr)
+        k = getattr(r, "keypoints", None)
+        if k is None or getattr(k, "xy", None) is None:
+            return {"ok": True, "width": w, "height": h, "diag": diag, "n_instances": 0, "keypoint_names": [], "instances": []}
+        xy = k.xy.cpu().numpy() if hasattr(k.xy, "cpu") else np.asarray(k.xy, dtype=np.float32)
+        conf = None
+        if getattr(k, "conf", None) is not None:
+            try:
+                kc = k.conf
+                conf = kc.cpu().numpy() if hasattr(kc, "cpu") else np.asarray(kc, dtype=np.float32)
+            except Exception:
+                conf = None
+        nk = int(xy.shape[1])
+        names: List[str] = []
+        for j in range(nk):
+            if j < len(_KP_COCO17):
+                names.append(_KP_COCO17[j])
+            else:
+                names.append(f"kp{j}")
+        instances: List[Dict[str, Any]] = []
+        for i in range(xy.shape[0]):
+            kps: List[Dict[str, Any]] = []
+            for j in range(nk):
+                vx, vy = float(xy[i, j, 0]), float(xy[i, j, 1])
+                cj = None
+                if conf is not None:
+                    if conf.ndim == 2 and i < conf.shape[0] and j < conf.shape[1]:
+                        cj = float(conf[i, j])
+                    elif conf.ndim == 1 and j < conf.shape[0]:
+                        cj = float(conf[j])
+                kps.append({"i": j, "name": names[j], "x": vx, "y": vy, "conf": cj})
+            instances.append({"id": i, "keypoints": kps})
+        return {
+            "ok": True,
+            "width": w,
+            "height": h,
+            "diag": diag,
+            "n_instances": len(instances),
+            "keypoint_names": names,
+            "instances": instances,
+        }
+    except Exception as e:  # noqa: BLE001
+        log.exception("[BlackBarn] pose geometry")
+        return {"ok": False, "error": str(e)[:200]}
 
 
 def run_ultralytics_segmentation(

@@ -394,6 +394,8 @@ def register_black_barn(app) -> None:
             records=recs,
             trait_defs=[dict(x) for x in defs],
             seg_preview_base=seg_preview_base,
+            seg_data_base=url_for("api_black_barn_preview_segmentation_data", rid=0).rsplit("/", 1)[0] + "/",
+            macro_rows=_bb_macro_stats(db, "seg"),
         )
 
     @app.route("/genmate-black-barn/keypoints")
@@ -420,6 +422,8 @@ def register_black_barn(app) -> None:
             records=recs,
             trait_defs=[dict(x) for x in defs],
             pose_preview_base=pose_preview_base,
+            pose_data_base=url_for("api_black_barn_preview_pose_data", rid=0).rsplit("/", 1)[0] + "/",
+            macro_rows=_bb_macro_stats(db, "kp"),
         )
 
     @app.route("/genmate-black-barn/individual/<int:rid>")
@@ -435,7 +439,19 @@ def register_black_barn(app) -> None:
             "SELECT trait_key, value, frame_index FROM black_barn_trait_values WHERE record_id = ? ORDER BY trait_key",
             (rid,),
         ).fetchall()
-        return render_template("black_barn_individual.html", record=r, trait_rows=[dict(x) for x in traits])
+        from black_barn_inference import bb_preview_frame_count_for_record
+
+        pfc = bb_preview_frame_count_for_record(r, main.UPLOADS_DIR, "auto")
+        seg_preview_url = url_for("api_black_barn_preview_segmentation", rid=rid)
+        pose_preview_url = url_for("api_black_barn_preview_pose", rid=rid)
+        return render_template(
+            "black_barn_individual.html",
+            record=r,
+            trait_rows=[dict(x) for x in traits],
+            seg_preview_url=seg_preview_url,
+            pose_preview_url=pose_preview_url,
+            preview_frame_count=pfc,
+        )
 
     @app.route("/genmate-black-barn/correlacoes")
     @main.login_required
@@ -522,6 +538,65 @@ def register_black_barn(app) -> None:
             log.exception("[BlackBarn] preview pose id=%s", rid)
             png = bb_png_message_bytes(str(ex)[:200])
         return Response(png, mimetype="image/png")
+
+    @app.route("/api/genmate-black-barn/preview/segmentation-data/<int:rid>", methods=["GET"])
+    @main.login_required
+    def api_black_barn_preview_segmentation_data(rid: int):
+        from perspicuus_inference import resolve_model_path
+
+        from black_barn_inference import (
+            bb_load_frame_bgr_for_record,
+            bb_segmentation_instances_json,
+        )
+
+        frame = int(request.args.get("frame", 0) or 0)
+        clip = str(request.args.get("clip", "auto") or "auto").strip().lower()
+        if clip not in ("auto", "single", "lateral", "posterior"):
+            clip = "auto"
+        db = main.get_db()
+        row = db.execute("SELECT * FROM black_barn_records WHERE id = ?", (rid,)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "registo não encontrado"}), 404
+        rec = dict(row)
+        img = bb_load_frame_bgr_for_record(rec, main.UPLOADS_DIR, frame, clip)
+        if img is None:
+            return jsonify({"ok": False, "error": "sem mídia ou frame inválido"}), 400
+        seg = resolve_model_path("bb_seg")
+        if not seg or not os.path.isfile(seg):
+            return jsonify({"ok": False, "error": "modelo bb_seg não configurado"}), 400
+        data = bb_segmentation_instances_json(seg, img)
+        data["record_id"] = rid
+        data["frame"] = frame
+        data["clip"] = clip
+        return jsonify(data)
+
+    @app.route("/api/genmate-black-barn/preview/pose-data/<int:rid>", methods=["GET"])
+    @main.login_required
+    def api_black_barn_preview_pose_data(rid: int):
+        from perspicuus_inference import resolve_model_path
+
+        from black_barn_inference import bb_load_frame_bgr_for_record, bb_pose_keypoints_json
+
+        frame = int(request.args.get("frame", 0) or 0)
+        clip = str(request.args.get("clip", "auto") or "auto").strip().lower()
+        if clip not in ("auto", "single", "lateral", "posterior"):
+            clip = "auto"
+        db = main.get_db()
+        row = db.execute("SELECT * FROM black_barn_records WHERE id = ?", (rid,)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "registo não encontrado"}), 404
+        rec = dict(row)
+        img = bb_load_frame_bgr_for_record(rec, main.UPLOADS_DIR, frame, clip)
+        if img is None:
+            return jsonify({"ok": False, "error": "sem mídia ou frame inválido"}), 400
+        pose = resolve_model_path("bb_pose")
+        if not pose or not os.path.isfile(pose):
+            return jsonify({"ok": False, "error": "modelo bb_pose não configurado"}), 400
+        data = bb_pose_keypoints_json(pose, img)
+        data["record_id"] = rid
+        data["frame"] = frame
+        data["clip"] = clip
+        return jsonify(data)
 
     @app.route("/api/genmate-black-barn/correlations/points")
     @main.login_required
@@ -690,6 +765,78 @@ def _bb_parse_result_json(raw: Any) -> dict[str, Any]:
     except (json.JSONDecodeError, TypeError, ValueError):
         return {}
     return v if isinstance(v, dict) else {}
+
+
+def _bb_macro_stats(db, source: str) -> List[Dict[str, Any]]:
+    """Agregados por trait (segmentação `seg` ou keypoints `kp`) para visão macro."""
+    if source not in ("seg", "kp"):
+        return []
+    rows = db.execute(
+        """
+        SELECT tv.trait_key AS trait_key,
+               COUNT(*) AS n,
+               AVG(tv.value) AS mean_v,
+               MIN(tv.value) AS min_v,
+               MAX(tv.value) AS max_v
+        FROM black_barn_trait_values tv
+        INNER JOIN black_barn_trait_defs d ON d.trait_key = tv.trait_key AND d.source = ?
+        GROUP BY tv.trait_key
+        ORDER BY tv.trait_key
+        LIMIT 48
+        """,
+        (source,),
+    ).fetchall()
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        tk = row["trait_key"]
+        lr = db.execute(
+            "SELECT label FROM black_barn_trait_defs WHERE trait_key = ? AND source = ? LIMIT 1",
+            (tk, source),
+        ).fetchone()
+        label = lr["label"] if lr and lr["label"] else tk
+        top = db.execute(
+            """
+            SELECT r.id AS id, r.animal_tag AS animal_tag, tv.value AS value
+            FROM black_barn_trait_values tv
+            JOIN black_barn_records r ON r.id = tv.record_id
+            WHERE tv.trait_key = ?
+            ORDER BY tv.value DESC
+            LIMIT 5
+            """,
+            (tk,),
+        ).fetchall()
+        vals = [
+            float(x["value"])
+            for x in db.execute(
+                """
+                SELECT tv.value FROM black_barn_trait_values tv
+                INNER JOIN black_barn_trait_defs d ON d.trait_key = tv.trait_key AND d.source = ?
+                WHERE tv.trait_key = ?
+                """,
+                (source, tk),
+            ).fetchall()
+        ]
+        std_v: float | None = None
+        if len(vals) > 1:
+            m = sum(vals) / len(vals)
+            var = sum((v - m) ** 2 for v in vals) / len(vals)
+            std_v = round(var**0.5, 6)
+        out.append(
+            {
+                "trait_key": tk,
+                "label": label,
+                "n": int(row["n"] or 0),
+                "mean": round(float(row["mean_v"]), 6) if row["mean_v"] is not None else None,
+                "std": std_v,
+                "min": round(float(row["min_v"]), 6) if row["min_v"] is not None else None,
+                "max": round(float(row["max_v"]), 6) if row["max_v"] is not None else None,
+                "top": [
+                    {"id": int(t["id"]), "animal_tag": t["animal_tag"], "value": round(float(t["value"]), 6)}
+                    for t in top
+                ],
+            }
+        )
+    return out
 
 
 def _collect_trait_keys(db) -> list[dict[str, Any]]:
