@@ -13,7 +13,7 @@ Variáveis de ambiente (paths absolutos ou relativos ao CWD) — têm prioridade
 
 Sem env: usa registry.json em DATA_DIR/ml_models/ (upload pela UI / API interna).
 
-Dependências: onnxruntime, opencv-python-headless, numpy, Pillow
+Dependências: onnxruntime, onnx (reparo automático de alguns ONNX FP16), opencv-python-headless, numpy, Pillow
 """
 
 from __future__ import annotations
@@ -167,6 +167,86 @@ def _providers() -> List[str]:
         preferred.append("CoreMLExecutionProvider")
     preferred.append("CPUExecutionProvider")
     return preferred
+
+
+def _looks_like_fp16_valueinfo_mismatch(err: BaseException) -> bool:
+    """Erro típico de export FP16 com value_info FP32 desatualizado (ORT recusa o grafo)."""
+    s = str(err).lower()
+    return (
+        "does not match expected type" in s
+        and "float16" in s
+        and "tensor(float)" in s
+    )
+
+
+def _sidecar_strip_value_infos(original: str) -> Optional[str]:
+    """
+    Regrava o modelo sem graph.value_info para o ORT re-inferir tipos.
+    Grava `<original>.ort_strip_vi.onnx` junto ao ficheiro (ou falha silenciosamente
+    se o diretório for só-leitura).
+    """
+    try:
+        import onnx  # type: ignore
+    except ImportError:
+        log.warning(
+            "[Perspicuus] Reparo ONNX (strip value_info) indisponível: instale `onnx` "
+            "ou use um modelo FP32 / grafo corrigido."
+        )
+        return None
+    sidecar = original + ".ort_strip_vi.onnx"
+    tmp = sidecar + ".tmp"
+    try:
+        src_mtime = os.path.getmtime(original)
+    except OSError:
+        return None
+    if os.path.isfile(sidecar) and os.path.getmtime(sidecar) >= src_mtime:
+        return sidecar
+    try:
+        model = onnx.load(original)
+        del model.graph.value_info[:]
+        onnx.save(model, tmp)
+        os.replace(tmp, sidecar)
+    except OSError:
+        log.exception(
+            "[Perspicuus] Não foi possível gravar sidecar ONNX (permissões?). "
+            "Original: %s",
+            original,
+        )
+        try:
+            if os.path.isfile(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        return None
+    except Exception:
+        log.exception("[Perspicuus] strip value_info falhou para %s", original)
+        try:
+            if os.path.isfile(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        return None
+    return sidecar
+
+
+def _create_ort_session(model_path: str) -> ort.InferenceSession:
+    """InferenceSession com reparo automático para FP16 + value_info inconsistentes."""
+    providers = _providers()
+    opts = ort.SessionOptions()
+    try:
+        return ort.InferenceSession(model_path, sess_options=opts, providers=providers)
+    except Exception as e:
+        if not _looks_like_fp16_valueinfo_mismatch(e):
+            raise
+        repaired = _sidecar_strip_value_infos(model_path)
+        if not repaired:
+            raise
+        log.warning(
+            "[Perspicuus] ORT rejeitou %s (tipos FP16/value_info); a usar %s",
+            os.path.basename(model_path),
+            os.path.basename(repaired),
+        )
+        return ort.InferenceSession(repaired, sess_options=opts, providers=providers)
 
 
 def load_metadata(json_path: str) -> Dict[str, Any]:
@@ -362,7 +442,7 @@ class PerspicuusInferenceEngine:
         path = resolve_model_path(self._role_name("yolo"))
         if not path:
             raise FileNotFoundError("YOLO ONNX não encontrado (env ou upload em ml_models)")
-        self._yolo_sess = ort.InferenceSession(path, providers=_providers())
+        self._yolo_sess = _create_ort_session(path)
         inp0 = self._yolo_sess.get_inputs()[0]
         self._yolo_in_name = inp0.name
         self._yolo_fp16 = "float16" in inp0.type
@@ -385,7 +465,7 @@ class PerspicuusInferenceEngine:
         meta = load_metadata(meta_path)
         st.trait_names = list(meta["trait_names"])
         st.img_size = int(meta["input_size"])
-        st.sess = ort.InferenceSession(onnx_path, providers=_providers())
+        st.sess = _create_ort_session(onnx_path)
         inp0 = st.sess.get_inputs()[0]
         st.persp_in = inp0.name
         st.persp_dtype = np.float16 if "float16" in inp0.type else np.float32
