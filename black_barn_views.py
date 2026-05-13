@@ -728,6 +728,24 @@ def _bb_run_reprocess_job(job_id: str, ids: List[int], db_path: str, uploads_dir
         conn.close()
 
 
+def _bb_delete_record_media_files(uploads_root: str, rec: Dict[str, Any]) -> None:
+    """Apaga ficheiros de media do registo; só caminhos dentro de uploads_root/black_barn/."""
+    base = os.path.abspath(os.path.join(uploads_root, "black_barn"))
+    for key in ("path_single", "path_lateral", "path_posterior"):
+        raw = rec.get(key)
+        if not raw or not isinstance(raw, str):
+            continue
+        p = os.path.abspath(raw.strip())
+        if not p.startswith(base + os.sep):
+            log.warning("[BlackBarn] recusado apagar ficheiro fora de black_barn: %s", p)
+            continue
+        try:
+            if os.path.isfile(p):
+                os.remove(p)
+        except OSError as ex:
+            log.warning("[BlackBarn] não apagou %s: %s", p, ex)
+
+
 def register_black_barn(app) -> None:
     import app as main
 
@@ -866,6 +884,19 @@ def register_black_barn(app) -> None:
             lot_filter=lot,
             q_filter=q,
         )
+
+    @app.route("/api/genmate-black-barn/records/<int:rid>", methods=["DELETE"])
+    @main.login_required
+    def api_black_barn_record_delete(rid: int):
+        db = main.get_db()
+        row = db.execute("SELECT * FROM black_barn_records WHERE id = ?", (rid,)).fetchone()
+        if not row:
+            return jsonify({"error": "not_found"}), 404
+        rec = dict(row)
+        _bb_delete_record_media_files(main.UPLOADS_DIR, rec)
+        db.execute("DELETE FROM black_barn_records WHERE id = ?", (rid,))
+        db.commit()
+        return jsonify({"ok": True, "id": rid})
 
     @app.route("/genmate-black-barn/modelos", methods=["GET", "POST"])
     @main.admin_required

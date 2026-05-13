@@ -19,7 +19,7 @@
 <div class="card">
   <div class="table-wrap">
     <table>
-      <thead><tr><th>ID</th><th>Criado</th><th>Fazenda</th><th>Lote</th><th>Brinco</th><th>Tipo</th><th>Estado</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>Criado</th><th>Fazenda</th><th>Lote</th><th>Brinco</th><th>Tipo</th><th>Estado</th><th></th><th></th></tr></thead>
       <tbody>
       {% for r in records %}
       <tr>
@@ -31,12 +31,41 @@
         <td>{{ r.kind }}</td>
         <td>{{ r.status }}</td>
         <td><a class="btn btn-ghost btn-sm" href="{{ url_for('black_barn_individual', rid=r.id) }}">Abrir</a></td>
+        <td>
+          <button type="button" class="btn btn-danger btn-sm js-bb-dataset-del" data-id="{{ r.id }}" data-tag="{{ (r.animal_tag or '')|e }}">Excluir</button>
+        </td>
       </tr>
       {% else %}
-      <tr><td colspan="8"><div class="empty-state">Sem dados.</div></td></tr>
+      <tr><td colspan="9"><div class="empty-state">Sem dados.</div></td></tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  document.querySelectorAll('.js-bb-dataset-del').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      var id = btn.getAttribute('data-id');
+      var tag = btn.getAttribute('data-tag') || '';
+      if (!id) return;
+      var msg = 'Excluir o registo #' + id + (tag ? ' («' + tag + '»)' : '') +
+        ' da base Black Barn? Serão removidos os ficheiros de media deste animal e os valores de traits associados.';
+      if (!confirm(msg)) return;
+      var r = await fetch('/api/genmate-black-barn/records/' + encodeURIComponent(id), {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+      var j = await r.json().catch(function () { return {}; });
+      if (!r.ok) {
+        alert(j.error || ('Erro ao excluir: HTTP ' + r.status));
+        return;
+      }
+      window.location.reload();
+    });
+  });
+})();
+</script>
 {% endblock %}

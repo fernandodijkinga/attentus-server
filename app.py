@@ -2963,6 +2963,7 @@ def _environment_for_request() -> str | None:
         'api_black_barn_reprocess_all_start', 'api_black_barn_reprocess_all_status',
         'api_black_barn_preview_segmentation', 'api_black_barn_preview_pose',
         'api_black_barn_preview_segmentation_data', 'api_black_barn_preview_pose_data',
+        'api_black_barn_record_delete',
     }
     if ep in weather_eps:
         return 'weather'
