@@ -17,6 +17,11 @@ tr.bb-row-active{outline:2px solid var(--accent);outline-offset:-2px}
 .bb-macro .table-wrap{overflow-x:auto}
 .bb-rank-scroll{max-height:280px;overflow:auto}
 .bb-job-status{min-height:1.3em;margin-top:6px;color:var(--muted)}
+.bb-trait-list{max-height:240px;overflow:auto}
+.bb-trait-list td:last-child{white-space:nowrap}
+dialog.bb-dlg{border:none;border-radius:var(--radius);padding:0;max-width:540px;width:calc(100% - 24px);box-shadow:var(--shadow)}
+dialog.bb-dlg::backdrop{background:rgba(15,30,50,.4)}
+.bb-dlg-inner{padding:16px 18px}
 </style>
 {% endblock %}
 {% block content %}
@@ -85,12 +90,46 @@ tr.bb-row-active{outline:2px solid var(--accent);outline-offset:-2px}
       <button type="button" class="btn btn-accent btn-sm" id="bb-kp-save">Criar definição + calcular para todos</button>
     </div>
     <div class="card-title" style="margin-top:14px">Traits definidos</div>
-    <ul class="mono" style="list-style:none;padding:0;margin:0;max-height:120px;overflow:auto;font-size:11px">
-      {% for d in trait_defs %}<li style="padding:4px 0;border-bottom:1px solid var(--border)">{{ d.trait_key }} — {{ d.label }}</li>
-      {% else %}<li>Nenhuma definição.</li>{% endfor %}
-    </ul>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0">
+      <button type="button" class="btn btn-sm" id="bb-kp-recalc-all">Recalcular <strong>todos</strong> os traits (todos os animais)</button>
+    </div>
+    <div id="bb-kp-recalc-status" class="mono bb-job-status"></div>
+    <p class="page-sub" style="margin-bottom:6px;font-size:11px">Inclui animais novos — só precisa de mídia e modelo <span class="mono">bb_pose</span>.</p>
+    <div class="table-wrap bb-trait-list">
+      <table>
+        <thead><tr><th>Chave</th><th>Rótulo</th><th style="width:1%">Ações</th></tr></thead>
+        <tbody>
+        {% for d in trait_defs %}
+        <tr>
+          <td class="mono">{{ d.trait_key }}</td>
+          <td>{{ d.label }}</td>
+          <td>
+            <button type="button" class="btn btn-ghost btn-sm bb-kp-edit-def" data-id="{{ d.id }}">Editar</button>
+            <button type="button" class="btn btn-ghost btn-sm bb-kp-del-def" data-id="{{ d.id }}" data-key="{{ d.trait_key }}">Excluir</button>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3"><div class="empty-state">Nenhuma definição.</div></td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
+<dialog id="bb-kp-edit-dlg" class="bb-dlg">
+  <div class="bb-dlg-inner">
+    <div class="card-title">Editar trait</div>
+    <input type="hidden" id="bb-kp-edit-id" value="">
+    <div class="field"><label>Rótulo</label><input id="bb-kp-edit-label" type="text" style="width:100%"></div>
+    <div class="field"><label class="mono">config</label> (JSON)
+      <textarea id="bb-kp-edit-config" class="mono" style="width:100%;min-height:120px;font-size:11px"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button type="button" class="btn btn-ghost btn-sm" id="bb-kp-edit-cancel">Cancelar</button>
+      <button type="button" class="btn btn-accent btn-sm" id="bb-kp-edit-save">Guardar</button>
+    </div>
+  </div>
+</dialog>
 <div class="card bb-macro" style="margin-top:16px;max-width:1420px;margin-left:auto;margin-right:auto">
   <div class="card-title">Visão macro</div>
   <p class="page-sub">Médias, desvio-padrão e top 5 por trait de pose gravada.</p>
@@ -282,7 +321,7 @@ tr.bb-row-active{outline:2px solid var(--accent);outline-offset:-2px}
     if (!tk) { alert('Chave trait obrigatória.'); return; }
     var v = computeMetric(lastGeom, metricEl.value, selectedKpIndices());
     if (v === null || v !== v) { alert('Calcule primeiro um valor válido neste registo (pré-visualização).'); return; }
-    var cfg = { metric: metricEl.value, kp_indices: selectedKpIndices(), instance: 0 };
+    var cfg = { metric: metricEl.value, kp_indices: selectedKpIndices(), instance: 0, per_frame: document.getElementById('bb-kp-per-frame').checked };
     var jobEl = document.getElementById('bb-kp-job-status');
     if (jobEl) jobEl.textContent = 'A gravar definição…';
     var r1 = await fetch('/api/genmate-black-barn/trait-defs', {
@@ -326,6 +365,108 @@ tr.bb-row-active{outline:2px solid var(--accent);outline-offset:-2px}
     }
     if (jobEl) jobEl.textContent = '';
     location.reload();
+  });
+
+  async function bbKpPollJob(jid, el) {
+    while (true) {
+      var rs = await fetch('/api/genmate-black-barn/trait-apply-all/status/' + encodeURIComponent(jid), { credentials: 'same-origin' });
+      var sj = await rs.json().catch(function () { return {}; });
+      if (el) {
+        el.textContent = (sj.current_step || '…') + ' · ' + (sj.progress_pct != null ? sj.progress_pct : 0) + '%'
+          + (sj.inserted != null ? ' · gravados: ' + sj.inserted : '');
+      }
+      if (sj.status === 'done' || sj.status === 'failed') {
+        if (sj.status === 'failed') {
+          if (el) el.textContent = '';
+          alert('Falhou: ' + (sj.current_step || 'erro'));
+          return false;
+        }
+        return true;
+      }
+      await new Promise(function (res) { setTimeout(res, 600); });
+    }
+  }
+
+  document.getElementById('bb-kp-recalc-all').addEventListener('click', async function () {
+    var el = document.getElementById('bb-kp-recalc-status');
+    if (!confirm('Recalcular todas as definições de keypoints para todos os animais na base? Isto pode demorar.')) return;
+    if (el) el.textContent = 'A iniciar…';
+    var rStart = await fetch('/api/genmate-black-barn/trait-recalc-all/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ source: 'kp', farm_id: '' })
+    });
+    var jStart = await rStart.json().catch(function () { return {}; });
+    if (!rStart.ok || !jStart.job_id) {
+      if (el) el.textContent = '';
+      alert(jStart.error || rStart.status);
+      return;
+    }
+    var ok = await bbKpPollJob(jStart.job_id, el);
+    if (el) el.textContent = '';
+    if (ok) location.reload();
+  });
+
+  var kpDlg = document.getElementById('bb-kp-edit-dlg');
+  document.querySelectorAll('.bb-kp-edit-def').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      var id = btn.getAttribute('data-id');
+      var r = await fetch('/api/genmate-black-barn/trait-defs', { credentials: 'same-origin' });
+      var j = await r.json().catch(function () { return {}; });
+      var d = (j.defs || []).find(function (x) { return String(x.id) === String(id); });
+      if (!d) { alert('Definição não encontrada.'); return; }
+      document.getElementById('bb-kp-edit-id').value = id;
+      document.getElementById('bb-kp-edit-label').value = d.label || '';
+      try {
+        document.getElementById('bb-kp-edit-config').value = JSON.stringify(
+          typeof d.config_json === 'string' ? JSON.parse(d.config_json || '{}') : (d.config_json || {}),
+          null, 2
+        );
+      } catch (e) {
+        document.getElementById('bb-kp-edit-config').value = d.config_json || '{}';
+      }
+      if (kpDlg && kpDlg.showModal) kpDlg.showModal();
+    });
+  });
+  document.getElementById('bb-kp-edit-cancel').addEventListener('click', function () {
+    if (kpDlg && kpDlg.close) kpDlg.close();
+  });
+  document.getElementById('bb-kp-edit-save').addEventListener('click', async function () {
+    var id = document.getElementById('bb-kp-edit-id').value;
+    var label = document.getElementById('bb-kp-edit-label').value.trim();
+    var raw = document.getElementById('bb-kp-edit-config').value;
+    var config;
+    try {
+      config = JSON.parse(raw);
+    } catch (e) {
+      alert('JSON de config inválido.');
+      return;
+    }
+    var r = await fetch('/api/genmate-black-barn/trait-defs/' + encodeURIComponent(id), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ label: label, config: config })
+    });
+    var jj = await r.json().catch(function () { return {}; });
+    if (!r.ok) { alert(jj.error || r.status); return; }
+    if (kpDlg && kpDlg.close) kpDlg.close();
+    location.reload();
+  });
+  document.querySelectorAll('.bb-kp-del-def').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      var id = btn.getAttribute('data-id');
+      var key = btn.getAttribute('data-key') || '';
+      if (!confirm('Excluir o trait «' + key + '» e todos os valores gravados na BD?')) return;
+      var r = await fetch('/api/genmate-black-barn/trait-defs/' + encodeURIComponent(id), { method: 'DELETE', credentials: 'same-origin' });
+      if (!r.ok) {
+        var jj = await r.json().catch(function () { return {}; });
+        alert(jj.error || r.status);
+        return;
+      }
+      location.reload();
+    });
   });
 
   var first = document.querySelector('tr.bb-row-select');

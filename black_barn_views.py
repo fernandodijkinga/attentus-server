@@ -40,6 +40,7 @@ def _bb_init_trait_apply_job(
     with BB_TRAIT_APPLY_LOCK:
         BB_TRAIT_APPLY_JOBS[job_id] = {
             "job_id": job_id,
+            "mode": "single",
             "trait_key": trait_key,
             "source": source,
             "farm_id_filter": farm_id or None,
@@ -68,6 +69,140 @@ def _bb_update_trait_apply_job(job_id: str, **fields: Any) -> None:
         job.update(fields)
 
 
+def _bb_init_trait_recalc_all_job(*, source: str, farm_id: str, started_by: str) -> str:
+    job_id = uuid.uuid4().hex
+    with BB_TRAIT_APPLY_LOCK:
+        BB_TRAIT_APPLY_JOBS[job_id] = {
+            "job_id": job_id,
+            "mode": "recalc_all_defs",
+            "trait_key": None,
+            "source": source,
+            "farm_id_filter": farm_id or None,
+            "per_frame": False,
+            "status": "running",
+            "started_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "finished_at": None,
+            "started_by": started_by,
+            "traits_total": 0,
+            "trait_index": 0,
+            "current_trait_key": None,
+            "total_records": 0,
+            "processed_records": 0,
+            "inserted": 0,
+            "skipped": 0,
+            "errors": 0,
+            "current_record_id": None,
+            "current_step": "A preparar recálculo de todos os traits",
+            "sample_errors": [],
+        }
+    return job_id
+
+
+def _bb_apply_one_trait_to_records(
+    job_id: str,
+    conn: sqlite3.Connection,
+    m: Any,
+    trait_key: str,
+    source: str,
+    per_frame: bool,
+    cfg: Dict[str, Any],
+    rows: List[sqlite3.Row],
+    uploads_dir: str,
+) -> tuple[int, int, int]:
+    """Apaga valores antigos deste trait (mesmo source), recalcula para todos os `rows`."""
+    from black_barn_inference import (
+        bb_load_frame_bgr_for_record,
+        bb_pose_keypoints_json_with_model,
+        bb_preview_frame_count_for_record,
+        bb_segmentation_instances_json_with_model,
+        bb_trait_value_from_kp_geom,
+        bb_trait_value_from_seg_geom,
+    )
+
+    conn.execute(
+        """
+        DELETE FROM black_barn_trait_values WHERE trait_key = ? AND EXISTS (
+            SELECT 1 FROM black_barn_trait_defs d
+            WHERE d.trait_key = black_barn_trait_values.trait_key AND d.source = ?
+        )
+        """,
+        (trait_key, source),
+    )
+    conn.commit()
+
+    ins_total = 0
+    skip_total = 0
+    err_total = 0
+    total = len(rows)
+    with BB_TRAIT_APPLY_LOCK:
+        j = BB_TRAIT_APPLY_JOBS.get(job_id)
+        if j is not None and j.get("mode") == "single":
+            j["total_records"] = total
+
+    if total == 0:
+        return 0, 0, 0
+
+    for i, row in enumerate(rows, start=1):
+        rid = int(row["id"])
+        rdict = dict(row)
+        _bb_update_trait_apply_job(
+            job_id,
+            processed_records=i - 1,
+            current_record_id=rid,
+            current_step=f"{trait_key} · registo {rid} ({i}/{total})",
+        )
+        nfc = bb_preview_frame_count_for_record(rdict, uploads_dir, "auto")
+        if nfc <= 0:
+            skip_total += 1
+            _bb_update_trait_apply_job(job_id, processed_records=i, skipped=skip_total, inserted=ins_total)
+            continue
+        frame_iter = range(nfc) if per_frame else (0,)
+        try:
+            for fi in frame_iter:
+                img = bb_load_frame_bgr_for_record(rdict, uploads_dir, fi, "auto")
+                if img is None:
+                    skip_total += 1
+                    continue
+                if source == "seg":
+                    data = bb_segmentation_instances_json_with_model(m, img)
+                    v = bb_trait_value_from_seg_geom(data, cfg)
+                else:
+                    data = bb_pose_keypoints_json_with_model(m, img)
+                    v = bb_trait_value_from_kp_geom(data, cfg)
+                if v is None or (isinstance(v, float) and (math.isnan(v) or math.isinf(v))):
+                    skip_total += 1
+                    continue
+                fi_sql = int(fi) if per_frame else None
+                conn.execute(
+                    """
+                    INSERT INTO black_barn_trait_values (record_id, trait_key, frame_index, value)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (rid, trait_key, fi_sql, float(v)),
+                )
+                ins_total += 1
+            conn.commit()
+        except Exception as ex:  # noqa: BLE001
+            log.exception("[BlackBarn] trait apply rid=%s trait=%s", rid, trait_key)
+            err_total += 1
+            conn.rollback()
+            with BB_TRAIT_APPLY_LOCK:
+                job = BB_TRAIT_APPLY_JOBS.get(job_id)
+                if job and len(job.get("sample_errors") or []) < 25:
+                    se = list(job.get("sample_errors") or [])
+                    se.append({"id": rid, "trait_key": trait_key, "error": str(ex)})
+                    job["sample_errors"] = se
+        _bb_update_trait_apply_job(
+            job_id,
+            processed_records=i,
+            inserted=ins_total,
+            skipped=skip_total,
+            errors=err_total,
+        )
+
+    return ins_total, skip_total, err_total
+
+
 def _bb_run_trait_apply_job(
     job_id: str,
     trait_key: str,
@@ -79,20 +214,11 @@ def _bb_run_trait_apply_job(
 ) -> None:
     from perspicuus_inference import resolve_model_path, reset_engine
 
-    from black_barn_inference import (
-        bb_load_frame_bgr_for_record,
-        bb_pose_keypoints_json_with_model,
-        bb_preview_frame_count_for_record,
-        bb_segmentation_instances_json_with_model,
-        bb_trait_value_from_kp_geom,
-        bb_trait_value_from_seg_geom,
-    )
-
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
     ins_total = 0
     skip_total = 0
     err_total = 0
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
     try:
         reset_engine("black_barn")
         row_def = conn.execute(
@@ -124,6 +250,7 @@ def _bb_run_trait_apply_job(
             cfg = json.loads(row_def["config_json"] or "{}")
         except (json.JSONDecodeError, TypeError, ValueError):
             cfg = {}
+        effective_per_frame = bool(per_frame) or bool(cfg.get("per_frame"))
         if source == "seg":
             model_path = resolve_model_path("bb_seg")
         else:
@@ -137,16 +264,6 @@ def _bb_run_trait_apply_job(
                 current_step="Modelo .pt não configurado (bb_seg ou bb_pose)",
             )
             return
-        conn.execute(
-            """
-            DELETE FROM black_barn_trait_values WHERE trait_key = ? AND EXISTS (
-                SELECT 1 FROM black_barn_trait_defs d
-                WHERE d.trait_key = black_barn_trait_values.trait_key AND d.source = ?
-            )
-            """,
-            (trait_key, source),
-        )
-        conn.commit()
 
         max_n = max(1, min(10000, int(os.environ.get("BB_TRAIT_APPLY_MAX", "5000"))))
         if farm_id:
@@ -192,63 +309,17 @@ def _bb_run_trait_apply_job(
             return
 
         m = YOLO(model_path)
-        for i, row in enumerate(rows, start=1):
-            rid = int(row["id"])
-            rdict = dict(row)
-            _bb_update_trait_apply_job(
-                job_id,
-                processed_records=i - 1,
-                current_record_id=rid,
-                current_step=f"YOLO + métrica · registo {rid} ({i}/{total})",
-            )
-            nfc = bb_preview_frame_count_for_record(rdict, uploads_dir, "auto")
-            if nfc <= 0:
-                skip_total += 1
-                _bb_update_trait_apply_job(job_id, processed_records=i, skipped=skip_total, inserted=ins_total)
-                continue
-            frame_iter = range(nfc) if per_frame else (0,)
-            try:
-                for fi in frame_iter:
-                    img = bb_load_frame_bgr_for_record(rdict, uploads_dir, fi, "auto")
-                    if img is None:
-                        skip_total += 1
-                        continue
-                    if source == "seg":
-                        data = bb_segmentation_instances_json_with_model(m, img)
-                        v = bb_trait_value_from_seg_geom(data, cfg)
-                    else:
-                        data = bb_pose_keypoints_json_with_model(m, img)
-                        v = bb_trait_value_from_kp_geom(data, cfg)
-                    if v is None or (isinstance(v, float) and (math.isnan(v) or math.isinf(v))):
-                        skip_total += 1
-                        continue
-                    fi_sql = int(fi) if per_frame else None
-                    conn.execute(
-                        """
-                        INSERT INTO black_barn_trait_values (record_id, trait_key, frame_index, value)
-                        VALUES (?, ?, ?, ?)
-                        """,
-                        (rid, trait_key, fi_sql, float(v)),
-                    )
-                    ins_total += 1
-                conn.commit()
-            except Exception as ex:  # noqa: BLE001
-                log.exception("[BlackBarn] trait apply rid=%s", rid)
-                err_total += 1
-                conn.rollback()
-                with BB_TRAIT_APPLY_LOCK:
-                    job = BB_TRAIT_APPLY_JOBS.get(job_id)
-                    if job and len(job.get("sample_errors") or []) < 25:
-                        se = list(job.get("sample_errors") or [])
-                        se.append({"id": rid, "error": str(ex)})
-                        job["sample_errors"] = se
-            _bb_update_trait_apply_job(
-                job_id,
-                processed_records=i,
-                inserted=ins_total,
-                skipped=skip_total,
-                errors=err_total,
-            )
+        ins_total, skip_total, err_total = _bb_apply_one_trait_to_records(
+            job_id,
+            conn,
+            m,
+            trait_key,
+            source,
+            effective_per_frame,
+            cfg,
+            rows,
+            uploads_dir,
+        )
 
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         _bb_update_trait_apply_job(
@@ -277,6 +348,159 @@ def _bb_run_trait_apply_job(
             inserted=ins_total,
             skipped=skip_total,
             errors=err_total,
+        )
+    finally:
+        conn.close()
+
+
+def _bb_run_recalc_all_traits_job(
+    job_id: str,
+    source: str,
+    farm_id: str,
+    db_path: str,
+    uploads_dir: str,
+) -> None:
+    """Recalcula todas as definições de trait (seg ou kp) para todos os animais/registos."""
+    from perspicuus_inference import resolve_model_path, reset_engine
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    ins_all = skip_all = err_all = 0
+    try:
+        reset_engine("black_barn")
+        defs = conn.execute(
+            """
+            SELECT id, farm_id, trait_key, label, source, config_json
+            FROM black_barn_trait_defs
+            WHERE source = ?
+            ORDER BY id ASC
+            """,
+            (source,),
+        ).fetchall()
+        if not defs:
+            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            _bb_update_trait_apply_job(
+                job_id,
+                status="done",
+                finished_at=now,
+                current_step="Nenhuma definição de trait para este tipo",
+                traits_total=0,
+                trait_index=0,
+                inserted=0,
+                skipped=0,
+                errors=0,
+            )
+            return
+
+        if source == "seg":
+            model_path = resolve_model_path("bb_seg")
+        else:
+            model_path = resolve_model_path("bb_pose")
+        if not model_path or not os.path.isfile(model_path):
+            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            _bb_update_trait_apply_job(
+                job_id,
+                status="failed",
+                finished_at=now,
+                current_step="Modelo .pt não configurado (bb_seg ou bb_pose)",
+            )
+            return
+
+        max_n = max(1, min(10000, int(os.environ.get("BB_TRAIT_APPLY_MAX", "5000"))))
+        if farm_id:
+            rows = conn.execute(
+                "SELECT * FROM black_barn_records WHERE farm_id = ? ORDER BY id ASC LIMIT ?",
+                (farm_id, max_n),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM black_barn_records ORDER BY id ASC LIMIT ?",
+                (max_n,),
+            ).fetchall()
+        nrows = len(rows)
+        nt = len(defs)
+        with BB_TRAIT_APPLY_LOCK:
+            j = BB_TRAIT_APPLY_JOBS.get(job_id)
+            if j is not None:
+                j["traits_total"] = nt
+                j["total_records"] = nrows
+
+        if nrows == 0:
+            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            _bb_update_trait_apply_job(
+                job_id,
+                status="done",
+                finished_at=now,
+                current_step="Sem registos Black Barn na BD",
+                traits_total=nt,
+                inserted=0,
+                skipped=0,
+                errors=0,
+            )
+            return
+
+        try:
+            from ultralytics import YOLO  # type: ignore
+        except ImportError:
+            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            _bb_update_trait_apply_job(
+                job_id,
+                status="failed",
+                finished_at=now,
+                current_step="ultralytics não instalado",
+            )
+            return
+
+        m = YOLO(model_path)
+        for di, drow in enumerate(defs):
+            tk = str(drow["trait_key"])
+            try:
+                cfg = json.loads(drow["config_json"] or "{}")
+            except (json.JSONDecodeError, TypeError, ValueError):
+                cfg = {}
+            effective_per_frame = bool(cfg.get("per_frame"))
+            _bb_update_trait_apply_job(
+                job_id,
+                trait_index=di,
+                current_trait_key=tk,
+                processed_records=0,
+                current_step=f"Recalcular {tk} ({di + 1}/{nt})",
+            )
+            ins, ski, err = _bb_apply_one_trait_to_records(
+                job_id, conn, m, tk, source, effective_per_frame, cfg, rows, uploads_dir
+            )
+            ins_all += ins
+            skip_all += ski
+            err_all += err
+
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        _bb_update_trait_apply_job(
+            job_id,
+            status="done",
+            finished_at=now,
+            current_step="Concluído (todos os traits)",
+            current_record_id=None,
+            trait_index=max(0, nt - 1),
+            processed_records=nrows,
+            inserted=ins_all,
+            skipped=skip_all,
+            errors=err_all,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.exception("[BlackBarn] recalc all traits job=%s", job_id)
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        with BB_TRAIT_APPLY_LOCK:
+            j = BB_TRAIT_APPLY_JOBS.get(job_id) or {}
+            pr = int(j.get("processed_records") or 0)
+        _bb_update_trait_apply_job(
+            job_id,
+            status="failed",
+            finished_at=now,
+            current_step=str(e)[:220],
+            processed_records=pr,
+            inserted=ins_all,
+            skipped=skip_all,
+            errors=err_all,
         )
     finally:
         conn.close()
@@ -970,11 +1194,89 @@ def register_black_barn(app) -> None:
             job = dict(BB_TRAIT_APPLY_JOBS.get(job_id) or {})
         if not job:
             return jsonify({"error": "job_not_found"}), 404
-        total = int(job.get("total_records") or 0)
-        processed = int(job.get("processed_records") or 0)
-        pct = int(round((processed / total) * 100)) if total > 0 else 0
+        mode = job.get("mode") or "single"
+        if mode == "recalc_all_defs":
+            tt = int(job.get("traits_total") or 0)
+            tr = int(job.get("total_records") or 0)
+            ti = int(job.get("trait_index") or 0)
+            pr = int(job.get("processed_records") or 0)
+            if tt <= 0 or tr <= 0:
+                pct = 100 if job.get("status") == "done" else 0
+            else:
+                denom = tt * tr
+                numer = ti * tr + min(max(pr, 0), tr)
+                pct = int(round((numer / denom) * 100)) if denom > 0 else 0
+        else:
+            total = int(job.get("total_records") or 0)
+            processed = int(job.get("processed_records") or 0)
+            pct = int(round((processed / total) * 100)) if total > 0 else 0
         job["progress_pct"] = max(0, min(100, pct))
         return jsonify(job)
+
+    @app.route("/api/genmate-black-barn/trait-recalc-all/start", methods=["POST"])
+    @main.login_required
+    def api_black_barn_trait_recalc_all_start():
+        data = request.get_json(silent=True) or {}
+        source = str(data.get("source") or "seg").strip()[:16]
+        if source not in ("seg", "kp"):
+            return jsonify({"error": "source"}), 400
+        farm_id = secure_filename(str(data.get("farm_id") or "").strip() or "")
+        job_id = _bb_init_trait_recalc_all_job(
+            source=source,
+            farm_id=farm_id,
+            started_by=str(main.session.get("username") or "unknown"),
+        )
+        threading.Thread(
+            target=_bb_run_recalc_all_traits_job,
+            args=(job_id, source, farm_id, main.DB_PATH, main.UPLOADS_DIR),
+            daemon=True,
+        ).start()
+        return jsonify({"status": "started", "job_id": job_id})
+
+    @app.route("/api/genmate-black-barn/trait-defs/<int:def_id>", methods=["PATCH", "DELETE"])
+    @main.login_required
+    def api_black_barn_trait_def_one(def_id: int):
+        db = main.get_db()
+        row = db.execute(
+            "SELECT id, farm_id, trait_key, label, source, config_json FROM black_barn_trait_defs WHERE id = ?",
+            (def_id,),
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "not_found"}), 404
+        src = str(row["source"] or "")
+        if src not in ("seg", "kp"):
+            return jsonify({"error": "source_nao_editavel"}), 400
+        if request.method == "DELETE":
+            tk = str(row["trait_key"])
+            db.execute("DELETE FROM black_barn_trait_values WHERE trait_key = ?", (tk,))
+            db.execute("DELETE FROM black_barn_trait_defs WHERE id = ?", (def_id,))
+            db.commit()
+            return jsonify({"ok": True})
+        data = request.get_json(silent=True) or {}
+        label = data.get("label")
+        config = data.get("config")
+        if label is None and config is None:
+            return jsonify({"error": "label_ou_config"}), 400
+        new_label = str(row["label"] or "")
+        if label is not None:
+            new_label = str(label).strip()[:160] or new_label
+        cfg_raw = row["config_json"] or "{}"
+        try:
+            cur_cfg = json.loads(cfg_raw)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            cur_cfg = {}
+        if config is not None:
+            if not isinstance(config, dict):
+                return jsonify({"error": "config_invalido"}), 400
+            cur_cfg = config
+        cfg_out = json.dumps(cur_cfg, ensure_ascii=False)
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        db.execute(
+            "UPDATE black_barn_trait_defs SET label = ?, config_json = ?, created_at = ? WHERE id = ?",
+            (new_label, cfg_out, now, def_id),
+        )
+        db.commit()
+        return jsonify({"ok": True})
 
     @app.route("/api/genmate-black-barn/trait-value", methods=["POST"])
     @main.login_required

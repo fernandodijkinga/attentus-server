@@ -2958,6 +2958,8 @@ def _environment_for_request() -> str | None:
         'api_black_barn_correlation_points',         'api_black_barn_trait_defs',
         'api_black_barn_trait_value',
         'api_black_barn_trait_apply_all_start', 'api_black_barn_trait_apply_all_status',
+        'api_black_barn_trait_recalc_all_start',
+        'api_black_barn_trait_def_one',
         'api_black_barn_reprocess_all_start', 'api_black_barn_reprocess_all_status',
         'api_black_barn_preview_segmentation', 'api_black_barn_preview_pose',
         'api_black_barn_preview_segmentation_data', 'api_black_barn_preview_pose_data',
