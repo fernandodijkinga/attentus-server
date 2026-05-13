@@ -13,7 +13,7 @@ import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from flask import abort, flash, jsonify, redirect, render_template, request, send_from_directory, url_for, Response
 from werkzeug.utils import secure_filename
@@ -25,6 +25,83 @@ BB_REPROCESS_LOCK = threading.Lock()
 
 BB_TRAIT_APPLY_JOBS: Dict[str, Dict[str, Any]] = {}
 BB_TRAIT_APPLY_LOCK = threading.Lock()
+
+# Caminho DB definido em register_black_barn — usado para persistir jobs entre workers Gunicorn.
+BB_TRAIT_JOB_DB_PATH: Optional[str] = None
+BB_TRAIT_JOB_LAST_PERSIST_TS: Dict[str, float] = {}
+BB_TRAIT_JOB_PERSIST_MIN_S = 0.35
+
+
+def _bb_ensure_trait_jobs_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS black_barn_trait_jobs (
+            job_id TEXT PRIMARY KEY,
+            payload_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def _bb_persist_trait_apply_job(job_id: str, *, force: bool = False) -> None:
+    """Grava estado do job na BD para GET /status noutro worker Gunicorn."""
+    import time
+
+    if not BB_TRAIT_JOB_DB_PATH:
+        return
+    if not force:
+        nowt = time.monotonic()
+        with BB_TRAIT_APPLY_LOCK:
+            last = BB_TRAIT_JOB_LAST_PERSIST_TS.get(job_id, 0.0)
+            if nowt - last < BB_TRAIT_JOB_PERSIST_MIN_S:
+                return
+            BB_TRAIT_JOB_LAST_PERSIST_TS[job_id] = nowt
+    with BB_TRAIT_APPLY_LOCK:
+        job = BB_TRAIT_APPLY_JOBS.get(job_id)
+    if not job:
+        return
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    try:
+        conn = sqlite3.connect(BB_TRAIT_JOB_DB_PATH, timeout=60)
+        try:
+            _bb_ensure_trait_jobs_table(conn)
+            conn.execute(
+                """
+                INSERT INTO black_barn_trait_jobs (job_id, payload_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(job_id) DO UPDATE SET
+                    payload_json = excluded.payload_json,
+                    updated_at = excluded.updated_at
+                """,
+                (job_id, json.dumps(job, ensure_ascii=False, default=str), now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        log.warning("[BlackBarn] persist trait job %s: %s", job_id, e)
+
+
+def _bb_load_trait_apply_job_from_db(db_path: str, job_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        conn = sqlite3.connect(db_path, timeout=20)
+        try:
+            _bb_ensure_trait_jobs_table(conn)
+            row = conn.execute(
+                "SELECT payload_json FROM black_barn_trait_jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row or row[0] is None:
+            return None
+        raw = row[0]
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", errors="replace")
+        return json.loads(raw)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[BlackBarn] load trait job %s: %s", job_id, e)
+        return None
 
 
 def _bb_init_trait_apply_job(
@@ -57,7 +134,9 @@ def _bb_init_trait_apply_job(
             "current_record_id": None,
             "current_step": "A calcular traits em todos os registos",
             "sample_errors": [],
+            "trait_failures": [],
         }
+    _bb_persist_trait_apply_job(job_id, force=True)
     return job_id
 
 
@@ -67,6 +146,8 @@ def _bb_update_trait_apply_job(job_id: str, **fields: Any) -> None:
         if not job:
             return
         job.update(fields)
+    force = fields.get("status") in ("done", "failed") or fields.get("finished_at") is not None
+    _bb_persist_trait_apply_job(job_id, force=bool(force))
 
 
 def _bb_init_trait_recalc_all_job(*, source: str, farm_id: str, started_by: str) -> str:
@@ -94,7 +175,9 @@ def _bb_init_trait_recalc_all_job(*, source: str, farm_id: str, started_by: str)
             "current_record_id": None,
             "current_step": "A preparar recálculo de todos os traits",
             "sample_errors": [],
+            "trait_failures": [],
         }
+    _bb_persist_trait_apply_job(job_id, force=True)
     return job_id
 
 
@@ -136,8 +219,9 @@ def _bb_apply_one_trait_to_records(
     total = len(rows)
     with BB_TRAIT_APPLY_LOCK:
         j = BB_TRAIT_APPLY_JOBS.get(job_id)
-        if j is not None and j.get("mode") == "single":
-            j["total_records"] = total
+        single_mode = j is not None and j.get("mode") == "single"
+    if single_mode:
+        _bb_update_trait_apply_job(job_id, total_records=total)
 
     if total == 0:
         return 0, 0, 0
@@ -186,12 +270,14 @@ def _bb_apply_one_trait_to_records(
             log.exception("[BlackBarn] trait apply rid=%s trait=%s", rid, trait_key)
             err_total += 1
             conn.rollback()
+            se_new: Optional[List[Dict[str, Any]]] = None
             with BB_TRAIT_APPLY_LOCK:
                 job = BB_TRAIT_APPLY_JOBS.get(job_id)
                 if job and len(job.get("sample_errors") or []) < 25:
-                    se = list(job.get("sample_errors") or [])
-                    se.append({"id": rid, "trait_key": trait_key, "error": str(ex)})
-                    job["sample_errors"] = se
+                    se_new = list(job.get("sample_errors") or [])
+                    se_new.append({"id": rid, "trait_key": trait_key, "error": str(ex)})
+            if se_new is not None:
+                _bb_update_trait_apply_job(job_id, sample_errors=se_new)
         _bb_update_trait_apply_job(
             job_id,
             processed_records=i,
@@ -277,10 +363,7 @@ def _bb_run_trait_apply_job(
                 (max_n,),
             ).fetchall()
         total = len(rows)
-        with BB_TRAIT_APPLY_LOCK:
-            j = BB_TRAIT_APPLY_JOBS.get(job_id)
-            if j is not None:
-                j["total_records"] = total
+        _bb_update_trait_apply_job(job_id, total_records=total)
         if total == 0:
             now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             _bb_update_trait_apply_job(
@@ -419,11 +502,7 @@ def _bb_run_recalc_all_traits_job(
             ).fetchall()
         nrows = len(rows)
         nt = len(defs)
-        with BB_TRAIT_APPLY_LOCK:
-            j = BB_TRAIT_APPLY_JOBS.get(job_id)
-            if j is not None:
-                j["traits_total"] = nt
-                j["total_records"] = nrows
+        _bb_update_trait_apply_job(job_id, traits_total=nt, total_records=nrows)
 
         if nrows == 0:
             now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -452,6 +531,7 @@ def _bb_run_recalc_all_traits_job(
             return
 
         m = YOLO(model_path)
+        trait_failures: List[Dict[str, Any]] = []
         for di, drow in enumerate(defs):
             tk = str(drow["trait_key"])
             try:
@@ -465,26 +545,43 @@ def _bb_run_recalc_all_traits_job(
                 current_trait_key=tk,
                 processed_records=0,
                 current_step=f"Recalcular {tk} ({di + 1}/{nt})",
+                trait_failures=list(trait_failures),
             )
-            ins, ski, err = _bb_apply_one_trait_to_records(
-                job_id, conn, m, tk, source, effective_per_frame, cfg, rows, uploads_dir
-            )
-            ins_all += ins
-            skip_all += ski
-            err_all += err
+            try:
+                ins, ski, err = _bb_apply_one_trait_to_records(
+                    job_id, conn, m, tk, source, effective_per_frame, cfg, rows, uploads_dir
+                )
+                ins_all += ins
+                skip_all += ski
+                err_all += err
+            except Exception as ex:  # noqa: BLE001
+                log.exception("[BlackBarn] recalc trait=%s job=%s", tk, job_id)
+                trait_failures.append({"trait_key": tk, "error": str(ex)[:400]})
+                err_all += 1
+                _bb_update_trait_apply_job(
+                    job_id,
+                    trait_failures=list(trait_failures),
+                    current_step=f"Erro em {tk}; a continuar ({di + 1}/{nt})",
+                )
 
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        step_done = (
+            "Concluído (todos os traits)"
+            if not trait_failures
+            else f"Concluído com {len(trait_failures)} trait(s) em falha — ver trait_failures"
+        )
         _bb_update_trait_apply_job(
             job_id,
             status="done",
             finished_at=now,
-            current_step="Concluído (todos os traits)",
+            current_step=step_done,
             current_record_id=None,
             trait_index=max(0, nt - 1),
             processed_records=nrows,
             inserted=ins_all,
             skipped=skip_all,
             errors=err_all,
+            trait_failures=trait_failures,
         )
     except Exception as e:  # noqa: BLE001
         log.exception("[BlackBarn] recalc all traits job=%s", job_id)
@@ -633,6 +730,9 @@ def _bb_run_reprocess_job(job_id: str, ids: List[int], db_path: str, uploads_dir
 
 def register_black_barn(app) -> None:
     import app as main
+
+    global BB_TRAIT_JOB_DB_PATH
+    BB_TRAIT_JOB_DB_PATH = main.DB_PATH
 
     def _bb_upload_root() -> str:
         return main.BLACK_BARN_UPLOADS_DIR
@@ -1192,6 +1292,10 @@ def register_black_barn(app) -> None:
     def api_black_barn_trait_apply_all_status(job_id: str):
         with BB_TRAIT_APPLY_LOCK:
             job = dict(BB_TRAIT_APPLY_JOBS.get(job_id) or {})
+        if not job:
+            loaded = _bb_load_trait_apply_job_from_db(main.DB_PATH, job_id)
+            if loaded:
+                job = dict(loaded)
         if not job:
             return jsonify({"error": "job_not_found"}), 404
         mode = job.get("mode") or "single"

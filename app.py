@@ -3754,6 +3754,11 @@ def init_db():
                 FOREIGN KEY (record_id) REFERENCES black_barn_records(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_bb_tv_rec ON black_barn_trait_values(record_id);
+            CREATE TABLE IF NOT EXISTS black_barn_trait_jobs (
+                job_id TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """
         )
         db.commit()

@@ -348,8 +348,13 @@ dialog.bb-dlg::backdrop{background:rgba(15,30,50,.4)}
     }
     var jid = jStart.job_id;
     while (true) {
-      var rs = await fetch('/api/genmate-black-barn/trait-apply-all/status/' + encodeURIComponent(jid));
+      var rs = await fetch('/api/genmate-black-barn/trait-apply-all/status/' + encodeURIComponent(jid), { credentials: 'same-origin' });
       var sj = await rs.json().catch(function () { return {}; });
+      if (!rs.ok || sj.error === 'job_not_found') {
+        if (jobEl) jobEl.textContent = '';
+        alert('Estado do job indisponível: ' + (sj.error || rs.status));
+        return;
+      }
       if (jobEl) {
         jobEl.textContent = (sj.current_step || '…') + ' · ' + (sj.progress_pct != null ? sj.progress_pct : 0) + '%'
           + (sj.inserted != null ? ' · gravados: ' + sj.inserted : '');
@@ -372,6 +377,11 @@ dialog.bb-dlg::backdrop{background:rgba(15,30,50,.4)}
     while (true) {
       var rs = await fetch('/api/genmate-black-barn/trait-apply-all/status/' + encodeURIComponent(jid), { credentials: 'same-origin' });
       var sj = await rs.json().catch(function () { return {}; });
+      if (!rs.ok || sj.error === 'job_not_found') {
+        if (el) el.textContent = '';
+        alert('Estado do job indisponível: ' + (sj.error || rs.status));
+        return false;
+      }
       if (el) {
         el.textContent = (sj.current_step || '…') + ' · ' + (sj.progress_pct != null ? sj.progress_pct : 0) + '%'
           + (sj.inserted != null ? ' · gravados: ' + sj.inserted : '');
@@ -381,6 +391,9 @@ dialog.bb-dlg::backdrop{background:rgba(15,30,50,.4)}
           if (el) el.textContent = '';
           alert('Falhou: ' + (sj.current_step || 'erro'));
           return false;
+        }
+        if (sj.trait_failures && sj.trait_failures.length) {
+          alert('Alguns traits falharam (' + sj.trait_failures.length + '). Detalhe: ' + JSON.stringify(sj.trait_failures));
         }
         return true;
       }
