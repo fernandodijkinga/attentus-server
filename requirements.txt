@@ -8,3 +8,5 @@ numpy>=1.24.0
 Pillow>=10.0.0
 reportlab
 openpyxl
+scipy>=1.10.0
+ultralytics>=8.0.0

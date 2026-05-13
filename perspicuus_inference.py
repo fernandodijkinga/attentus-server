@@ -74,6 +74,14 @@ ROLE_TO_ENV: Dict[str, str] = {
     "ecc_yolo": "ECC_YOLO_ONNX",
     "ecc_posterior": "ECC_POSTERIOR_ONNX",
     "ecc_posterior_meta": "ECC_POSTERIOR_METADATA_JSON",
+    "bb_yolo": "BLACK_BARN_YOLO_ONNX",
+    "bb_identification": "BLACK_BARN_IDENTIFICATION_MODEL",
+    "bb_seg": "BLACK_BARN_SEG_MODEL",
+    "bb_pose": "BLACK_BARN_POSE_MODEL",
+    "bb_lateral": "BLACK_BARN_LATERAL_ONNX",
+    "bb_posterior": "BLACK_BARN_POSTERIOR_ONNX",
+    "bb_lateral_meta": "BLACK_BARN_LATERAL_METADATA_JSON",
+    "bb_posterior_meta": "BLACK_BARN_POSTERIOR_METADATA_JSON",
 }
 REGISTRY_FILENAME = "registry.json"
 
@@ -578,6 +586,8 @@ def get_engine(kind: str = "default") -> PerspicuusInferenceEngine:
         eng = PerspicuusInferenceEngine(role_prefix="holandes", views=("lateral", "posterior"))
     elif k == "ecc":
         eng = PerspicuusInferenceEngine(role_prefix="ecc", views=("posterior",))
+    elif k == "black_barn":
+        eng = PerspicuusInferenceEngine(role_prefix="bb", views=("lateral", "posterior"))
     else:
         eng = PerspicuusInferenceEngine()
     _ENGINES[k] = eng

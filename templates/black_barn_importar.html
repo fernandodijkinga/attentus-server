@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}GenMate Black Barn — importar{% endblock %}
+{% block head %}
+<style>
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:900px){.row2{grid-template-columns:1fr}}
+.hint{font-size:12px;color:var(--text2);line-height:1.5;margin-top:6px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">⬛ <span>GenMate</span> <span style="color:var(--accent)">Black Barn</span></div>
+    <div class="page-sub">Holstein · imagem ou vídeo (único ou par lateral+posterior) · brinco e lote</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('black_barn_dataset') }}">Dataset</a>
+</div>
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}{% for category, message in messages %}
+<div class="bcs-flash {{ category }}">{{ message }}</div>
+{% endfor %}{% endif %}
+{% endwith %}
+
+<div class="card">
+  <div class="card-title">Novo registo (um ficheiro por vez)</div>
+  <p class="hint">Vídeo único: o YOLO de identificação (modelo <span class="mono">bb_identification</span>) pode votar a vista pelas classes (ex.: nomes com «lateral» ou «posterior»). Em alternativa, escolha a vista abaixo.</p>
+  <form method="post" enctype="multipart/form-data">
+    <div class="row2">
+      <div class="field"><label>Fazenda (slug)</label><input name="farm_id" value="default" placeholder="default"></div>
+      <div class="field"><label>Lote</label><input name="lot_id" placeholder="opcional"></div>
+    </div>
+    <div class="field"><label>Brinco</label><input name="animal_tag" required maxlength="128"></div>
+    <div class="field">
+      <label>Tipo</label>
+      <select name="kind" id="bb-kind">
+        <option value="image">Imagem (lateral ou posterior)</option>
+        <option value="video_single">Vídeo único (vista auto ou forçada)</option>
+        <option value="video_dual">Dois vídeos (lateral + posterior)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Vista (vídeo único / imagem se sem modelo de ID)</label>
+      <select name="view_mode">
+        <option value="auto">Automático (YOLO identificação ou predefinição)</option>
+        <option value="lateral">Forçar lateral</option>
+        <option value="posterior">Forçar posterior</option>
+      </select>
+    </div>
+    <div class="field" id="wrap-single">
+      <label>Ficheiro imagem ou vídeo</label>
+      <input type="file" name="media_file" accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.webm,.mkv">
+    </div>
+    <div class="row2" id="wrap-dual" style="display:none">
+      <div class="field"><label>Vídeo lateral</label><input type="file" name="video_lateral" accept=".mp4,.mov,.webm,.mkv"></div>
+      <div class="field"><label>Vídeo posterior</label><input type="file" name="video_posterior" accept=".mp4,.mov,.webm,.mkv"></div>
+    </div>
+    <button class="btn btn-accent btn-sm" type="submit">Enviar e processar</button>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-title">Últimos registos</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>ID</th><th>Data</th><th>Fazenda</th><th>Lote</th><th>Brinco</th><th>Tipo</th><th>Estado</th><th>Vista</th><th></th></tr></thead>
+      <tbody>
+      {% for r in records %}
+      <tr>
+        <td class="mono">{{ r.id }}</td>
+        <td class="mono">{{ r.created_at[:19] if r.created_at else '' }}</td>
+        <td>{{ r.farm_id }}</td>
+        <td>{{ r.lot_id or '—' }}</td>
+        <td class="mono">{{ r.animal_tag }}</td>
+        <td>{{ r.kind }}</td>
+        <td>{{ r.status }}{% if r.error_text %} <span class="mono" style="color:var(--err)">{{ r.error_text[:40] }}</span>{% endif %}</td>
+        <td>{{ r.inferred_view or '—' }}</td>
+        <td><a class="btn btn-ghost btn-sm" href="{{ url_for('black_barn_individual', rid=r.id) }}">4×4</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9"><div class="empty-state">Sem registos.</div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const sel = document.getElementById('bb-kind');
+  const wSingle = document.getElementById('wrap-single');
+  const wDual = document.getElementById('wrap-dual');
+  function sync(){
+    const v = sel.value;
+    wDual.style.display = v === 'video_dual' ? '' : 'none';
+    wSingle.style.display = v === 'video_dual' ? 'none' : '';
+  }
+  sel.addEventListener('change', sync);
+  sync();
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Black Barn — segmentação{% endblock %}
+{% block head %}
+<style>
+.bb-grid{display:grid;grid-template-columns:1.1fr 0.9fr;gap:16px;align-items:start}
+@media(max-width:1024px){.bb-grid{grid-template-columns:1fr}}
+.bb-panel{border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--surf)}
+.mono{font-family:var(--mono);font-size:11px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">⬛ <span>Black Barn</span> <span style="color:var(--accent)">segmentação</span></div>
+    <div class="page-sub">Visualizador + painel de máscaras e traits custom (API <span class="mono">/api/genmate-black-barn/trait-*</span>)</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('black_barn_importar') }}">← Importar</a>
+</div>
+<div class="bb-grid">
+  <div class="bb-panel">
+    <div class="card-title">Animais / mídia</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>Brinco</th><th>Tipo</th><th>Estado</th><th>Preview</th></tr></thead>
+        <tbody>
+        {% for r in records %}
+        <tr>
+          <td class="mono">{{ r.id }}</td>
+          <td class="mono">{{ r.animal_tag }}</td>
+          <td>{{ r.kind }}</td>
+          <td>{{ r.status }}</td>
+          <td>
+            {% set u = r.public_single or r.public_lateral %}
+            {% if u %}<img src="{{ u }}" alt="" style="max-width:120px;max-height:72px;border-radius:6px">{% else %}—{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5"><div class="empty-state">Sem registos.</div></td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="page-sub" style="margin-top:12px">Próximo passo: editor interactivo de máscaras por frame, selecção de instâncias e fórmulas de medidas normalizadas gravadas como traits (config JSON em <span class="mono">black_barn_trait_defs</span>).</p>
+  </div>
+  <div class="bb-panel">
+    <div class="card-title">Traits de segmentação definidos</div>
+    <ul class="mono" style="list-style:none;padding:0;margin:0">
+      {% for d in trait_defs %}
+      <li style="padding:6px 0;border-bottom:1px solid var(--border)">{{ d.trait_key }} — {{ d.label }}</li>
+      {% else %}
+      <li>Nenhuma definição ainda (POST JSON para criar).</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+<div class="card" style="margin-top:16px">
+  <div class="card-title">Visão macro (placeholder)</div>
+  <p class="page-sub">Médias, desvios-padrão e ranking por trait custom virão da agregação de <span class="mono">black_barn_trait_values</span> por animal/lote.</p>
+</div>
+{% endblock %}

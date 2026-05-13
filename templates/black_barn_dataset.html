@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Black Barn — dataset{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">⬛ <span>Black Barn</span> <span style="color:var(--accent)">dataset</span></div>
+    <div class="page-sub">Filtros por fazenda, lote e texto (brinco / id)</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('black_barn_importar') }}">← Importar</a>
+</div>
+<form method="get" class="card" style="padding:14px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
+  <div class="field"><label>Fazenda</label>
+    <select name="farm"><option value="">—</option>{% for f in farms %}<option value="{{ f }}" {% if farm_filter==f %}selected{% endif %}>{{ f }}</option>{% endfor %}</select>
+  </div>
+  <div class="field"><label>Lote contém</label><input name="lot" value="{{ lot_filter }}"></div>
+  <div class="field"><label>Q</label><input name="q" value="{{ q_filter }}" placeholder="brinco / id"></div>
+  <button class="btn btn-sm" type="submit">Filtrar</button>
+</form>
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>ID</th><th>Criado</th><th>Fazenda</th><th>Lote</th><th>Brinco</th><th>Tipo</th><th>Estado</th><th></th></tr></thead>
+      <tbody>
+      {% for r in records %}
+      <tr>
+        <td class="mono">{{ r.id }}</td>
+        <td class="mono">{{ (r.created_at or '')[:19] }}</td>
+        <td>{{ r.farm_id }}</td>
+        <td>{{ r.lot_id or '—' }}</td>
+        <td class="mono">{{ r.animal_tag }}</td>
+        <td>{{ r.kind }}</td>
+        <td>{{ r.status }}</td>
+        <td><a class="btn btn-ghost btn-sm" href="{{ url_for('black_barn_individual', rid=r.id) }}">Abrir</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8"><div class="empty-state">Sem dados.</div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

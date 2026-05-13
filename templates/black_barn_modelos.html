@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Black Barn — modelos{% endblock %}
+{% block head %}
+<style>
+.role-grid { display: grid; gap: 14px; }
+.role-card {
+  background: var(--surf);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+}
+.role-title { font-weight: 700; font-size: 14px; color: var(--primary); }
+.role-meta { font-size: 11px; font-family: var(--mono); color: var(--text2); word-break: break-all; }
+.badge-src { font-size: 9px; font-weight: 700; padding: 3px 8px; border-radius: 6px; font-family: var(--mono); text-transform: uppercase; }
+.src-env { background: rgba(0,153,255,.12); color: var(--accent2); border: 1px solid rgba(0,153,255,.25); }
+.src-registry { background: rgba(0,229,160,.12); color: var(--accent); border: 1px solid rgba(0,229,160,.25); }
+.src-missing { background: rgba(255,224,102,.1); color: var(--warn); }
+.upload-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">⬛ <span>Black Barn</span> <span style="color:var(--accent)">modelos IA</span></div>
+    <div class="page-sub">YOLO ONNX (crop), identificação .pt/onnx, segmentação .pt, pose .pt, Perspicuus lateral/posterior</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('black_barn_importar') }}">← Importar</a>
+</div>
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}{% for category, message in messages %}
+<div class="bcs-flash {{ category }}">{{ message }}</div>
+{% endfor %}{% endif %}
+{% endwith %}
+<div class="stat-grid mb-16">
+  <div class="stat-card">
+    <div class="stat-label">Motor Perspicuus (bb)</div>
+    <div class="stat-value {% if inference_engine_ready %}accent{% endif %}"{% if not inference_engine_ready %} style="color:var(--err)"{% endif %}>
+      {% if inference_engine_ready %}OK{% else %}Incompleto{% endif %}
+    </div>
+    <div class="stat-sub">bb_yolo + lateral + posterior ONNX</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Limite upload</div>
+    <div class="stat-value blue">{{ max_mb }} MB</div>
+  </div>
+</div>
+<p class="page-sub" style="margin-bottom:12px">{{ ml_models_dir }}</p>
+<div class="role-grid">
+  {% for s in slots %}
+  <div class="role-card">
+    <div>
+      <div class="role-title">{{ role_labels.get(s.role, s.role) }}</div>
+      <div class="role-meta">
+        <strong>Env:</strong> {{ s.env_var }}<br>
+        <strong>Ficheiro:</strong> {{ s.path or '—' }}<br>
+        <strong>registry:</strong> {{ s.registry_name or '—' }}
+      </div>
+      <div class="upload-row">
+        <form method="post" enctype="multipart/form-data">
+          <input type="hidden" name="action" value="upload">
+          <input type="hidden" name="role" value="{{ s.role }}">
+          <input type="file" name="file" required accept="{{ role_ext[s.role]|sort|join(',') }}">
+          <button type="submit" class="btn btn-sm">Enviar</button>
+        </form>
+      </div>
+      <div class="role-meta" style="margin-top:6px">Ext: {{ role_ext[s.role]|join(', ') }}</div>
+    </div>
+    <div>
+      {% if s.source == 'env' %}<span class="badge-src src-env">env</span>
+      {% elif s.source == 'registry' %}<span class="badge-src src-registry">ml_models</span>
+      {% else %}<span class="badge-src src-missing">falta</span>{% endif %}
+      <form method="post" style="margin-top:10px" onsubmit="return confirm('Limpar slot?');">
+        <input type="hidden" name="action" value="clear">
+        <input type="hidden" name="role" value="{{ s.role }}">
+        <button type="submit" class="btn btn-ghost btn-sm" style="color:var(--err)">Limpar</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

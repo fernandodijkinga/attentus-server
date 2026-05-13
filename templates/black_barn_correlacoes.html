@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Black Barn — correlações{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+.corr-wrap{display:grid;grid-template-columns:280px 1fr;gap:16px;align-items:start}
+@media(max-width:960px){.corr-wrap{grid-template-columns:1fr}}
+#cscatter{max-height:72vh}
+.statline{font-family:var(--mono);font-size:12px;margin-top:8px;color:var(--text2)}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">⬛ <span>Black Barn</span> <span style="color:var(--accent)">correlações</span></div>
+    <div class="page-sub">Scatter configurável · Pearson · Spearman · Kendall</div>
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('black_barn_importar') }}">← Importar</a>
+</div>
+<div class="corr-wrap">
+  <div class="card">
+    <div class="card-title">Eixo X / Y</div>
+    <div class="field">
+      <label>Trait X</label>
+      <select id="ax" style="width:100%">
+        {% for t in trait_keys %}
+        <option value="{{ t.id }}">{{ t.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label>Trait Y</label>
+      <select id="ay" style="width:100%">
+        {% for t in trait_keys %}
+        <option value="{{ t.id }}">{{ t.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button class="btn btn-accent btn-sm" type="button" id="btnPlot">Atualizar gráfico</button>
+    <div id="stats" class="statline"></div>
+  </div>
+  <div class="card">
+    <canvas id="cscatter"></canvas>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const url = {{ url_for('api_black_barn_correlation_points') | tojson }};
+  const opts = document.querySelectorAll('#ax option');
+  if (opts.length > 1) document.getElementById('ay').selectedIndex = 1;
+  let chart;
+  async function plot(){
+    const ax = document.getElementById('ax');
+    if (!ax.options.length) return;
+    const x = document.getElementById('ax').value;
+    const y = document.getElementById('ay').value;
+    const res = await fetch(url + '?x=' + encodeURIComponent(x) + '&y=' + encodeURIComponent(y));
+    const j = await res.json();
+    const pts = j.points || [];
+    document.getElementById('stats').textContent =
+      'n=' + (j.n||0) + ' · Pearson=' + (j.pearson ?? '—') + ' · Spearman=' + (j.spearman ?? '—') + ' · Kendall=' + (j.kendall ?? '—');
+    const data = pts.map(p => ({x:p[0], y:p[1]}));
+    const ctx = document.getElementById('cscatter').getContext('2d');
+    if (chart) chart.destroy();
+    chart = new Chart(ctx, {
+      type: 'scatter',
+      data: { datasets: [{ label: x + ' vs ' + y, data, backgroundColor: 'rgba(26,111,212,0.55)', pointRadius: 5 }] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { title: { display: true, text: j.label_x || x } },
+          y: { title: { display: true, text: j.label_y || y } }
+        }
+      }
+    });
+  }
+  document.getElementById('btnPlot').addEventListener('click', plot);
+  if (document.getElementById('ax').options.length) plot();
+})();
+</script>
+{% endblock %}

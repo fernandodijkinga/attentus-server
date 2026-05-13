@@ -140,13 +140,21 @@ PERSPICUUS_MODEL_ROLE_EXT = {
     'ecc_yolo': {'.onnx'},
     'ecc_posterior': {'.onnx'},
     'ecc_posterior_meta': {'.json'},
+    'bb_yolo': {'.onnx'},
+    'bb_identification': {'.onnx', '.pt'},
+    'bb_seg': {'.pt'},
+    'bb_pose': {'.pt'},
+    'bb_lateral': {'.onnx'},
+    'bb_posterior': {'.onnx'},
+    'bb_lateral_meta': {'.json'},
+    'bb_posterior_meta': {'.json'},
 }
 log.info(f"DATA_DIR={DATA_DIR}")
 
 # Autenticação de usuário web
 ADMIN_USER      = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS_HASH = generate_password_hash(os.environ.get('ADMIN_PASS', 'attentus2024'))
-ALL_ENVIRONMENTS = {'weather', 'perspicuus', 'holandes', 'angus', 'nelore', 'calves', 'bcs'}
+ALL_ENVIRONMENTS = {'weather', 'perspicuus', 'holandes', 'angus', 'nelore', 'calves', 'bcs', 'black_barn'}
 ENV_LABELS = {
     'weather': 'Attentus Weather',
     'perspicuus': 'Perspicuus Brete',
@@ -155,6 +163,7 @@ ENV_LABELS = {
     'nelore': 'Perspicuus Nelore',
     'calves': 'Attentus Calves',
     'bcs': 'Perspicuus BCS',
+    'black_barn': 'GenMate Black Barn',
 }
 
 # Chave de API para dispositivos (vazio = sem restrição)
@@ -177,6 +186,9 @@ os.makedirs(NELORE_UPLOADS_DIR, exist_ok=True)
 HOLANDES_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
 HOLANDES_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'perspicuus_holandes')
 os.makedirs(HOLANDES_UPLOADS_DIR, exist_ok=True)
+BLACK_BARN_MEDIA_EXTS = {'.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.webm', '.mkv'}
+BLACK_BARN_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'black_barn')
+os.makedirs(BLACK_BARN_UPLOADS_DIR, exist_ok=True)
 
 ECC_RECALC_JOBS: dict[str, dict[str, Any]] = {}
 ECC_RECALC_JOBS_LOCK = threading.Lock()
@@ -2939,6 +2951,13 @@ def _environment_for_request() -> str | None:
         'download_ecc_xlsx',
         'delete_ecc_record', 'edit_ecc_record',
     }
+    black_barn_eps = {
+        'black_barn_importar', 'black_barn_dataset', 'black_barn_modelos',
+        'black_barn_segmentacao', 'black_barn_keypoints', 'black_barn_individual',
+        'black_barn_correlacoes', 'serve_black_barn_media',
+        'api_black_barn_correlation_points', 'api_black_barn_trait_defs',
+        'api_black_barn_trait_value',
+    }
     if ep in weather_eps:
         return 'weather'
     if ep in calves_eps:
@@ -2953,6 +2972,8 @@ def _environment_for_request() -> str | None:
         return 'nelore'
     if ep in bcs_eps:
         return 'bcs'
+    if ep in black_barn_eps:
+        return 'black_barn'
     return None
 
 
@@ -2971,6 +2992,8 @@ def _first_allowed_endpoint() -> str:
         return url_for('calf_monitor')
     if _session_can_access('bcs'):
         return url_for('ecc_importar')
+    if _session_can_access('black_barn'):
+        return url_for('black_barn_importar')
     return url_for('logout')
 
 
@@ -3001,7 +3024,7 @@ def inject_auth_flags():
     def can_access(env_name: str) -> bool:
         return is_admin or env_name in allowed
 
-    env_labels = [ENV_LABELS[e] for e in ('weather', 'perspicuus', 'holandes', 'angus', 'nelore', 'calves', 'bcs') if can_access(e)]
+    env_labels = [ENV_LABELS[e] for e in ('weather', 'perspicuus', 'holandes', 'angus', 'nelore', 'calves', 'bcs', 'black_barn') if can_access(e)]
     return {
         'is_admin_user': is_admin,
         'is_master_admin_user': _session_is_master_admin(),
@@ -3683,6 +3706,53 @@ def init_db():
         db.commit()
     except sqlite3.OperationalError as e:
         log.warning("Migração res_max Angus/Nelore: %s", e)
+    try:
+        db.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS black_barn_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                farm_id TEXT NOT NULL DEFAULT 'default',
+                lot_id TEXT NOT NULL DEFAULT '',
+                animal_tag TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'image',
+                path_lateral TEXT NOT NULL DEFAULT '',
+                path_posterior TEXT NOT NULL DEFAULT '',
+                path_single TEXT NOT NULL DEFAULT '',
+                public_lateral TEXT NOT NULL DEFAULT '',
+                public_posterior TEXT NOT NULL DEFAULT '',
+                public_single TEXT NOT NULL DEFAULT '',
+                inferred_view TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                result_json TEXT NOT NULL DEFAULT '{}',
+                error_text TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_bb_rec_farm ON black_barn_records(farm_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_bb_rec_animal ON black_barn_records(farm_id, lot_id, animal_tag);
+            CREATE TABLE IF NOT EXISTS black_barn_trait_defs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                farm_id TEXT NOT NULL DEFAULT '',
+                trait_key TEXT NOT NULL,
+                label TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'seg',
+                config_json TEXT NOT NULL DEFAULT '{}',
+                UNIQUE(farm_id, trait_key)
+            );
+            CREATE TABLE IF NOT EXISTS black_barn_trait_values (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                record_id INTEGER NOT NULL,
+                trait_key TEXT NOT NULL,
+                frame_index INTEGER,
+                value REAL,
+                FOREIGN KEY (record_id) REFERENCES black_barn_records(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_bb_tv_rec ON black_barn_trait_values(record_id);
+            """
+        )
+        db.commit()
+    except sqlite3.OperationalError as e:
+        log.warning("Black Barn tables: %s", e)
     db.close()
     log.info("DB inicializado OK")
 
@@ -3938,7 +4008,7 @@ def admin_users():
     return render_template(
         'admin_users.html',
         users=_user_rows_for_admin(),
-        env_order=['weather', 'perspicuus', 'holandes', 'angus', 'nelore', 'calves', 'bcs'],
+        env_order=['weather', 'perspicuus', 'holandes', 'angus', 'nelore', 'calves', 'bcs', 'black_barn'],
         env_labels=ENV_LABELS,
     )
 
@@ -10300,7 +10370,12 @@ def download_perspicuus_event(rid):
         download_name=f'perspicuus_{safe}.json',
     )
 
-# ─── HEALTHCHECK ──────────────────────────────────────────────────────────────
+# ─── GENMATE BLACK BARN ───────────────────────────────────────────────────────
+
+from black_barn_views import register_black_barn
+
+register_black_barn(app)
+
 
 @app.route('/health')
 def health():

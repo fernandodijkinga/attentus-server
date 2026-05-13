@@ -275,5 +275,5 @@ Os dados serão salvos em `./data/` (criado automaticamente).
 # ATUALIZAR GITHUB
 # cd /Users/fernandojeandijkinga/codigos/Render-Attentus/attentus-server
 # git add -A
-# git commit -m "Perspicuus holstein"
+# git commit -m "Melhorias no sistema de onnx models"
 # git push origin main

@@ -486,6 +486,33 @@ select { cursor: pointer; }
     {% endif %}
     {% endif %}
 
+    {% if can_access_env('black_barn') %}
+    <div class="nav-section">GenMate Black Barn</div>
+    <a href="{{ url_for('black_barn_importar') }}" class="nav-link {% if request.endpoint in ['black_barn_importar', 'black_barn_dataset', 'black_barn_modelos', 'black_barn_segmentacao', 'black_barn_keypoints', 'black_barn_individual', 'black_barn_correlacoes'] %}active{% endif %}">
+      <span class="icon">⬛</span> Black Barn
+    </a>
+    <a href="{{ url_for('black_barn_importar') }}" class="nav-link nav-sub {% if request.endpoint == 'black_barn_importar' %}active{% endif %}">
+      <span class="icon">•</span> importar
+    </a>
+    <a href="{{ url_for('black_barn_dataset') }}" class="nav-link nav-sub {% if request.endpoint == 'black_barn_dataset' %}active{% endif %}">
+      <span class="icon">•</span> dataset
+    </a>
+    <a href="{{ url_for('black_barn_segmentacao') }}" class="nav-link nav-sub {% if request.endpoint == 'black_barn_segmentacao' %}active{% endif %}">
+      <span class="icon">•</span> segmentação
+    </a>
+    <a href="{{ url_for('black_barn_keypoints') }}" class="nav-link nav-sub {% if request.endpoint == 'black_barn_keypoints' %}active{% endif %}">
+      <span class="icon">•</span> keypoints
+    </a>
+    <a href="{{ url_for('black_barn_correlacoes') }}" class="nav-link nav-sub {% if request.endpoint == 'black_barn_correlacoes' %}active{% endif %}">
+      <span class="icon">•</span> correlações
+    </a>
+    {% if is_admin_user %}
+    <a href="{{ url_for('black_barn_modelos') }}" class="nav-link nav-sub {% if request.endpoint == 'black_barn_modelos' %}active{% endif %}">
+      <span class="icon">•</span> modelos IA
+    </a>
+    {% endif %}
+    {% endif %}
+
     {% if can_access_env('angus') %}
     <div class="nav-section">Perspicuus Angus</div>
     <a href="{{ url_for('perspicuus_angus_importar') }}" class="nav-link {% if request.endpoint in ['perspicuus_angus_importar', 'perspicuus_angus_analise_individual', 'perspicuus_angus_analise_populacao', 'perspicuus_angus_analise_lotes', 'perspicuus_angus_dataset', 'perspicuus_angus_calibragem', 'perspicuus_angus_modelos'] %}active{% endif %}">
@@ -513,6 +540,7 @@ select { cursor: pointer; }
     <a href="{{ url_for('perspicuus_angus_modelos') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_angus_modelos' %}active{% endif %}">
       <span class="icon">•</span> modelos IA
     </a>
+    {% endif %}
     {% endif %}
 
     {% if can_access_env('nelore') %}
@@ -542,7 +570,6 @@ select { cursor: pointer; }
     <a href="{{ url_for('perspicuus_nelore_modelos') }}" class="nav-link nav-sub {% if request.endpoint == 'perspicuus_nelore_modelos' %}active{% endif %}">
       <span class="icon">•</span> modelos IA
     </a>
-    {% endif %}
     {% endif %}
     {% endif %}
 
@@ -576,7 +603,7 @@ select { cursor: pointer; }
     {% endif %}
     {% endif %}
 
-    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') or can_access_env('holandes') or can_access_env('angus') or can_access_env('nelore') or can_access_env('bcs') %}
+    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') or can_access_env('holandes') or can_access_env('angus') or can_access_env('nelore') or can_access_env('bcs') or can_access_env('black_barn') %}
     <div class="nav-section">Dados</div>
     {% endif %}
     {% if can_access_env('weather') %}
@@ -605,7 +632,7 @@ select { cursor: pointer; }
     </a>
     {% endif %}
 
-    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') or can_access_env('holandes') or can_access_env('angus') or can_access_env('nelore') or can_access_env('bcs') %}
+    {% if can_access_env('weather') or can_access_env('calves') or can_access_env('perspicuus') or can_access_env('holandes') or can_access_env('angus') or can_access_env('nelore') or can_access_env('bcs') or can_access_env('black_barn') %}
     <div class="nav-section">Export</div>
     {% endif %}
     {% if can_access_env('weather') %}
