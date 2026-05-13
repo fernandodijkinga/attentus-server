@@ -26,6 +26,15 @@ BB_VIDEO_EXTS = (".mp4", ".mov", ".webm", ".mkv")
 BB_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 
 
+def _bb_yolo_max_det() -> int:
+    """Limite de deteções por frame (1 = um animal). Ultralytics antigo pode não suportar o kw — há fallback."""
+    raw = (os.environ.get("BB_YOLO_MAX_DET") or "1").strip()
+    try:
+        return max(1, min(300, int(raw)))
+    except ValueError:
+        return 1
+
+
 def _bb_best_box_index(r: Any) -> int:
     """Índice da deteção com maior confiança da caixa; empate: maior área (segmentação/pose)."""
     boxes = getattr(r, "boxes", None)
@@ -198,7 +207,10 @@ def infer_view_with_identification_model(
             return None
         try:
             m = YOLO(model_path)
-            res = m.predict(frame_bgr, verbose=False)
+            try:
+                res = m.predict(frame_bgr, verbose=False, max_det=_bb_yolo_max_det())
+            except TypeError:
+                res = m.predict(frame_bgr, verbose=False)
             if not res or res[0].boxes is None or len(res[0].boxes) == 0:
                 return None
             b = res[0].boxes[0]
@@ -278,7 +290,12 @@ def _ultralytics_predict_first(
     img = _np.ascontiguousarray(frame_bgr)
     if img.dtype != _np.uint8:
         img = _np.clip(img, 0, 255).astype(_np.uint8)
-    kw: Dict[str, Any] = {"verbose": False, "half": False, "retina_masks": False}
+    kw: Dict[str, Any] = {
+        "verbose": False,
+        "half": False,
+        "retina_masks": False,
+        "max_det": _bb_yolo_max_det(),
+    }
     try:
         import torch  # type: ignore
 
@@ -293,7 +310,11 @@ def _ultralytics_predict_first(
         try:
             return m.predict(img, **kw)[0]
         except TypeError:
-            return m.predict(img, verbose=False)[0]
+            kw.pop("max_det", None)
+            try:
+                return m.predict(img, **kw)[0]
+            except TypeError:
+                return m.predict(img, verbose=False)[0]
 
 
 def bb_media_disk_path(web_path: str, uploads_root: str) -> Optional[str]:
@@ -393,9 +414,18 @@ def _bb_yolo_predict_one_result(m: Any, frame_bgr: np.ndarray) -> Any:
         for use_list in (False, True):
             try:
                 if use_list:
-                    r = m.predict(  # type: ignore[misc]
-                        [im], verbose=False, half=False, retina_masks=False
-                    )[0]
+                    try:
+                        r = m.predict(  # type: ignore[misc]
+                            [im],
+                            verbose=False,
+                            half=False,
+                            retina_masks=False,
+                            max_det=_bb_yolo_max_det(),
+                        )[0]
+                    except TypeError:
+                        r = m.predict(  # type: ignore[misc]
+                            [im], verbose=False, half=False, retina_masks=False
+                        )[0]
                 else:
                     r = _ultralytics_predict_first(m, im)
                 break
