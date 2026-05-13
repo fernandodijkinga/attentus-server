@@ -67,7 +67,8 @@ def _bb_best_box_index(r: Any) -> int:
 def _bb_best_segmentation_mask_index(r: Any) -> int:
     """Índice da máscara a manter (alinhada a `boxes` se contagens coincidirem; senão maior área)."""
     masks = getattr(r, "masks", None)
-    if masks is None or not getattr(masks, "xy", None):
+    # Nunca usar `not masks.xy`: em PyTorch `xy` pode ser Tensor — bool(tensor) é ambíguo.
+    if masks is None or getattr(masks, "xy", None) is None:
         return _bb_best_box_index(r)
     try:
         n_m = len(masks.xy)
@@ -95,7 +96,7 @@ def _bb_best_segmentation_mask_index(r: Any) -> int:
 def _bb_best_pose_person_index(r: Any) -> int:
     """Índice da pessoa/animal com maior confiança média nos keypoints (fallback: conf da caixa)."""
     k = getattr(r, "keypoints", None)
-    if k is None or not getattr(k, "xy", None):
+    if k is None or getattr(k, "xy", None) is None:
         return 0
     try:
         xy = k.xy.cpu().numpy() if hasattr(k.xy, "cpu") else np.asarray(k.xy, dtype=np.float32)
@@ -133,7 +134,12 @@ def _bb_best_pose_person_index(r: Any) -> int:
 
 def _bb_seg_multi_instance(r: Any) -> bool:
     masks = getattr(r, "masks", None)
-    n_m = len(masks.xy) if masks is not None and getattr(masks, "xy", None) else 0
+    n_m = 0
+    if masks is not None and getattr(masks, "xy", None) is not None:
+        try:
+            n_m = len(masks.xy)
+        except TypeError:
+            n_m = 0
     boxes = getattr(r, "boxes", None)
     try:
         n_b = len(boxes) if boxes is not None else 0
@@ -144,7 +150,7 @@ def _bb_seg_multi_instance(r: Any) -> bool:
 
 def _bb_pose_multi_instance(r: Any) -> bool:
     k = getattr(r, "keypoints", None)
-    if k is None or not getattr(k, "xy", None):
+    if k is None or getattr(k, "xy", None) is None:
         return False
     try:
         xy = k.xy.cpu().numpy() if hasattr(k.xy, "cpu") else np.asarray(k.xy, dtype=np.float32)
@@ -1090,7 +1096,7 @@ def run_ultralytics_pose(
         m = YOLO(model_path)
         r = _bb_yolo_predict_one_result(m, frame_bgr)
         k = getattr(r, "keypoints", None)
-        if k is None or k.xy is None:
+        if k is None or getattr(k, "xy", None) is None:
             return {"ok": True, "n_instances": 0}
         xy = k.xy.cpu().numpy() if hasattr(k.xy, "cpu") else np.asarray(k.xy)
         return {"ok": True, "n_instances": int(xy.shape[0]), "kpts_shape": list(xy.shape)}
