@@ -392,7 +392,7 @@ def _bb_run_trait_apply_job(
                 job_id,
                 status="failed",
                 finished_at=now,
-                current_step="Modelo .pt não configurado (bb_seg ou bb_pose)",
+                current_step="Modelo bb_seg / bb_pose não configurado (.pt ou .onnx)",
             )
             return
 
@@ -530,7 +530,7 @@ def _bb_run_recalc_all_traits_job(
                 job_id,
                 status="failed",
                 finished_at=now,
-                current_step="Modelo .pt não configurado (bb_seg ou bb_pose)",
+                current_step="Modelo bb_seg / bb_pose não configurado (.pt ou .onnx)",
             )
             return
 
@@ -965,8 +965,8 @@ def register_black_barn(app) -> None:
         role_labels = {
             "bb_yolo": "YOLO vista + crop (ONNX) — igual Perspicuus: bbox e classe lateral/posterior",
             "bb_identification": "Opcional: .pt ou ONNX só para votar vista (se vazio, usa o ficheiro de bb_yolo)",
-            "bb_seg": "YOLO segmentação (.pt Ultralytics)",
-            "bb_pose": "YOLO pose — classes cow / UC (.pt Ultralytics)",
+            "bb_seg": "YOLO segmentação — Ultralytics (.pt ou export .onnx)",
+            "bb_pose": "YOLO pose — Ultralytics (.pt ou export .onnx)",
             "bb_lateral": "Perspicuus lateral (ONNX)",
             "bb_posterior": "Perspicuus posterior (ONNX)",
             "bb_lateral_meta": "Metadata JSON — lateral",
@@ -1157,7 +1157,7 @@ def register_black_barn(app) -> None:
             return Response(bb_png_message_bytes("sem mídia ou frame inválido"), mimetype="image/png")
         seg = resolve_model_path("bb_seg")
         if not seg or not os.path.isfile(seg):
-            return Response(bb_png_message_bytes("modelo bb_seg (.pt) não configurado"), mimetype="image/png")
+            return Response(bb_png_message_bytes("modelo bb_seg (.pt ou .onnx) não configurado"), mimetype="image/png")
         try:
             png = bb_render_segmentation_plot_png(seg, img)
         except Exception as ex:  # noqa: BLE001
@@ -1190,7 +1190,7 @@ def register_black_barn(app) -> None:
             return Response(bb_png_message_bytes("sem mídia ou frame inválido"), mimetype="image/png")
         pose = resolve_model_path("bb_pose")
         if not pose or not os.path.isfile(pose):
-            return Response(bb_png_message_bytes("modelo bb_pose (.pt) não configurado"), mimetype="image/png")
+            return Response(bb_png_message_bytes("modelo bb_pose (.pt ou .onnx) não configurado"), mimetype="image/png")
         try:
             png = bb_render_pose_plot_png(pose, img)
         except Exception as ex:  # noqa: BLE001

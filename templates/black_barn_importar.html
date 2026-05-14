@@ -36,7 +36,7 @@
   </div>
   <div class="bar"><div id="bb-reproc-fill" class="fill"></div></div>
   <div id="bb-reproc-result" class="meta"><span>—</span></div>
-  <p class="hint" style="margin-top:8px;margin-bottom:0">Pipeline: o mesmo YOLO <span class="mono">bb_yolo</span> (ONNX) faz crop e classe lateral/posterior como no Perspicuus; slot <span class="mono">bb_identification</span> só se quiser outro ficheiro (.pt/ONNX) para votar vista · <strong>Perspicuus</strong> · segmentação · pose. Limite: <span class="mono">BB_REPROCESS_MAX</span> (5000). Opcional: filtrar por fazenda.</p>
+  <p class="hint" style="margin-top:8px;margin-bottom:0">Pipeline: o mesmo YOLO <span class="mono">bb_yolo</span> (ONNX) faz crop e classe lateral/posterior como no Perspicuus; slot <span class="mono">bb_identification</span> só se quiser outro ficheiro (.pt/ONNX) para votar vista · <strong>Perspicuus</strong> · segmentação · pose (<span class="mono">bb_seg</span> / <span class="mono">bb_pose</span>: .pt ou .onnx Ultralytics). Limite: <span class="mono">BB_REPROCESS_MAX</span> (5000). Opcional: filtrar por fazenda.</p>
   <div class="row2" style="margin-top:10px;max-width:420px">
     <div class="field"><label>Fazenda (vazio = todas)</label><input id="bb-reproc-farm" placeholder="slug fazenda"></div>
     <div class="field" style="display:flex;align-items:flex-end">

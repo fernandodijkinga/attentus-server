@@ -6,7 +6,7 @@ GenMate Black Barn — inferência Holstein (lateral / posterior, imagem ou víd
   «lateral» ou «posterior» (nomes ou ids 0/1 como no export CowView).
 - Voto automático de vista: usa `bb_identification` se existir; caso contrário reutiliza
   o ficheiro de `bb_yolo` (mesma inferência, sem segundo modelo obrigatório).
-- Segmentação e pose (.pt Ultralytics): lazy; resultados em `result_json`.
+- Segmentação e pose (Ultralytics .pt ou export .onnx): lazy; resultados em `result_json`.
 """
 
 from __future__ import annotations
@@ -940,7 +940,7 @@ def bb_segmentation_instances_json_with_model(m: Any, frame_bgr: np.ndarray) -> 
 
 
 def bb_segmentation_instances_json(model_path: str, frame_bgr: np.ndarray) -> Dict[str, Any]:
-    """Geometria por instância de segmentação (polígonos / bbox) para UI e traits."""
+    """Geometria por instância de segmentação (polígonos / bbox) para UI e traits. Modelo: .pt ou .onnx (Ultralytics)."""
     try:
         from ultralytics import YOLO  # type: ignore
     except ImportError:
@@ -1009,7 +1009,7 @@ def bb_pose_keypoints_json_with_model(m: Any, frame_bgr: np.ndarray) -> Dict[str
 
 
 def bb_pose_keypoints_json(model_path: str, frame_bgr: np.ndarray) -> Dict[str, Any]:
-    """Keypoints por instância (coordenadas + confiança) para UI e traits."""
+    """Keypoints por instância (coordenadas + confiança) para UI e traits. Modelo: .pt ou .onnx (Ultralytics)."""
     try:
         from ultralytics import YOLO  # type: ignore
     except ImportError:
