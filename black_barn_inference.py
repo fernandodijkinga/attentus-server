@@ -159,6 +159,113 @@ def _bb_pose_multi_instance(r: Any) -> bool:
         return False
 
 
+def _bb_boxes_xyxy_numpy(r: Any) -> Optional[np.ndarray]:
+    boxes = getattr(r, "boxes", None)
+    if boxes is None or not getattr(boxes, "xyxy", None):
+        return None
+    try:
+        bxy = boxes.xyxy.cpu().numpy() if hasattr(boxes.xyxy, "cpu") else np.asarray(boxes.xyxy, dtype=np.float64)
+        if bxy.size == 0 or bxy.ndim != 2 or bxy.shape[1] < 4:
+            return None
+        return bxy
+    except Exception:
+        return None
+
+
+def _bb_mask_polygon_centroid(poly: Any) -> Optional[Tuple[float, float]]:
+    if poly is None or len(poly) < 3:
+        return None
+    pts = np.asarray(poly, dtype=np.float64).reshape(-1, 2)
+    if pts.shape[0] < 3:
+        return None
+    return float(np.mean(pts[:, 0])), float(np.mean(pts[:, 1]))
+
+
+def _bb_iou_xyxy(a: np.ndarray, b: np.ndarray) -> float:
+    ax1, ay1, ax2, ay2 = float(a[0]), float(a[1]), float(a[2]), float(a[3])
+    bx1, by1, bx2, by2 = float(b[0]), float(b[1]), float(b[2]), float(b[3])
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    ua = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1) + max(0.0, bx2 - bx1) * max(0.0, by2 - by1) - inter
+    return float(inter / ua) if ua > 1e-9 else 0.0
+
+
+def _bb_point_in_xyxy(px: float, py: float, row: np.ndarray, pad_frac: float = 0.12) -> bool:
+    x1, y1, x2, y2 = float(row[0]), float(row[1]), float(row[2]), float(row[3])
+    w, h = max(1e-6, x2 - x1), max(1e-6, y2 - y1)
+    return (x1 - pad_frac * w) <= px <= (x2 + pad_frac * w) and (y1 - pad_frac * h) <= py <= (y2 + pad_frac * h)
+
+
+def _bb_individual_segmentation_mask_indices(r: Any) -> List[int]:
+    """
+    Índices de máscara do mesmo indivíduo: ancora na melhor bbox (confiança + área).
+    Inclui outras deteções cujo centro de caixa está dentro da bbox âncora ou com IoU alto
+    (várias classes / partes do mesmo animal). Se #máscaras ≠ #caixas, usa centroide do polígono.
+    """
+    masks = getattr(r, "masks", None)
+    if masks is None or getattr(masks, "xy", None) is None:
+        return []
+    try:
+        n_m = len(masks.xy)
+    except TypeError:
+        return []
+    if n_m <= 0:
+        return []
+    if n_m == 1:
+        return [0]
+
+    bxy = _bb_boxes_xyxy_numpy(r)
+    if bxy is None or int(bxy.shape[0]) == 0:
+        return [_bb_best_segmentation_mask_index(r)]
+
+    n_b = int(bxy.shape[0])
+    bi = _bb_best_box_index(r) if n_b > 1 else 0
+    bi = max(0, min(bi, n_b - 1))
+    anchor = bxy[bi]
+    kept: set[int] = set()
+
+    if n_b == n_m:
+        for j in range(n_b):
+            if j == bi:
+                kept.add(j)
+                continue
+            cxb = 0.5 * (float(bxy[j, 0]) + float(bxy[j, 2]))
+            cyb = 0.5 * (float(bxy[j, 1]) + float(bxy[j, 3]))
+            inside = _bb_point_in_xyxy(cxb, cyb, anchor, pad_frac=0.15)
+            ov = _bb_iou_xyxy(bxy[j], anchor)
+            if inside or ov >= 0.25:
+                kept.add(j)
+    else:
+        for m in range(n_m):
+            poly = masks.xy[m]
+            cen = _bb_mask_polygon_centroid(poly)
+            if cen and _bb_point_in_xyxy(cen[0], cen[1], anchor, pad_frac=0.12):
+                kept.add(m)
+        if not kept:
+            acx = 0.5 * (float(anchor[0]) + float(anchor[2]))
+            acy = 0.5 * (float(anchor[1]) + float(anchor[3]))
+            best_m = -1
+            best_d = float("inf")
+            for m in range(n_m):
+                cen = _bb_mask_polygon_centroid(masks.xy[m])
+                if not cen:
+                    continue
+                d = (cen[0] - acx) ** 2 + (cen[1] - acy) ** 2
+                if d < best_d:
+                    best_d, best_m = d, m
+            if best_m >= 0:
+                kept.add(best_m)
+            else:
+                kept.add(_bb_best_segmentation_mask_index(r))
+
+    out = sorted(kept)
+    if not out:
+        out = [min(bi, n_m - 1)]
+    return out
+
+
 def _view_from_class_name(name: str) -> Optional[str]:
     n = (name or "").strip().lower()
     if not n:
@@ -525,11 +632,13 @@ def _bb_segmentation_overlay_numpy(frame_bgr: np.ndarray, r: Any) -> np.ndarray:
             n_m = len(masks.xy)
         except TypeError:
             n_m = 0
-        bi = _bb_best_segmentation_mask_index(r) if n_m > 1 else 0
+        mids = _bb_individual_segmentation_mask_indices(r) if n_m > 0 else []
         overlay = out.copy()
         col = (40, 200, 80)
-        if n_m > 0 and 0 <= bi < n_m:
-            poly = masks.xy[bi]
+        for mi in mids:
+            if not (0 <= mi < n_m):
+                continue
+            poly = masks.xy[mi]
             if poly is not None and len(poly) >= 3:
                 pts = np.asarray(poly, dtype=np.float32).reshape(-1, 2)
                 pts_i = np.round(pts).astype(np.int32).reshape(-1, 1, 2)
@@ -774,25 +883,27 @@ def _bb_segmentation_instances_from_result(frame_bgr: np.ndarray, r: Any) -> Dic
             n_m = len(masks.xy)
         except TypeError:
             n_m = 0
-        bi = _bb_best_segmentation_mask_index(r) if n_m > 1 else 0
-        if n_m > 0 and 0 <= bi < n_m:
-            poly = masks.xy[bi]
-            if poly is not None and len(poly) >= 3:
-                pts = np.asarray(poly, dtype=np.float64).reshape(-1, 2)
-                x1, y1 = float(pts[:, 0].min()), float(pts[:, 1].min())
-                x2, y2 = float(pts[:, 0].max()), float(pts[:, 1].max())
-                cx, cy = float(pts[:, 0].mean()), float(pts[:, 1].mean())
-                area = float(cv2.contourArea(pts.astype(np.float32)))
-                inst.append(
-                    {
-                        "id": 0,
-                        "bbox_xyxy": [x1, y1, x2, y2],
-                        "centroid": [cx, cy],
-                        "area_px": max(0.0, area),
-                        "width": max(0.0, x2 - x1),
-                        "height": max(0.0, y2 - y1),
-                    }
-                )
+        for mid in _bb_individual_segmentation_mask_indices(r):
+            if not (0 <= mid < n_m):
+                continue
+            poly = masks.xy[mid]
+            if poly is None or len(poly) < 3:
+                continue
+            pts = np.asarray(poly, dtype=np.float64).reshape(-1, 2)
+            x1, y1 = float(pts[:, 0].min()), float(pts[:, 1].min())
+            x2, y2 = float(pts[:, 0].max()), float(pts[:, 1].max())
+            cx, cy = float(pts[:, 0].mean()), float(pts[:, 1].mean())
+            area = float(cv2.contourArea(pts.astype(np.float32)))
+            inst.append(
+                {
+                    "id": int(mid),
+                    "bbox_xyxy": [x1, y1, x2, y2],
+                    "centroid": [cx, cy],
+                    "area_px": max(0.0, area),
+                    "width": max(0.0, x2 - x1),
+                    "height": max(0.0, y2 - y1),
+                }
+            )
     if not inst:
         boxes = getattr(r, "boxes", None)
         if boxes is not None and getattr(boxes, "xyxy", None) is not None:
