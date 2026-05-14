@@ -430,6 +430,36 @@ def _ultralytics_predict_first(
                 return m.predict(img, verbose=False)[0]
 
 
+def bb_ultralytics_yolo_seg(model_path: str) -> Any:
+    """
+    Ultralytics YOLO para segmentação Black Barn.
+    ONNX exportado não traz metadados de task — sem `task=segment` o Ultralytics assume `detect`
+    e não há máscaras / há comportamento errado.
+    """
+    from ultralytics import YOLO  # type: ignore
+
+    low = (model_path or "").lower()
+    if low.endswith(".onnx"):
+        try:
+            return YOLO(model_path, task="segment")
+        except TypeError:
+            return YOLO(model_path)
+    return YOLO(model_path)
+
+
+def bb_ultralytics_yolo_pose(model_path: str) -> Any:
+    """Ultralytics YOLO para pose; ONNX exige `task=pose` (senão cai em detect e só há bbox)."""
+    from ultralytics import YOLO  # type: ignore
+
+    low = (model_path or "").lower()
+    if low.endswith(".onnx"):
+        try:
+            return YOLO(model_path, task="pose")
+        except TypeError:
+            return YOLO(model_path)
+    return YOLO(model_path)
+
+
 def bb_media_disk_path(web_path: str, uploads_root: str) -> Optional[str]:
     """Converte URL `/api/black-barn/media/...` em caminho absoluto no disco."""
     if not web_path or not str(web_path).startswith("/api/black-barn/media/"):
@@ -715,9 +745,7 @@ def _bb_pose_draw_keypoint_indices(img: np.ndarray, r: Any) -> np.ndarray:
 
 
 def bb_render_segmentation_plot_png(model_path: str, frame_bgr: np.ndarray) -> bytes:
-    from ultralytics import YOLO  # type: ignore
-
-    m = YOLO(model_path)
+    m = bb_ultralytics_yolo_seg(model_path)
     r = _bb_yolo_predict_one_result(m, frame_bgr)
     arr_u8: Optional[np.ndarray] = None
     if _bb_seg_multi_instance(r):
@@ -735,9 +763,7 @@ def bb_render_segmentation_plot_png(model_path: str, frame_bgr: np.ndarray) -> b
 
 
 def bb_render_pose_plot_png(model_path: str, frame_bgr: np.ndarray) -> bytes:
-    from ultralytics import YOLO  # type: ignore
-
-    m = YOLO(model_path)
+    m = bb_ultralytics_yolo_pose(model_path)
     r = _bb_yolo_predict_one_result(m, frame_bgr)
     arr_u8: Optional[np.ndarray] = None
     if _bb_pose_multi_instance(r):
@@ -941,16 +967,14 @@ def bb_segmentation_instances_json_with_model(m: Any, frame_bgr: np.ndarray) -> 
 
 def bb_segmentation_instances_json(model_path: str, frame_bgr: np.ndarray) -> Dict[str, Any]:
     """Geometria por instância de segmentação (polígonos / bbox) para UI e traits. Modelo: .pt ou .onnx (Ultralytics)."""
-    try:
-        from ultralytics import YOLO  # type: ignore
-    except ImportError:
-        return {"ok": False, "error": "ultralytics_nao_instalado"}
     if not model_path or not os.path.isfile(model_path):
         return {"ok": False, "error": "modelo_seg_em_falta"}
     try:
-        m = YOLO(model_path)
+        m = bb_ultralytics_yolo_seg(model_path)
         r = _bb_yolo_predict_one_result(m, frame_bgr)
         return _bb_segmentation_instances_from_result(frame_bgr, r)
+    except ImportError:
+        return {"ok": False, "error": "ultralytics_nao_instalado"}
     except Exception as e:  # noqa: BLE001
         log.exception("[BlackBarn] seg geometry")
         return {"ok": False, "error": str(e)[:200]}
@@ -1010,16 +1034,14 @@ def bb_pose_keypoints_json_with_model(m: Any, frame_bgr: np.ndarray) -> Dict[str
 
 def bb_pose_keypoints_json(model_path: str, frame_bgr: np.ndarray) -> Dict[str, Any]:
     """Keypoints por instância (coordenadas + confiança) para UI e traits. Modelo: .pt ou .onnx (Ultralytics)."""
-    try:
-        from ultralytics import YOLO  # type: ignore
-    except ImportError:
-        return {"ok": False, "error": "ultralytics_nao_instalado"}
     if not model_path or not os.path.isfile(model_path):
         return {"ok": False, "error": "modelo_pose_em_falta"}
     try:
-        m = YOLO(model_path)
+        m = bb_ultralytics_yolo_pose(model_path)
         r = _bb_yolo_predict_one_result(m, frame_bgr)
         return _bb_pose_keypoints_from_result(m, frame_bgr, r)
+    except ImportError:
+        return {"ok": False, "error": "ultralytics_nao_instalado"}
     except Exception as e:  # noqa: BLE001
         log.exception("[BlackBarn] pose geometry")
         return {"ok": False, "error": str(e)[:200]}
@@ -1151,11 +1173,7 @@ def run_ultralytics_segmentation(
     if not model_path or not os.path.isfile(model_path):
         return {"ok": False, "error": "modelo_seg_em_falta"}
     try:
-        from ultralytics import YOLO  # type: ignore
-    except ImportError:
-        return {"ok": False, "error": "ultralytics_nao_instalado"}
-    try:
-        m = YOLO(model_path)
+        m = bb_ultralytics_yolo_seg(model_path)
         r = _bb_yolo_predict_one_result(m, frame_bgr)
 
         masks = getattr(r, "masks", None)
@@ -1188,6 +1206,8 @@ def run_ultralytics_segmentation(
                 pass
 
         return {"ok": True, "n_masks": int(n_masks), "masks_shape": shape_list}
+    except ImportError:
+        return {"ok": False, "error": "ultralytics_nao_instalado"}
     except Exception as e:
         log.exception("[BlackBarn] segmentação")
         return {"ok": False, "error": str(e)}
@@ -1200,17 +1220,15 @@ def run_ultralytics_pose(
     if not model_path or not os.path.isfile(model_path):
         return {"ok": False, "error": "modelo_pose_em_falta"}
     try:
-        from ultralytics import YOLO  # type: ignore
-    except ImportError:
-        return {"ok": False, "error": "ultralytics_nao_instalado"}
-    try:
-        m = YOLO(model_path)
+        m = bb_ultralytics_yolo_pose(model_path)
         r = _bb_yolo_predict_one_result(m, frame_bgr)
         k = getattr(r, "keypoints", None)
         if k is None or getattr(k, "xy", None) is None:
             return {"ok": True, "n_instances": 0}
         xy = k.xy.cpu().numpy() if hasattr(k.xy, "cpu") else np.asarray(k.xy)
         return {"ok": True, "n_instances": int(xy.shape[0]), "kpts_shape": list(xy.shape)}
+    except ImportError:
+        return {"ok": False, "error": "ultralytics_nao_instalado"}
     except Exception as e:
         log.exception("[BlackBarn] pose")
         return {"ok": False, "error": str(e)}

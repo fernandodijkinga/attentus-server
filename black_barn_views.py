@@ -425,7 +425,9 @@ def _bb_run_trait_apply_job(
             return
 
         try:
-            from ultralytics import YOLO  # type: ignore
+            from black_barn_inference import bb_ultralytics_yolo_pose, bb_ultralytics_yolo_seg
+
+            m = bb_ultralytics_yolo_seg(model_path) if source == "seg" else bb_ultralytics_yolo_pose(model_path)
         except ImportError:
             now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             _bb_update_trait_apply_job(
@@ -436,7 +438,6 @@ def _bb_run_trait_apply_job(
             )
             return
 
-        m = YOLO(model_path)
         ins_total, skip_total, err_total = _bb_apply_one_trait_to_records(
             job_id,
             conn,
@@ -564,7 +565,9 @@ def _bb_run_recalc_all_traits_job(
             return
 
         try:
-            from ultralytics import YOLO  # type: ignore
+            from black_barn_inference import bb_ultralytics_yolo_pose, bb_ultralytics_yolo_seg
+
+            m = bb_ultralytics_yolo_seg(model_path) if source == "seg" else bb_ultralytics_yolo_pose(model_path)
         except ImportError:
             now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             _bb_update_trait_apply_job(
@@ -575,7 +578,6 @@ def _bb_run_recalc_all_traits_job(
             )
             return
 
-        m = YOLO(model_path)
         trait_failures: List[Dict[str, Any]] = []
         for di, drow in enumerate(defs):
             tk = str(drow["trait_key"])
