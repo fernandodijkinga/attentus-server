@@ -9,16 +9,61 @@ import json
 import logging
 import math
 import os
+import queue
 import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from flask import abort, flash, jsonify, redirect, render_template, request, send_from_directory, url_for, Response
 from werkzeug.utils import secure_filename
 
 log = logging.getLogger(__name__)
+
+# ─── Fila única de IA (Black Barn) ───────────────────────────────────────────
+# Um worker por processo: import, reprocessar todos e jobs de traits entram na mesma fila.
+# Nota: com vários workers Gunicorn cada um tem a sua fila; para RAM global use workers=1 ou env similar.
+BB_AI_TASK_QUEUE: "queue.Queue[tuple[str, Callable[[], None]]]" = queue.Queue()
+_BB_AI_WORKER_LOCK = threading.Lock()
+_BB_AI_WORKER_STARTED = False
+
+
+def _bb_ai_worker_main() -> None:
+    while True:
+        label, fn = BB_AI_TASK_QUEUE.get()
+        try:
+            pend = BB_AI_TASK_QUEUE.qsize()
+            log.info("[BlackBarn] fila IA: «%s» (≈%s na fila depois desta)", label, pend)
+            fn()
+        except Exception:  # noqa: BLE001
+            log.exception("[BlackBarn] fila IA falhou: %s", label)
+        finally:
+            try:
+                import gc
+
+                gc.collect()
+            except Exception:
+                pass
+            BB_AI_TASK_QUEUE.task_done()
+
+
+def _bb_ai_ensure_worker() -> None:
+    global _BB_AI_WORKER_STARTED
+    with _BB_AI_WORKER_LOCK:
+        if _BB_AI_WORKER_STARTED:
+            return
+        threading.Thread(target=_bb_ai_worker_main, name="bb_ai_queue", daemon=True).start()
+        _BB_AI_WORKER_STARTED = True
+
+
+def _bb_ai_enqueue(label: str, fn: Callable[[], None]) -> None:
+    _bb_ai_ensure_worker()
+    n = BB_AI_TASK_QUEUE.qsize()
+    if n > 24:
+        log.warning("[BlackBarn] fila IA longa (%s tarefas antes de «%s»)", n, label)
+    BB_AI_TASK_QUEUE.put((label, fn))
+
 
 BB_REPROCESS_JOBS: Dict[str, Dict[str, Any]] = {}
 BB_REPROCESS_LOCK = threading.Lock()
@@ -756,11 +801,12 @@ def register_black_barn(app) -> None:
         return main.BLACK_BARN_UPLOADS_DIR
 
     def _schedule_job(record_id: int) -> None:
-        threading.Thread(
-            target=_run_bb_worker,
-            args=(record_id, main.DB_PATH, main.UPLOADS_DIR),
-            daemon=True,
-        ).start()
+        rid = int(record_id)
+
+        def _task() -> None:
+            _run_bb_worker(rid, main.DB_PATH, main.UPLOADS_DIR)
+
+        _bb_ai_enqueue(f"bb_record_infer:{rid}", _task)
 
     @app.route("/genmate-black-barn/importar", methods=["GET", "POST"])
     @main.login_required
@@ -1311,11 +1357,11 @@ def register_black_barn(app) -> None:
             total_records=0,
             started_by=str(main.session.get("username") or "unknown"),
         )
-        threading.Thread(
-            target=_bb_run_trait_apply_job,
-            args=(job_id, trait_key, source, farm_id, per_frame, main.DB_PATH, main.UPLOADS_DIR),
-            daemon=True,
-        ).start()
+
+        def _task() -> None:
+            _bb_run_trait_apply_job(job_id, trait_key, source, farm_id, per_frame, main.DB_PATH, main.UPLOADS_DIR)
+
+        _bb_ai_enqueue(f"bb_trait_apply:{job_id}:{trait_key}", _task)
         return jsonify({"status": "started", "job_id": job_id})
 
     @app.route("/api/genmate-black-barn/trait-apply-all/status/<job_id>", methods=["GET"])
@@ -1361,11 +1407,11 @@ def register_black_barn(app) -> None:
             farm_id=farm_id,
             started_by=str(main.session.get("username") or "unknown"),
         )
-        threading.Thread(
-            target=_bb_run_recalc_all_traits_job,
-            args=(job_id, source, farm_id, main.DB_PATH, main.UPLOADS_DIR),
-            daemon=True,
-        ).start()
+
+        def _task() -> None:
+            _bb_run_recalc_all_traits_job(job_id, source, farm_id, main.DB_PATH, main.UPLOADS_DIR)
+
+        _bb_ai_enqueue(f"bb_trait_recalc_all:{job_id}:{source}", _task)
         return jsonify({"status": "started", "job_id": job_id})
 
     @app.route("/api/genmate-black-barn/trait-defs/<int:def_id>", methods=["PATCH", "DELETE"])
@@ -1476,11 +1522,11 @@ def register_black_barn(app) -> None:
                 total=0,
             )
             return jsonify({"status": "done", "job_id": job_id, "total": 0})
-        threading.Thread(
-            target=_bb_run_reprocess_job,
-            args=(job_id, ids, main.DB_PATH, main.UPLOADS_DIR),
-            daemon=True,
-        ).start()
+
+        def _task() -> None:
+            _bb_run_reprocess_job(job_id, ids, main.DB_PATH, main.UPLOADS_DIR)
+
+        _bb_ai_enqueue(f"bb_reprocess_all:{job_id}", _task)
         return jsonify({"status": "started", "job_id": job_id, "total": len(ids), "farm_id_filter": farm or None})
 
     @app.route("/api/genmate-black-barn/reprocess-all/status/<job_id>", methods=["GET"])

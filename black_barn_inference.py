@@ -1227,6 +1227,15 @@ def _resolve_paths() -> Tuple[Any, Any, Any, Any]:
     )
 
 
+def _bb_gc_soft() -> None:
+    try:
+        import gc
+
+        gc.collect()
+    except Exception:
+        pass
+
+
 def process_record_on_disk(record_id: int, db_path: str, uploads_root: str) -> None:
     """Worker em thread: lê `black_barn_records`, corre pipeline, grava `result_json` / estado."""
     conn = sqlite3.connect(db_path)
@@ -1280,14 +1289,18 @@ def process_record_on_disk(record_id: int, db_path: str, uploads_root: str) -> N
                 view = infer_view_with_identification_model(img, ident_path)
             if view is None:
                 view = "lateral"
+            _bb_gc_soft()
             result["views_voted"] = [view]
             result["inferred_view_used"] = view
             if eng.is_ready():
                 result["perspicuus"] = eng.infer_bgr(img, view)
             else:
                 result["perspicuus"] = {"error": "motor_perspicuus_incompleto"}
+            _bb_gc_soft()
             result["segmentation"] = run_ultralytics_segmentation(img, seg_path)
+            _bb_gc_soft()
             result["pose"] = run_ultralytics_pose(img, pose_path)
+            _bb_gc_soft()
 
         elif kind in ("video_single", "video_dual"):
             paths: List[str] = []
