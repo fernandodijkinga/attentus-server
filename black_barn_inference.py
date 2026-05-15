@@ -27,12 +27,24 @@ BB_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 
 
 def _bb_yolo_max_det() -> int:
-    """Limite de deteções por frame (1 = um animal). Ultralytics antigo pode não suportar o kw — há fallback."""
+    """Limite de deteções por frame (pose, identificação, etc.). Ultralytics antigo pode não suportar o kw — há fallback."""
     raw = (os.environ.get("BB_YOLO_MAX_DET") or "1").strip()
     try:
         return max(1, min(300, int(raw)))
     except ValueError:
         return 1
+
+
+def _bb_yolo_max_det_segmentation() -> int:
+    """
+    Segmentação multi-classe / multi-parte: cada máscara é tipicamente uma deteção separada.
+    Com max_det=1 só há uma máscara no resultado; usar valor alto (ou BB_SEG_MAX_DET).
+    """
+    raw = (os.environ.get("BB_SEG_MAX_DET") or "64").strip()
+    try:
+        return max(1, min(300, int(raw)))
+    except ValueError:
+        return 64
 
 
 def _bb_best_box_index(r: Any) -> int:
@@ -198,11 +210,82 @@ def _bb_point_in_xyxy(px: float, py: float, row: np.ndarray, pad_frac: float = 0
     return (x1 - pad_frac * w) <= px <= (x2 + pad_frac * w) and (y1 - pad_frac * h) <= py <= (y2 + pad_frac * h)
 
 
+def _bb_point_in_xyxy_raw(px: float, py: float, row: np.ndarray) -> bool:
+    x1, y1, x2, y2 = float(row[0]), float(row[1]), float(row[2]), float(row[3])
+    return x1 <= px <= x2 and y1 <= py <= y2
+
+
+def _bb_grow_kept_boxes_from_anchor(
+    bxy: np.ndarray,
+    bi: int,
+    *,
+    max_iters: int = 14,
+    outer_pad_frac: float = 0.28,
+) -> set[int]:
+    """
+    A partir da melhor bbox, incluir iterativamente outras caixas cujo centro caia dentro
+    da união (expandida) das já agrupadas — captura partes desligadas espacialmente (cauda, úbere)
+    quando cada parte tem a sua própria deteção.
+    """
+    n_b = int(bxy.shape[0])
+    if n_b <= 0:
+        return set()
+    bi = max(0, min(int(bi), n_b - 1))
+    kept = {bi}
+    for _ in range(max_iters):
+        rows_l = [bxy[j] for j in sorted(kept)]
+        ux1 = min(float(r[0]) for r in rows_l)
+        uy1 = min(float(r[1]) for r in rows_l)
+        ux2 = max(float(r[2]) for r in rows_l)
+        uy2 = max(float(r[3]) for r in rows_l)
+        w, h = max(1e-6, ux2 - ux1), max(1e-6, uy2 - uy1)
+        big = np.array(
+            [
+                ux1 - outer_pad_frac * w,
+                uy1 - outer_pad_frac * h,
+                ux2 + outer_pad_frac * w,
+                uy2 + outer_pad_frac * h,
+            ],
+            dtype=np.float64,
+        )
+        nxt = set(kept)
+        for j in range(n_b):
+            if j in nxt:
+                continue
+            cxb = 0.5 * (float(bxy[j, 0]) + float(bxy[j, 2]))
+            cyb = 0.5 * (float(bxy[j, 1]) + float(bxy[j, 3]))
+            if _bb_point_in_xyxy_raw(cxb, cyb, big):
+                nxt.add(j)
+        if len(nxt) == len(kept):
+            break
+        kept = nxt
+    return kept
+
+
+def _bb_bbox_union_xyxy(rows: List[np.ndarray], pad_frac: float) -> np.ndarray:
+    if not rows:
+        return np.zeros(4, dtype=np.float64)
+    ux1 = min(float(r[0]) for r in rows)
+    uy1 = min(float(r[1]) for r in rows)
+    ux2 = max(float(r[2]) for r in rows)
+    uy2 = max(float(r[3]) for r in rows)
+    w, h = max(1e-6, ux2 - ux1), max(1e-6, uy2 - uy1)
+    return np.array(
+        [
+            ux1 - pad_frac * w,
+            uy1 - pad_frac * h,
+            ux2 + pad_frac * w,
+            uy2 + pad_frac * h,
+        ],
+        dtype=np.float64,
+    )
+
+
 def _bb_individual_segmentation_mask_indices(r: Any) -> List[int]:
     """
-    Índices de máscara do mesmo indivíduo: ancora na melhor bbox (confiança + área).
-    Inclui outras deteções cujo centro de caixa está dentro da bbox âncora ou com IoU alto
-    (várias classes / partes do mesmo animal). Se #máscaras ≠ #caixas, usa centroide do polígono.
+    Índices de máscara da vaca âncora (melhor bbox). Com várias deteções / partes, inclui todas
+    as que caem na região agregada (ver _bb_grow_kept_boxes_from_anchor). Exige BB_SEG_MAX_DET
+    alto o suficiente para o modelo devolver todas as máscaras.
     """
     masks = getattr(r, "masks", None)
     if masks is None or getattr(masks, "xy", None) is None:
@@ -224,45 +307,61 @@ def _bb_individual_segmentation_mask_indices(r: Any) -> List[int]:
     bi = _bb_best_box_index(r) if n_b > 1 else 0
     bi = max(0, min(bi, n_b - 1))
     anchor = bxy[bi]
-    kept: set[int] = set()
 
     if n_b == n_m:
-        for j in range(n_b):
-            if j == bi:
-                kept.add(j)
-                continue
-            cxb = 0.5 * (float(bxy[j, 0]) + float(bxy[j, 2]))
-            cyb = 0.5 * (float(bxy[j, 1]) + float(bxy[j, 3]))
-            inside = _bb_point_in_xyxy(cxb, cyb, anchor, pad_frac=0.15)
-            ov = _bb_iou_xyxy(bxy[j], anchor)
-            if inside or ov >= 0.25:
-                kept.add(j)
+        kept_box = _bb_grow_kept_boxes_from_anchor(bxy, bi, max_iters=14, outer_pad_frac=0.28)
+        out = sorted(int(x) for x in kept_box)
     else:
-        for m in range(n_m):
-            poly = masks.xy[m]
+        union_pad = float(os.environ.get("BB_SEG_MASK_PAD_FRAC", "0.42") or "0.42")
+        try:
+            union_pad = max(0.05, min(0.85, float(union_pad)))
+        except ValueError:
+            union_pad = 0.42
+        if n_b > 0:
+            try:
+                kbox = _bb_grow_kept_boxes_from_anchor(bxy, bi, max_iters=10, outer_pad_frac=0.22)
+                big = _bb_bbox_union_xyxy([bxy[int(j)] for j in sorted(kbox)], union_pad)
+            except Exception:
+                w = float(anchor[2]) - float(anchor[0])
+                h = float(anchor[3]) - float(anchor[1])
+                big = np.array(
+                    [
+                        float(anchor[0]) - union_pad * w,
+                        float(anchor[1]) - union_pad * h,
+                        float(anchor[2]) + union_pad * w,
+                        float(anchor[3]) + union_pad * h,
+                    ],
+                    dtype=np.float64,
+                )
+        else:
+            big = np.array([-1e9, -1e9, 1e9, 1e9], dtype=np.float64)
+
+        kept_m: set[int] = set()
+        for mi in range(n_m):
+            poly = masks.xy[mi]
             cen = _bb_mask_polygon_centroid(poly)
-            if cen and _bb_point_in_xyxy(cen[0], cen[1], anchor, pad_frac=0.12):
-                kept.add(m)
-        if not kept:
+            if cen and _bb_point_in_xyxy_raw(cen[0], cen[1], big):
+                kept_m.add(mi)
+        if not kept_m:
             acx = 0.5 * (float(anchor[0]) + float(anchor[2]))
             acy = 0.5 * (float(anchor[1]) + float(anchor[3]))
             best_m = -1
             best_d = float("inf")
-            for m in range(n_m):
-                cen = _bb_mask_polygon_centroid(masks.xy[m])
+            for mi in range(n_m):
+                cen = _bb_mask_polygon_centroid(masks.xy[mi])
                 if not cen:
                     continue
                 d = (cen[0] - acx) ** 2 + (cen[1] - acy) ** 2
                 if d < best_d:
-                    best_d, best_m = d, m
+                    best_d, best_m = d, mi
             if best_m >= 0:
-                kept.add(best_m)
+                kept_m.add(best_m)
             else:
-                kept.add(_bb_best_segmentation_mask_index(r))
+                kept_m.add(_bb_best_segmentation_mask_index(r))
+        out = sorted(kept_m)
 
-    out = sorted(kept)
     if not out:
-        out = [min(bi, n_m - 1)]
+        out = [min(max(0, bi), n_m - 1)]
     return out
 
 
@@ -391,6 +490,8 @@ def sample_video_frames(path: str, max_frames: int = 12) -> List[np.ndarray]:
 def _ultralytics_predict_first(
     m: Any,
     frame_bgr: np.ndarray,
+    *,
+    max_det: int,
 ) -> Any:
     """
     predict() com opções estáveis em CPU (evita caminhos retina / half que em algumas
@@ -407,7 +508,7 @@ def _ultralytics_predict_first(
         "verbose": False,
         "half": False,
         "retina_masks": False,
-        "max_det": _bb_yolo_max_det(),
+        "max_det": max(1, min(300, int(max_det))),
     }
     try:
         import torch  # type: ignore
@@ -544,8 +645,14 @@ def bb_load_frame_bgr_for_record(
     return None
 
 
-def _bb_yolo_predict_one_result(m: Any, frame_bgr: np.ndarray) -> Any:
+def _bb_yolo_predict_one_result(
+    m: Any,
+    frame_bgr: np.ndarray,
+    *,
+    max_det: Optional[int] = None,
+) -> Any:
     """Primeiro `Results` Ultralytics (BGR/RGB + fallback lista)."""
+    md = _bb_yolo_max_det() if max_det is None else max(1, min(300, int(max_det)))
     r = None
     errs: List[str] = []
     for im in (
@@ -563,14 +670,14 @@ def _bb_yolo_predict_one_result(m: Any, frame_bgr: np.ndarray) -> Any:
                             verbose=False,
                             half=False,
                             retina_masks=False,
-                            max_det=_bb_yolo_max_det(),
+                            max_det=md,
                         )[0]
                     except TypeError:
                         r = m.predict(  # type: ignore[misc]
                             [im], verbose=False, half=False, retina_masks=False
                         )[0]
                 else:
-                    r = _ultralytics_predict_first(m, im)
+                    r = _ultralytics_predict_first(m, im, max_det=md)
                 break
             except Exception as ex:  # noqa: BLE001
                 errs.append(str(ex))
@@ -746,7 +853,7 @@ def _bb_pose_draw_keypoint_indices(img: np.ndarray, r: Any) -> np.ndarray:
 
 def bb_render_segmentation_plot_png(model_path: str, frame_bgr: np.ndarray) -> bytes:
     m = bb_ultralytics_yolo_seg(model_path)
-    r = _bb_yolo_predict_one_result(m, frame_bgr)
+    r = _bb_yolo_predict_one_result(m, frame_bgr, max_det=_bb_yolo_max_det_segmentation())
     arr_u8: Optional[np.ndarray] = None
     if _bb_seg_multi_instance(r):
         arr_u8 = _bb_segmentation_overlay_numpy(frame_bgr, r)
@@ -958,7 +1065,7 @@ def _bb_segmentation_instances_from_result(frame_bgr: np.ndarray, r: Any) -> Dic
 def bb_segmentation_instances_json_with_model(m: Any, frame_bgr: np.ndarray) -> Dict[str, Any]:
     """Mesmo que `bb_segmentation_instances_json`, mas reutiliza instância YOLO já carregada."""
     try:
-        r = _bb_yolo_predict_one_result(m, frame_bgr)
+        r = _bb_yolo_predict_one_result(m, frame_bgr, max_det=_bb_yolo_max_det_segmentation())
         return _bb_segmentation_instances_from_result(frame_bgr, r)
     except Exception as e:  # noqa: BLE001
         log.exception("[BlackBarn] seg geometry (modelo reutilizado)")
@@ -971,7 +1078,7 @@ def bb_segmentation_instances_json(model_path: str, frame_bgr: np.ndarray) -> Di
         return {"ok": False, "error": "modelo_seg_em_falta"}
     try:
         m = bb_ultralytics_yolo_seg(model_path)
-        r = _bb_yolo_predict_one_result(m, frame_bgr)
+        r = _bb_yolo_predict_one_result(m, frame_bgr, max_det=_bb_yolo_max_det_segmentation())
         return _bb_segmentation_instances_from_result(frame_bgr, r)
     except ImportError:
         return {"ok": False, "error": "ultralytics_nao_instalado"}
@@ -1174,7 +1281,7 @@ def run_ultralytics_segmentation(
         return {"ok": False, "error": "modelo_seg_em_falta"}
     try:
         m = bb_ultralytics_yolo_seg(model_path)
-        r = _bb_yolo_predict_one_result(m, frame_bgr)
+        r = _bb_yolo_predict_one_result(m, frame_bgr, max_det=_bb_yolo_max_det_segmentation())
 
         masks = getattr(r, "masks", None)
         shape_list: Optional[List[int]] = None

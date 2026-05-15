@@ -25,7 +25,7 @@
 <div class="page-header">
   <div>
     <div class="page-title">⬛ <span>Black Barn</span> <span style="color:var(--accent)">modelos IA</span></div>
-    <div class="page-sub">Um YOLO ONNX em <span class="mono">bb_yolo</span> faz crop e classe de vista (como no Perspicuus). O slot <span class="mono">bb_identification</span> é opcional (.pt ou ONNX à parte). Segmentação e pose: <span class="mono">.pt</span> ou export <span class="mono">.onnx</span> (Ultralytics); o servidor usa <span class="mono">task=segment</span> / <span class="mono">task=pose</span> em ONNX para o Ultralytics não assumir só deteção. iudicium lateral/posterior ONNX.</div>
+    <div class="page-sub">Um YOLO ONNX em <span class="mono">bb_yolo</span> faz crop e classe de vista (como no Perspicuus). O slot <span class="mono">bb_identification</span> é opcional (.pt ou ONNX à parte). Segmentação e pose: <span class="mono">.pt</span> ou export <span class="mono">.onnx</span> (Ultralytics); o servidor usa <span class="mono">task=segment</span> / <span class="mono">task=pose</span> em ONNX. Segmentação multi-máscara: variável <span class="mono">BB_SEG_MAX_DET</span> (predef.: 64) — define quantas deteções o modelo pode devolver por frame (<span class="mono">BB_YOLO_MAX_DET</span> continua 1 só para pose). Opcional <span class="mono">BB_SEG_MASK_PAD_FRAC</span> quando o número de caixas ≠ número de máscaras. iudicium lateral/posterior ONNX.</div>
   </div>
   <a class="btn btn-ghost btn-sm" href="{{ url_for('black_barn_importar') }}">← Importar</a>
 </div>
